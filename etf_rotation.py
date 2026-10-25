@@ -3420,12 +3420,13 @@ def main():
     else:
         info_main.append(f"[VE2] {VE_TRACK_CODE} 净值曲线不可用（历史数据不足）")
 
+    gen_now = datetime.now().strftime("%Y-%m-%d %H:%M")
     html_doc = render_html(
         pivot=pivot, window=W, sticky=a.sticky_lead, defensive=defensive, snap=snap_main,
         ranked=ranked, cols=cols, steps=steps, swap_days=swap_days, tie_days=tie_days,
         head1=head1, head2=head2, lead=lead, overheated=overheated,
         overheat_dev=a.overheat_dev, overheat_lead=a.overheat_lead,
-        info=info_main, source=source, now=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        info=info_main, source=source, now=gen_now,
         watch=watched, info_watch=info_watch,
         freshness=(is_stale, fresh_txt), live=(live_on, live_txt),
         recent=recent, adj_note=adj_note, yearly=yearly, idx=idx, ve_curve=ve_curve,
@@ -3434,7 +3435,7 @@ def main():
     out_dir = a.out and os.path.dirname(os.path.abspath(a.out)) or DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     out_path = a.out or os.path.join(out_dir, f"etf_rotation_{pivot}.html")
-    html_doc = html_doc.replace("</body>", REFRESH_WIDGET + "\n</body>", 1)
+    html_doc = html_doc.replace("</body>", REFRESH_WIDGET.replace("__RF_GEN__", gen_now) + "\n</body>", 1)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html_doc)
 
