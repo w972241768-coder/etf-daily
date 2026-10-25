@@ -166,7 +166,17 @@ def roc_head_state(panel: pd.DataFrame, pool: List[str], dates: pd.DatetimeIndex
     if not mom:
         return empty
     mom_df = pd.DataFrame(mom)
-    head_codes = mom_df.idxmax(axis=1)
+    # 取每行动横最大的列名（=当日头名）。
+    # ⚠ 不用 mom_df.idxmax(axis=1)：pandas 对「全 NA 行」的行为已废弃警告、
+    #   3.0 起直接抛 ValueError（回测前 W 行必然全 NA）。这里手写等价实现：
+    #   跳过 NaN 取最大值所在列（并列取首个），全 NA 行返回 NaN —— 与 2.x 语义一致，
+    #   且不随 pandas 版本变化。
+    _mat = mom_df.to_numpy(dtype="float64", copy=True)
+    _cols = mom_df.columns.to_numpy()
+    _allna = np.isnan(_mat).all(axis=1)
+    _arg = np.where(np.isnan(_mat), -np.inf, _mat).argmax(axis=1)
+    head_codes = pd.Series(np.where(_allna, np.nan, _cols[_arg].astype(object)),
+                           index=mom_df.index)
     roc_df = pd.DataFrame({c: (panel[c] / panel[c].shift(n) - 1.0) * 100.0
                            for c in mom_df.columns if c in panel.columns})
     if roc_df.empty:

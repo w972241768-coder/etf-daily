@@ -25,14 +25,18 @@ jobs:
       - name: 准备 Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          # ⚠ 必须 >= 3.12：numpy 2.5.x 的 requires_python 是 >=3.12，
+          # 用 3.11 会 pip 报 "No matching distribution found for numpy==2.5.2" 秒挂。
+          # 与本地验证环境（Python 3.13）保持一致。
+          python-version: "3.13"
 
       - name: 安装依赖
         run: |
           python -m pip install --upgrade pip
-          # 固定版本，与本地验证过的一致：避免 pandas 3.0 的 idxmax 破坏性变更
-          # （etf_backtest_long.py 的 mom_df.idxmax 在 3.0 会对全 NA 行直接抛 ValueError）
+          # 固定版本，与本地验证过的完全一致（Python 3.13 + pandas 2.3.3 + numpy 2.5.2）。
+          # 不锁 pandas 3.0：其 idxmax 对全 NA 行的破坏性变更已在源码层修正，见下方说明。
           pip install "pandas==2.3.3" "numpy==2.5.2"
+          python -c "import sys,pandas,numpy;print('ENV OK',sys.version.split()[0],'pandas',pandas.__version__,'numpy',numpy.__version__)"
 
       - name: 生成日报
         env:
