@@ -2879,7 +2879,7 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   /* 年度表现 = SVG 分组竖柱（每年三根：现用策略 / D3 / D3+P3） */
   .ytdbody{{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center}}
   .ytdbody svg{{display:block;width:100%;height:auto}}
-  @media (min-width:1321px){{
+  @media (min-width:761px){{
     /* 并排时让 SVG 吃满卡片剩余高度，卡片底边不被内容顶出去 */
     .ytdbody svg{{height:100%;max-height:100%}}
   }}
@@ -2904,14 +2904,25 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   table.gtbl td.nm2{{white-space:normal}}
   .split .l .note{{font-size:12px;line-height:1.7}}
   /* ≤1320px：年度表现柱状图移到排名表下方，把整宽让给 8 列排名表 → 不再出现横向滚动条 */
+  /* 旧布局（.split / .rwrap）遗留规则保留，但已不在主流程使用 */
   @media (max-width:1320px){{
     .rwrap{{flex-direction:column}}
-    /* 排名表与年度卡改竖向堆叠 */
+  }}
+  /* 中等窗口：年度卡收窄到 250px，把宽度让给 9 列排名表 */
+  @media (max-width:1050px){{
+    .s2r{{flex:0 0 250px}}
+  }}
+  /* ===== 并排断点 760px（2026-10-25 修）=====
+     ⚠️ 原来断点是 1320px，导致「内嵌预览面板 / 未最大化窗口」等实际渲染宽度
+     <1320 的环境一律退化成上下堆叠 —— 用户看到的正是堆叠而非并排。
+     现降到 760：≥761 一律并排（左栏 flex:1 自动占剩余宽度；排名表放不下时由
+     .rtblwrap2 内部横向滚动兜底，绝不撑破页面）；≤760（手机/极窄）才堆叠。 */
+  @media (max-width:760px){{
     .split2{{flex-direction:column}}
     .s2r{{flex:0 0 auto}}
     .s2r .ytdchart{{flex:0 0 auto;overflow:visible}}
     .ytdchart{{flex:0 0 auto;overflow:visible}}
-    /* 堆叠后容器变全宽，svg width:100% 会把图等比放大到极高 → 改按高度上限缩放并居中 */
+    /* 堆叠后容器变全宽，svg width:100% 会把图等比放大到极高 → 按高度上限缩放并居中 */
     .ytdbody{{flex:0 0 auto;min-height:150px;display:block}}
     .ytdbody svg{{width:auto;max-width:100%;height:auto;max-height:330px;margin:0 auto}}
   }}
@@ -2919,10 +2930,6 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
     .split{{flex-direction:column}}
     .split .l,.split .r{{flex:1 1 auto;align-self:stretch}}
     .rwrap{{flex-direction:column}}
-    .split2{{flex-direction:column}}
-    .s2r{{flex:0 0 auto}}
-    .ytdchart{{flex:0 0 auto}}
-    .ytdbody{{min-height:180px}}
   }}
   /* 窄屏：定宽列会把内容挤爆 → 退回 auto 布局，让内容自己决定宽度 */
   @media (max-width:900px){{
@@ -2933,6 +2940,7 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
     .ghead{{gap:6px}}
     .gdate{{margin-left:0;width:100%}}
   }}
+
   /* 净值曲线 SVG */
   .csvg{{display:block;width:100%;height:auto;min-width:560px;background:#fff;
     border:1px solid var(--bd);border-radius:10px;box-shadow:0 1px 3px rgba(16,24,40,.05)}}

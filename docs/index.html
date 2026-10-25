@@ -198,7 +198,7 @@
   /* 年度表现 = SVG 分组竖柱（每年三根：现用策略 / D3 / D3+P3） */
   .ytdbody{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center}
   .ytdbody svg{display:block;width:100%;height:auto}
-  @media (min-width:1321px){
+  @media (min-width:761px){
     /* 并排时让 SVG 吃满卡片剩余高度，卡片底边不被内容顶出去 */
     .ytdbody svg{height:100%;max-height:100%}
   }
@@ -223,14 +223,25 @@
   table.gtbl td.nm2{white-space:normal}
   .split .l .note{font-size:12px;line-height:1.7}
   /* ≤1320px：年度表现柱状图移到排名表下方，把整宽让给 8 列排名表 → 不再出现横向滚动条 */
+  /* 旧布局（.split / .rwrap）遗留规则保留，但已不在主流程使用 */
   @media (max-width:1320px){
     .rwrap{flex-direction:column}
-    /* 排名表与年度卡改竖向堆叠 */
+  }
+  /* 中等窗口：年度卡收窄到 250px，把宽度让给 9 列排名表 */
+  @media (max-width:1050px){
+    .s2r{flex:0 0 250px}
+  }
+  /* ===== 并排断点 760px（2026-10-25 修）=====
+     ⚠️ 原来断点是 1320px，导致「内嵌预览面板 / 未最大化窗口」等实际渲染宽度
+     <1320 的环境一律退化成上下堆叠 —— 用户看到的正是堆叠而非并排。
+     现降到 760：≥761 一律并排（左栏 flex:1 自动占剩余宽度；排名表放不下时由
+     .rtblwrap2 内部横向滚动兜底，绝不撑破页面）；≤760（手机/极窄）才堆叠。 */
+  @media (max-width:760px){
     .split2{flex-direction:column}
     .s2r{flex:0 0 auto}
     .s2r .ytdchart{flex:0 0 auto;overflow:visible}
     .ytdchart{flex:0 0 auto;overflow:visible}
-    /* 堆叠后容器变全宽，svg width:100% 会把图等比放大到极高 → 改按高度上限缩放并居中 */
+    /* 堆叠后容器变全宽，svg width:100% 会把图等比放大到极高 → 按高度上限缩放并居中 */
     .ytdbody{flex:0 0 auto;min-height:150px;display:block}
     .ytdbody svg{width:auto;max-width:100%;height:auto;max-height:330px;margin:0 auto}
   }
@@ -238,10 +249,6 @@
     .split{flex-direction:column}
     .split .l,.split .r{flex:1 1 auto;align-self:stretch}
     .rwrap{flex-direction:column}
-    .split2{flex-direction:column}
-    .s2r{flex:0 0 auto}
-    .ytdchart{flex:0 0 auto}
-    .ytdbody{min-height:180px}
   }
   /* 窄屏：定宽列会把内容挤爆 → 退回 auto 布局，让内容自己决定宽度 */
   @media (max-width:900px){
@@ -252,6 +259,7 @@
     .ghead{gap:6px}
     .gdate{margin-left:0;width:100%}
   }
+
   /* 净值曲线 SVG */
   .csvg{display:block;width:100%;height:auto;min-width:560px;background:#fff;
     border:1px solid var(--bd);border-radius:10px;box-shadow:0 1px 3px rgba(16,24,40,.05)}
@@ -273,7 +281,7 @@
 <div class="sub">锚定日 <b>2026-10-23</b> ｜ 窗口 <b>动横20</b> ｜ 粘性带 <b>领先&lt;1.0pp 视为平手</b>
  ｜ 主选池 <b>9 只轮动 + 1 只防守</b>
  ｜ 备选观察池 <b>15 只（报告末尾，不参与调仓）</b>
- ｜ 数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b> ｜ 生成 2026-10-25 04:02</div>
+ ｜ 数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b> ｜ 生成 2026-10-25 04:09</div>
 </div>
 <div class="fresh live">✓ <b>在线前复权数据</b>　数据源 <b>新浪财经 · 不复权日线（前复权因子校正）</b>　｜　数据截至 <b>2026-10-23</b>（已收盘/非交易时段）　｜　成功 25/25 只。分红与拆分已按前复权还原，无除权假跳空。</div>
 
@@ -850,4 +858,54 @@ table.d3tbl.sm{font-size:11.5px}
 <br>数据为新浪财经在线日线：原始为不复权价，已用已核验长历史（tdx_adj_long）的复权因子 F = 不复权(T0)/前复权(T0) 整体校正到前复权口径；ETF 分红与拆分均已还原，不存在除权假跳空。只要 T0（长历史最新日）之后没有新的分红/拆分，结果与严格前复权一致；有新事件时脚本会明确提示。<br>
 本报告仅供研究参考，不构成个人投资建议。
 </div>
-</div></body></html>
+</div>
+<style>
+#rfFab{position:fixed;right:14px;bottom:14px;z-index:9999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+#rfBtn{background:#3d57e5;color:#fff;border:none;border-radius:24px;padding:12px 18px;font-size:15px;font-weight:600;box-shadow:0 4px 14px rgba(61,87,229,.45);cursor:pointer}
+#rfPanel{display:none;position:fixed;right:14px;bottom:66px;z-index:9999;width:min(88vw,320px);background:#fff;border:1px solid #e2e5ea;border-radius:12px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.18);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;color:#202020;box-sizing:border-box}
+#rfPanel h4{margin:0 0 8px;font-size:14px;color:#3d57e5}
+#rfPanel p{margin:0 0 8px;line-height:1.5;color:#42474f}
+#rfToken{width:100%;box-sizing:border-box;padding:8px;border:1px solid #e2e5ea;border-radius:8px;font-size:13px;margin-bottom:8px}
+#rfPanel button{background:#3d57e5;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;margin:0 6px 0 0}
+#rfPanel a{color:#3d57e5}
+#rfStatus{margin-top:8px;line-height:1.5;color:#42474f}
+</style>
+<div id="rfFab"><button id="rfBtn" onclick="rfToggle()">🔄 刷新日报</button></div>
+<div id="rfPanel">
+  <h4>一键刷新（触发云端重算）</h4>
+  <p>首次使用粘贴一次 <b>GitHub Token</b>（仅需 repo 权限）。<b>仅存你本机浏览器</b>，不进仓库、不发给任何第三方，只发往 api.github.com。</p>
+  <input id="rfToken" type="password" placeholder="ghp_... 或 github_pat_..." />
+  <button onclick="rfSaveRun()">保存并刷新</button>
+  <button onclick="rfRun()">直接刷新</button>
+  <div id="rfStatus"></div>
+</div>
+<script>
+(function(){
+  var REPO="w972241768-coder/etf-daily", WF="daily.yml", REF="main";
+  function el(id){return document.getElementById(id);}
+  window.rfToggle=function(){var p=el("rfPanel");p.style.display=p.style.display==="none"?"block":"none";};
+  var saved=localStorage.getItem("rfGhToken");
+  if(saved){el("rfToken").value=saved;el("rfToken").placeholder="已保存（可留空直接刷新）";}
+  function run(){
+    var tok=el("rfToken").value.trim()||localStorage.getItem("rfGhToken")||"";
+    var st=el("rfStatus");
+    if(!tok){st.textContent="请先粘贴 GitHub Token。";return;}
+    st.textContent="正在触发刷新，GitHub 云端约 2~3 分钟后重算完成，届时刷新本页即可。";
+    fetch("https://api.github.com/repos/"+REPO+"/actions/workflows/"+WF+"/dispatches",{
+      method:"POST",
+      headers:{"Authorization":"token "+tok,"Accept":"application/vnd.github+json","Content-Type":"application/json"},
+      body:JSON.stringify({ref:REF})
+    }).then(function(r){
+      if(r.status===204){st.innerHTML="✅ 已触发！<b>约 2~3 分钟后</b>本页会自动刷新（或手动刷新）。";setTimeout(function(){location.reload();},180000);}
+      else if(r.status===401||r.status===403){st.textContent="❌ Token 无效或无权限（需 repo 权限）。";}
+      else{st.textContent="⚠️ 返回状态 "+r.status+"，可能已触发或受限，请稍后看本页是否更新。";}
+    }).catch(function(e){
+      st.innerHTML="❌ 浏览器跨域(CORS)受限导致请求失败。请改用：右上菜单 → 打开 <a href='https://github.com/"+REPO+"/actions/workflows/"+WF+"' target='_blank'>Actions 手动触发</a>。";
+    });
+  }
+  window.rfRun=run;
+  window.rfSaveRun=function(){localStorage.setItem("rfGhToken",el("rfToken").value.trim());run();};
+})();
+</script>
+
+</body></html>
