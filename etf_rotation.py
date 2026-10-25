@@ -2855,10 +2855,23 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   /* 排名表 + 年度卡：并排、等高（年度卡被拉伸到排名表高度，底边齐平） */
   .split2{{display:flex;gap:14px;align-items:stretch;margin:14px 0 0}}
   .s2l{{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;min-height:0}}
-  .rtblwrap2{{overflow-x:auto;min-height:0}}
-  .s2r{{flex:0 0 300px;min-width:0;display:flex;flex-direction:column;min-height:0}}
+  /* 年度卡 400px（原 300）：给图更多横向空间，同时把排名表自然压窄、
+     列间距收紧，不再出现「表格被拉得很散」的观感 */
+  .s2r{{flex:0 0 400px;min-width:0;display:flex;flex-direction:column;min-height:0}}
   /* min-height 防「排名表很矮时年度卡被压扁到看不见图」；两者底边仍由 stretch 齐平 */
   .s2r .ytdchart{{flex:1 1 auto;min-height:250px}}
+  /* ===== ① 今日排名卡片（2026-10-25 补）=====
+     此前 h2 写在卡片**外面**、表格自带边框当「框」，而右边年度卡把标题包在**框内**，
+     于是左框整体下移约 30px、两框底边永远对不上。现在左边也包成同规格卡片、
+     标题收进框内，两框的顶边与底边同时对齐。 */
+  .pcard{{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;
+    background:#fff;border:1px solid var(--bd);border-radius:10px;
+    padding:10px 12px;box-shadow:0 1px 3px rgba(16,24,40,.05)}}
+  .pcard h2.sph2{{margin:0 0 8px;font-size:15px;padding-left:9px;
+    border-left-width:3px;display:flex;align-items:baseline;gap:2px;flex-wrap:wrap}}
+  .pcard .rtblwrap2{{flex:1 1 auto;min-height:0;overflow-x:auto}}
+  /* 全局 table 自带 border+radius+shadow（卡片样式）→ 内层清零，避免「卡片套卡片」 */
+  .pcard table.rtbl{{border:none;border-radius:0;box-shadow:none;background:transparent}}
   /* 旧布局遗留（.split/.rwrap）保留但已不在主流程使用 */
   /* 操作指引 与 ① 今日排名 并排（左右等高） */
   .split{{display:flex;gap:18px;align-items:stretch;margin:20px 0 6px}}
@@ -2874,8 +2887,10 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
     min-height:0;overflow:hidden;
     background:#fff;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;
     box-shadow:0 1px 3px rgba(16,24,40,.05)}}
-  .ytdh{{font-size:12.5px;font-weight:600;color:#202020;margin:0 0 4px;
-    padding-left:8px;border-left:3px solid #3d57e5}}
+  /* 与 .pcard 的标题同规格（字号/缩进/左边框/下间距一致）⇒ 两框内部内容起点也齐平 */
+  .ytdh{{font-size:15px;font-weight:600;color:#202020;margin:0 0 8px;
+    padding-left:9px;border-left:3px solid #3d57e5;
+    display:flex;align-items:baseline;gap:2px;flex-wrap:wrap}}
   /* 年度表现 = SVG 分组竖柱（每年三根：现用策略 / D3 / D3+P3） */
   .ytdbody{{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center}}
   .ytdbody svg{{display:block;width:100%;height:auto}}
@@ -2908,9 +2923,9 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   @media (max-width:1320px){{
     .rwrap{{flex-direction:column}}
   }}
-  /* 中等窗口：年度卡收窄到 250px，把宽度让给 9 列排名表 */
+  /* 中等窗口：年度卡收窄到 300px（400px 在 ≤1050 太占宽），把宽度让给 9 列排名表 */
   @media (max-width:1050px){{
-    .s2r{{flex:0 0 250px}}
+    .s2r{{flex:0 0 300px}}
   }}
   /* ===== 并排断点 760px（2026-10-25 修）=====
      ⚠️ 原来断点是 1320px，导致「内嵌预览面板 / 未最大化窗口」等实际渲染宽度
@@ -2985,13 +3000,15 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
 
 <div class="split2">
 <div class="s2l">
-<h2 class="sph2">① 今日排名 · 主选池（按 动横{window} 降序）</h2>
+<div class="pcard">
+<h2 class="sph2">① 今日排名 · 主选池<span class="sphs">（按 动横{window} 降序）</span></h2>
 <div class="rtblwrap2">
 <table class="rtbl"><thead><tr><th>#</th><th>代码</th><th>名称</th><th>动横{window}</th><th>乖离</th>
 <th title="该标的最近一次被系统买入 → 至今（或已换出）的价格涨跌，口径与 ② 节一致">切换至今</th>
 <th>现价</th><th>今日涨跌</th><th>MA20</th></tr></thead><tbody>
 {''.join(rank_rows)}
 </tbody></table>
+</div>
 </div>
 </div>
 <div class="s2r">
@@ -3068,10 +3085,12 @@ REFRESH_WIDGET = """
 #rfPanel button{background:#3d57e5;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;margin:0 6px 0 0}
 #rfPanel a{color:#3d57e5}
 #rfStatus{margin-top:8px;line-height:1.5;color:#42474f}
+#rfGen{margin:0 0 8px;color:#6c717f;font-size:12px}
 </style>
 <div id="rfFab"><button id="rfBtn" onclick="rfToggle()">🔄 刷新日报</button></div>
 <div id="rfPanel">
   <h4>一键刷新（触发云端重算）</h4>
+  <div id="rfGen">本页生成于：__RF_GEN__</div>
   <p>首次使用粘贴一次 <b>GitHub Token</b>（仅需 repo 权限）。<b>仅存你本机浏览器</b>，不进仓库、不发给任何第三方，只发往 api.github.com。</p>
   <input id="rfToken" type="password" placeholder="ghp_... 或 github_pat_..." />
   <button onclick="rfSaveRun()">保存并刷新</button>
@@ -3099,7 +3118,9 @@ REFRESH_WIDGET = """
       else if(r.status===401||r.status===403){st.textContent="❌ Token 无效或无权限（需 repo 权限）。";}
       else{st.textContent="⚠️ 返回状态 "+r.status+"，可能已触发或受限，请稍后看本页是否更新。";}
     }).catch(function(e){
-      st.innerHTML="❌ 浏览器跨域(CORS)受限导致请求失败。请改用：右上菜单 → 打开 <a href='https://github.com/"+REPO+"/actions/workflows/"+WF+"' target='_blank'>Actions 手动触发</a>。";
+      var url="https://github.com/"+REPO+"/actions/workflows/"+WF;
+      st.innerHTML="❌ 浏览器跨域(CORS)受限，已自动为你打开 <a href='"+url+"' target='_blank'>Actions 手动触发页</a>，点右上 Run workflow 即可。";
+      try{window.open(url,"_blank");}catch(_){}
     });
   }
   window.rfRun=run;
