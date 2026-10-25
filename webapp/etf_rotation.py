@@ -25,6 +25,7 @@ ETF 动横阶梯轮动 · 一键报告
 import argparse
 import csv
 import html
+import json
 import os
 import struct
 import subprocess
@@ -2729,6 +2730,15 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- PWA：手机「添加到主屏幕」后全屏运行，无地址栏 / 底部工具栏 -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#eef0f3">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ETF日报">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
 <title>ETF 动横阶梯轮动报告 · {pivot}</title>
 <style>
   :root{{--bd:#e2e5ea;--mut:#6c717f;--fg:#202020;}}
@@ -3158,6 +3168,19 @@ def _fmt_factors(res):
 # 注意：report 主体是一个 f-string（其中 { } 会被当格式字段），本常量必须是
 # 普通字符串（非 f-string），并在写文件时用 .replace 注入到 </body> 前，
 # 以避免 JS 里的 { }（如 JSON.stringify({ref:...})）被 f-string 误解析。
+# PWA：注册 Service Worker（注入到 </body> 前）。
+# ⚠️ 用普通字符串、不用 f-string —— JS 的花括号在 f-string 里要写成双括号，极易出错。
+# sw.js 是 network-first：保证「添加到主屏幕」后每天看到的是最新持仓，不是首次缓存。
+PWA_TAIL = """
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  });
+}
+</script>
+"""
+
 REFRESH_WIDGET = """
 <style>
 #rfFab{position:fixed;right:14px;bottom:14px;z-index:9999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
@@ -3242,6 +3265,8 @@ def main():
                     help="（已废弃，保留兼容）默认即在线模式，自动支持盘中实时；"
                          "失败自动回退本地离线数据，不会中断")
     ap.add_argument("--feishu", action="store_true", help="额外投递飞书单聊")
+    ap.add_argument("--state-out", default=None,
+                    help="同时输出状态快照 JSON（供「仅换仓/触发日提醒」比对用）")
     a = ap.parse_args()
 
     pool_path = a.pool or (DEFAULT_POOL if os.path.exists(DEFAULT_POOL) else None)
@@ -3536,7 +3561,9 @@ def main():
     out_dir = a.out and os.path.dirname(os.path.abspath(a.out)) or DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     out_path = a.out or os.path.join(out_dir, f"etf_rotation_{pivot}.html")
-    html_doc = html_doc.replace("</body>", REFRESH_WIDGET.replace("__RF_GEN__", gen_now) + "\n</body>", 1)
+    html_doc = html_doc.replace(
+        "</body>",
+        REFRESH_WIDGET.replace("__RF_GEN__", gen_now) + PWA_TAIL + "\n</body>", 1)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html_doc)
 
@@ -3566,6 +3593,49 @@ def main():
               + ("  ★ 出现更替候选" if _wg > 0 else ""))
     print(f"报告: {out_path}")
     print("=" * 70)
+
+    # ---- 状态快照（2026-10-25）：供「只在换仓/触发日提醒」比对用 ----
+    # 由 notify.py 读取，与仓库里上一版 docs/state.json 逐字段比对；
+    # 无变化则静默，有变化才推送。字段名一旦改动，要与 notify.py 的事件规则同步。
+    if a.state_out:
+        _p3 = ((recent or {}).get("p3") or {})
+        _ve2 = ve_track or {}
+        _snap_state = dict(
+            asof=str(pivot),
+            gen=gen_now,
+            # 执行口径：默认 = D3+P3；算不出时退化为基础策略头名
+            hold_default=(_p3.get("hold") if _p3.get("ok") else None) or head1.code,
+            hold_default_name=(_p3.get("hold_name") if _p3.get("ok") else None)
+            or head1.name,
+            hold_base=head1.code,
+            hold_base_name=head1.name,
+            overheat=bool(overheated),
+            p3_active=bool(_p3.get("active")),
+            p3_remain=_p3.get("remain"),
+            p3_back=_p3.get("back"),
+            nav_default=_p3.get("final"),
+            calmar_default=_p3.get("calmar"),
+            # 防守位（512040）MA200 偏离与买线（%，买线 = (VE_BUY−1)×100 = −3.0）
+            def_code=(defs[0].code if defs else None),
+            def_dev=(float(idx["f_dev"]) if idx else None),
+            def_buy_pct=-3.0,
+            # 策略二（512890）当日位置与动作
+            ve2_code=VE_TRACK_CODE,
+            ve2_dev=_ve2.get("dev"),
+            ve2_zone=_ve2.get("zone"),
+            ve2_action=_ve2.get("action"),
+            ve2_holding=_ve2.get("holding"),
+        )
+        try:
+            _sd = os.path.dirname(os.path.abspath(a.state_out))
+            if _sd:
+                os.makedirs(_sd, exist_ok=True)
+            with open(a.state_out, "w", encoding="utf-8") as _f:
+                json.dump(_snap_state, _f, ensure_ascii=False, indent=1,
+                          sort_keys=True, default=str)
+            print(f"状态快照: {a.state_out}")
+        except Exception as _e:                 # noqa: BLE001
+            print(f"⚠ 状态快照写入失败（不影响日报）: {type(_e).__name__}: {_e}")
 
     if a.feishu:
         md = (f"**ETF 动横阶梯轮动**（锚定 {pivot}，{source}）\n\n"

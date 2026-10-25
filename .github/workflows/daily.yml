@@ -46,10 +46,27 @@ jobs:
           TZ: Asia/Shanghai
         run: |
           mkdir -p docs
-          python etf_rotation.py --no-open --out docs/index.html
+          python etf_rotation.py --no-open --out docs/index.html --state-out docs/state.json
           touch docs/.nojekyll
           echo "--- 产物 ---"
           ls -lh docs/
+
+      - name: 状态切换提醒（不换仓不打扰）
+        # ⚠️ 必须排在「提交」之前：notify.py 用 `git show HEAD:docs/state.json`
+        #    读上一版快照，此时 HEAD 还指向上一次提交。
+        # 任何推送失败都只打印、不退出 1 —— 提醒坏了不能让日报的提交也被跳过。
+        env:
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          SERVERCHAN_KEY: ${{ secrets.SERVERCHAN_KEY }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: |
+          python notify.py --state docs/state.json || echo "::warning::提醒步骤失败，日报不受影响"
 
       - name: 提交并推送（Pages 自动更新）
         run: |

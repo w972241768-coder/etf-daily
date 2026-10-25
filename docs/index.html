@@ -1,6 +1,15 @@
 <!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- PWA：手机「添加到主屏幕」后全屏运行，无地址栏 / 底部工具栏 -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#eef0f3">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="ETF日报">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
 <title>ETF 动横阶梯轮动报告 · 2026-10-23</title>
 <style>
   :root{--bd:#e2e5ea;--mut:#6c717f;--fg:#202020;}
@@ -332,7 +341,7 @@
 <div class="sub">锚定日 <b>2026-10-23</b> ｜ 窗口 <b>动横20</b> ｜ 粘性带 <b>领先&lt;1.0pp 视为平手</b>
  ｜ 主选池 <b>9 只轮动 + 1 只防守</b>
  ｜ 备选观察池 <b>15 只（报告末尾，不参与调仓）</b>
- ｜ 数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b> ｜ 生成 2026-10-25 21:58</div>
+ ｜ 数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b> ｜ 生成 2026-10-25 22:37</div>
 </div>
 <div class="fresh live">✓ <b>在线前复权数据</b>　数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b>　｜　数据截至 <b>2026-10-23</b>（已收盘/非交易时段）　｜　成功 25/25 只。分红与拆分已按前复权还原，无除权假跳空。</div>
 
@@ -929,7 +938,7 @@ table.d3tbl.sm{font-size:11.5px}
 <div id="rfFab"><button id="rfBtn" onclick="rfToggle()">🔄 刷新日报</button></div>
 <div id="rfPanel">
   <h4>一键刷新（触发云端重算）</h4>
-  <div id="rfGen">本页生成于：2026-10-25 21:58</div>
+  <div id="rfGen">本页生成于：2026-10-25 22:37</div>
   <p>首次使用粘贴一次 <b>GitHub Token</b>（仅需 repo 权限）。<b>仅存你本机浏览器</b>，不进仓库、不发给任何第三方，只发往 api.github.com。</p>
   <input id="rfToken" type="password" placeholder="ghp_... 或 github_pat_..." />
   <button onclick="rfSaveRun()">保存并刷新</button>
@@ -965,6 +974,14 @@ table.d3tbl.sm{font-size:11.5px}
   window.rfRun=run;
   window.rfSaveRun=function(){localStorage.setItem("rfGhToken",el("rfToken").value.trim());run();};
 })();
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () {});
+  });
+}
 </script>
 
 </body></html>
