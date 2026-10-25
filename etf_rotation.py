@@ -50,6 +50,16 @@ FEISHU_USER = "ou_137e56eb64ada250b5f52fd691f8ec2e"
 RED = "#d4380d"    # 涨 (中国习惯: 红涨)
 GREEN = "#0f9d58"  # 跌 (绿跌)
 
+# ---- 三条策略序列的统一配色（2026-10-25 改）----
+# 旧版「红 / 紫 / 品红」三种色相太近（紫 #7b3fe4 与品红 #c2185b 几乎分不开），
+# 改为「蓝 / 橙 / 玫红」——色相分别约 225° / 36° / 336°，两两间隔足够大。
+# ⚠️ 年度柱状图、净值曲线、图例、注释文字必须全部引用这三个常量，不要再散写颜色。
+CLR_STRAT = "#3d57e5"   # 现用策略（沿用报告主色蓝）
+CLR_D3 = "#e8890c"      # D3 单笔止损（橙）
+CLR_P3 = "#c2185b"      # D3+P3 止盈（玫红）
+CLR_BENCH_SH = "#9aa3b2"  # 上证指数（基准，灰）
+CLR_BENCH_NDX = "#00897b"  # 纳斯达克综合指数（基准，青）
+
 # ---- 策略二：512890 红利低波「回踩 MA200 买 / 超 +6% 卖」每日跟踪 ----
 # 2026-10-21 用户指定。与 512040 价值引擎同一状态机，唯一差别是买线改成「回踩即买」：
 #   512040: 收盘 < MA200×0.97 才买（要求跌破 3 个点，安全垫更厚）
@@ -94,9 +104,9 @@ table.d3tbl.sm{font-size:11.5px}
 .d3sw{background:#fff;border-left:3px solid #3d57e5;border-radius:6px;padding:7px 11px;
   margin-top:9px;line-height:1.7}
 .d3foot{color:#98a1ad;font-size:11.3px;margin-top:8px;line-height:1.6}
-.d3card.p3{background:#fbfaff;border-color:#d3c8f0}
-.d3card.p3 .d3tag{background:#f0eafc;border-color:#d8c9f5;color:#6b3fd4}
-.d3card.p3 .d3sw{border-left-color:#7b3fe4}
+.d3card.p3{background:#fffafc;border-color:#f0c7d6}
+.d3card.p3 .d3tag{background:#fceef4;border-color:#f2c8d9;color:#c2185b}
+.d3card.p3 .d3sw{border-left-color:#c2185b}
 """
 
 
@@ -229,15 +239,28 @@ def _p3_card_html(p3, recent, cost):
                      f'现用策略持 <b>{html.escape(str(p3.get("base_hold_name") or "—"))}</b>')
             act = f'若按 D3+P3 执行：今天应调整为 <b>{html.escape(p3["hold_name"])}</b>。'
 
-        rows_last = "".join(
-            f'<tr><td class="mono">{html.escape(str(x["date"]))}</td>'
-            f'<td>{html.escape(str(x["name"]))}</td>'
-            f'<td class="num" style="color:#6b3fd4">{x["roc"]:+.2f}%</td>'
-            f'<td class="num">{x["days"]} 日</td>'
-            f'<td class="mono">{html.escape(str(x["until"]))}</td></tr>'
-            for x in p3.get("last") or [])
+        def _n(v, unit="%", sign=True):
+            """None/NaN 统一显示「—」，避免卡片出现 nan。"""
+            if not isinstance(v, (int, float)) or v != v:
+                return "—"
+            return f"{v:+.2f}{unit}" if sign else f"{v:.2f}{unit}"
+
+        rows_last = ""
+        for x in (p3.get("last") or []):
+            _p = x.get("pct")
+            _pcell = (f'<span style="color:{CLR_P3};font-weight:700">{_p:.1f} 分位</span>'
+                      if isinstance(_p, (int, float)) and _p == _p else "—")
+            rows_last += (
+                f'<tr><td class="mono">{html.escape(str(x["date"]))}</td>'
+                f'<td>{html.escape(str(x["name"]))}'
+                f'<span class="dimtxt"> {html.escape(str(x.get("code") or ""))}</span></td>'
+                f'<td class="num" style="color:{CLR_P3}">{_n(x.get("roc"))}</td>'
+                f'<td class="num">{_pcell}</td>'
+                f'<td class="num dimtxt">{_n(x.get("m20"))}</td>'
+                f'<td class="num">{x["days"]} 日</td>'
+                f'<td class="mono">{html.escape(str(x["until"]))}</td></tr>')
         if not rows_last:
-            rows_last = '<tr><td colspan="5" class="dimtxt">区间内没有触发</td></tr>'
+            rows_last = '<tr><td colspan="7" class="dimtxt">区间内没有触发</td></tr>'
 
         return f"""<style>{_D3_CSS}</style>
 <div class="d3card p3">
@@ -294,10 +317,19 @@ def _p3_card_html(p3, recent, cost):
     <span>口径 <b>D3 亏≥{int(p3.get('thr', 0.03) * 100)}% 空仓 5 日 + ROC{p3['n']} 滚动 {p3['q']*100:.0f} 分位 空仓 {p3['days']} 日</b></span>
   </div>
   <div class="d3last">
-    <div class="cap">最近 {len(p3.get('last') or [])} 次追高止盈事件（空仓起点）</div>
-    <div class="tblwrap"><table class="d3tbl sm"><thead><tr><th>触发日</th><th>当时头名</th>
-      <th class="num">ROC60</th><th class="num">空仓</th><th>回场日</th></tr></thead>
+    <div class="cap">最近 {len(p3.get('last') or [])} 次追高止盈事件</div>
+    <div class="tblwrap"><table class="d3tbl sm"><thead><tr>
+      <th>触发日（＝清仓日）</th><th>当时头名</th>
+      <th class="num" title="触发当日头名的 60 日动量（ROC60）">ROC60</th>
+      <th class="num" title="该 ROC60 在自身扩张历史中的百分位；触发线 95，故必然 ≥95">自身历史分位</th>
+      <th class="num" title="触发当日头名的动横20（排名信号），仅供对照">动横20</th>
+      <th class="num">空仓</th><th>回场日</th></tr></thead>
       <tbody>{rows_last}</tbody></table></div>
+    <div class="sub" style="margin-top:6px;font-size:11px;line-height:1.6">
+    <b>触发日 = 清仓日</b>：当日收盘算出「头名 ROC60 已进自身历史 95 分位」，<b>当天收盘就清仓</b>，
+    次日起空仓；<b>回场日</b> = 空仓满 {p3['days']} 个交易日后的那天，按当日动横20 第 1 名买回。
+    <br>「自身历史分位」= 该值在该标的自身扩张历史里排第几（0~100），触发线固定 95，
+    所以这列必然 ≥95；越接近 100 说明当时涨得越极端。</div>
   </div>
   <div class="d3sw">{act}</div>
   <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 {cost*100:.1f}%，
@@ -764,11 +796,11 @@ def data_freshness(pivot, now=None):
 ZOOM_DAYS = 62            # 「近 2 个月」放大窗口（自然日）
 
 CURVE_SERIES = [
-    ("nv",  "策略净值（规则复算）",  "#3d57e5", 2.4),
-    ("d3",  "D3 单笔止损（若切换）", "#7b3fe4", 1.9),
-    ("p3",  "D3+P3 止盈（若切换）", "#c2185b", 1.9),
-    ("sh",  "上证指数",              "#b26a00", 1.4),
-    ("ndx", "纳斯达克综合指数",      "#0f9d58", 1.4),
+    ("nv",  "策略净值（规则复算）",  CLR_STRAT, 2.4),
+    ("d3",  "D3 单笔止损（若切换）", CLR_D3, 1.9),
+    ("p3",  "D3+P3 止盈（若切换）", CLR_P3, 1.9),
+    ("sh",  "上证指数",              CLR_BENCH_SH, 1.4),
+    ("ndx", "纳斯达克综合指数",      CLR_BENCH_NDX, 1.4),
 ]
 CURVE_LEGEND = ("nv", "d3", "p3", "sh", "ndx")          # 图例/光标顺序
 # 末端标注用短名（全名在图例里，末端太长会压住折线）
@@ -1121,7 +1153,7 @@ def _curve_block(curve):
 {small["html"]}
 """
 
-    d3_note = ("；<b style=\"color:#7b3fe4\">D3 单笔止损</b>是并行影子组合"
+    d3_note = ("；<b style=\"color:" + CLR_D3 + "\">D3 单笔止损</b>是并行影子组合"
                "（任一笔换出时亏 ≥3% 就空仓 5 日，不改卖出条件），与「② 近期换仓复盘」"
                "里的 D3 参考卡同源，<b>当前未启用</b>，只作随时切换的对照") \
         if "d3" in pct else ""
@@ -1703,11 +1735,11 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     # 三条序列：[(键, 显示名, 颜色, {year: ret}, {year: mdd})]
     # 第三根 = D3+P3 止盈（叠加组合，2026-10-25 起的现行组合口径）
     _yseries = [
-        ("nv", "现用策略", RED,        {str(d["year"]): d.get("ret") for d in _yl},
+        ("nv", "现用策略", CLR_STRAT, {str(d["year"]): d.get("ret") for d in _yl},
          {str(d["year"]): d.get("mdd") for d in _yl}),
-        ("d3", "D3 止损",  "#7b3fe4", {k: v["ret"] for k, v in _d3y.items()},
+        ("d3", "D3 止损",  CLR_D3, {k: v["ret"] for k, v in _d3y.items()},
          {k: v["mdd"] for k, v in _d3y.items()}),
-        ("p3", "D3+P3 止盈", "#c2185b", {k: v["ret"] for k, v in _p3y.items()},
+        ("p3", "D3+P3 止盈", CLR_P3, {k: v["ret"] for k, v in _p3y.items()},
          {k: v["mdd"] for k, v in _p3y.items()}),
     ]
     _yv = [v for _k, _n, _c, rr, _m in _yseries for v in rr.values()
@@ -1829,12 +1861,12 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
 <div class="ytdbody">
 {ytd_svg}
 </div>
-<div class="ytdfoot">每年收益（含换仓成本，单位 %）· <span style="color:{RED}">红</span
->涨 <span style="color:{GREEN}">绿</span>跌 ｜ 每年三柱：<span
-style="color:{RED};font-weight:700">现用策略</span> / <span
-style="color:#7b3fe4;font-weight:700">D3 单笔止损</span> / <span
-style="color:#c2185b;font-weight:700">D3+P3 止盈</span>（后两者是并行影子，<b>未启用</b>）·
-同一刻度 · 鼠标悬停看当年最大回撤 · 前复权长历史回测</div>
+<div class="ytdfoot">每年收益（含换仓成本，单位 %）· <b>柱子颜色区分策略</b>：<span
+style="color:{CLR_STRAT};font-weight:700">现用策略</span> / <span
+style="color:{CLR_D3};font-weight:700">D3 单笔止损</span> / <span
+style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行影子，<b>未启用</b>）·
+柱体<b>向上=盈利、向下=亏损</b>；柱上数字沿用 <span style="color:{RED}">红涨</span>
+<span style="color:{GREEN}">绿跌</span> · 同一刻度 · 悬停看当年最大回撤 · 前复权长历史回测</div>
 </div>"""
 
     # 阶梯表
