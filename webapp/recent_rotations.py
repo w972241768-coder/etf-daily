@@ -354,6 +354,15 @@ P3_DAYS = 20
 P3_N = 60
 P3_MINP = 250
 
+# ★ 单一事实源校验：本文件的 D3/P3 参数必须与引擎的 LIVE_COMPOSITE 完全一致。
+#   2026-10-25 起 D3+P3 是**生产默认口径**，两处参数若漂移会让日报卡片与回测结论对不上。
+if bl is not None:
+    assert (D3_THR, D3_DAYS, P3_Q, P3_DAYS, P3_N, P3_MINP) == (
+        bl.LIVE_COMPOSITE["loss_cool"], bl.LIVE_COMPOSITE["loss_days"],
+        bl.LIVE_COMPOSITE["roc_q"], bl.LIVE_COMPOSITE["roc_days"],
+        bl.LIVE_COMPOSITE["roc_n"], bl.LIVE_COMPOSITE["roc_min_periods"]
+    ), "D3/P3 参数与 etf_backtest_long.LIVE_COMPOSITE 不一致，请只改引擎那处"
+
 
 def _d3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_dev,
                enter_lead, exit_dev, exit_lead, min_def_days, cost, W, MA,
