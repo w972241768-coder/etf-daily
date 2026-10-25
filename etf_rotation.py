@@ -80,6 +80,15 @@ _D3_CSS = """
   padding:1px 8px;font-size:11.5px;font-weight:700;white-space:nowrap}
 .d3off{color:#6c717f;font-size:12px}
 .d3rule{line-height:1.75;color:#3a4560;margin-bottom:8px}
+/* 规则定义折叠（2026-10-26）：同一套 D3/P3 定义在页首 details 已写过，卡片里收起来 */
+.d3rd{margin:0 0 7px}
+.d3rd>summary{cursor:pointer;color:#3d57e5;font-size:11.5px;font-weight:600;
+  list-style:none;display:inline-block}
+.d3rd>summary::-webkit-details-marker{display:none}
+.d3rd>summary::before{content:"▸ "}
+.d3rd[open]>summary::before{content:"▾ "}
+.d3rd .d3rule{margin:6px 0 0;padding:6px 9px;background:#f7f9fd;border-radius:7px;
+  border:1px dashed #dbe3f5}
 .d3state{background:#fff;border:1px solid #e2e5ea;border-radius:8px;padding:7px 11px;
   margin-bottom:9px;line-height:1.7}
 .d3badge{display:inline-block;border-radius:5px;padding:0 7px;font-size:11px;
@@ -310,6 +319,7 @@ def _p3_card_html(p3, recent, cost):
     <span class="d3tag">D3+P3 止盈 · 默认口径</span>
     <span class="d3off">当前<b>默认执行组合</b> —— 今日操作与年度主柱均按此给出；现用策略与仅 P3 列于同一表内作参照</span>
   </div>
+  <details class="d3rd"><summary>规则定义（D3 / P3）</summary>
   <div class="d3rule">主口径 = <b>D3 + P3 两条独立规则叠加</b>（各判各的、独立计时，
   目标持仓优先级 D3 &gt; P3）：<br>
   ① <b>D3 单笔止损</b>（看盈亏）：某笔在换出时相对建仓价亏损 ≥3% ⇒ 空仓 5 个交易日；<br>
@@ -317,6 +327,7 @@ def _p3_card_html(p3, recent, cost):
   ——即已涨到「历史极高位」、动量透支 ⇒ 空仓 20 个交易日。<br>
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
   <span class="dimtxt">P3 不是 D3 的延伸，两者完全独立；下表另附「仅 P3（不挂 D3）」作参照。</span></div>
+  </details>
   <div class="d3state">{state}</div>
   <div class="tblwrap"><table class="d3tbl"><thead><tr>
     <th>同一窗口（{recent.get('base', '')} → {html.escape(str(recent.get('asof', '')))}）</th>
@@ -442,9 +453,11 @@ def _d3_card_html(d3, recent, cost):
     <span class="d3tag">D3 单笔止损 · 参照</span>
     <span class="d3off">当前<b>参照组合</b> —— 非默认口径，仅用于对比 D3 单独生效的效果</span>
   </div>
+  <details class="d3rd"><summary>规则定义（D3）</summary>
   <div class="d3rule">规则：轮动期内，任一笔在<b>换出时</b>相对建仓价亏损 ≥{d3['thr']*100:.0f}%，
   就不立刻买入新头名，改为<b>空仓 {d3['days']} 个交易日</b>，之后按当日排名第 1 名恢复。
   只改「卖出后多久回来」，<b>不改卖出条件、不改选股</b>。</div>
+  </details>
   <div class="d3state">{state}</div>
   <div class="tblwrap"><table class="d3tbl"><thead><tr>
     <th>同一窗口（{recent.get('base', '')} → {html.escape(str(recent.get('asof', '')))}）</th>
@@ -2287,15 +2300,12 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             _tbuy_txt = f"还差 <b>{_tdev:.2f}pp</b>"
         _tsell_txt = f"还差 <b>{_t['to_sell']:.2f}pp</b>"
         if _t["zone"] == "mid":
-            if _t["holding"]:
-                _tnote = (f"介于买线 {_t['buy_line']:.4f} ~ 卖线 {_t['sell_line']:.4f} 之间 → "
-                          f"沿用状态机记忆：<b>继续持有</b>，不动作。"
-                          f"距 +6% 卖线还差 {_t['to_sell']:.2f}pp。")
-                _tnote_cls = "pos"
-            else:
-                _tnote = (f"介于两条线之间且当前<b>未持有</b> → 不追高，"
-                          f"要等回踩到 MA200（{_t['buy_line']:.4f}）才买。")
-                _tnote_cls = ""
+            # ★ 2026-10-26：mid 区间原本还有一句「介于买入线~卖出线之间 → 继续持有，
+            #   距卖线还差 X pp」，但「偏离/距买线/距卖线/状态」在上面的 .tvbar 里已给全，
+            #   「继续持有」也在那儿 —— 三行里同一个事实说了三遍，故 mid 不再输出本句。
+            #   buy / sell 两个区间是**强指令**（该买 / 该卖），继续保留。
+            _tnote = ""
+            _tnote_cls = ""
         elif _t["zone"] == "buy":
             if _t["holding"]:
                 _tnote = (f"收盘已跌破买线（回踩 MA200），本就持有 → <b>继续持有 / 可补仓</b>。")
@@ -2318,9 +2328,11 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             f"<td class='nm2'>{html.escape(_t['name'] or '')} "
             f"<span class='tag tvt'>策略二 · 每日跟踪</span></td>"
             f"<td>{_tact}</td>"
-            f"<td class='rs'>收盘 <b>{_t['close']:.3f}</b> vs MA200 <b>{_t['ma200']:.4f}</b>"
-            f" → 偏离 <b style='color:{_tcls}'>{_tdev:+.2f}%</b>；"
-            f"当前状态<b>{_tstate}</b>（{_lb}、{_ls}）</td></tr>")
+            # ★ 2026-10-26：这里原本还写「偏离 +2.42%；当前状态持有中」，
+            #   与下一行进度条（.tvbar）里的「偏离 / 状态」完全重复。
+            #   依据列只留下进度条没有的信息：最近买卖日 + 收盘/MA200 原始价。
+            f"<td class='rs'>收盘 <b>{_t['close']:.3f}</b> / MA200 "
+            f"<b>{_t['ma200']:.4f}</b>；{_lb}、{_ls}</td></tr>")
         _trow += (
             f"<tr class='tvx'><td colspan='4'>"
             f'<div class="tvbar">'
@@ -2334,8 +2346,8 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             f'</div>'
             # 近 1 年偏离区间：判「现在 +2.42% 该不该等回踩」的参照
             + _hspan_html(_t.get("span"), buy_label="MA200 买线")
-            + f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>'
-            f"</td></tr>")
+            + (f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>' if _tnote else "")
+            + "</td></tr>")
 
     guide_rows = [
         f"<tr><td class='mono'>{final_code}</td>"
@@ -2395,11 +2407,19 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
         f"<tr><td>其他</td><td class='nm2'>既非今日建议持仓、也非防守位</td>"
         f"<td>换到 <span class='mono'>{final_code}</span> {html.escape(final_nm)}</td>"
         f"<td class='rs'>换仓成本按双边约 0.2% 估算</td></tr>")
-    guide_note = f"今日建议持仓 = <b>{final_code} {html.escape(final_nm)}</b>。{final_note}。"
-    if not overheated:
-        guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热、你现在持有的是排名第一的轮动 ETF，"
-                       "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
-                       "下方操作指南已列出备用。</span>")
+    # ★ 2026-10-26：正常轮动日这段文字是**第三遍重复**（状态条一遍、这里一遍、
+    #   操作表首行「依据」列一遍），三句在说同一件事：「持 513100、无需动作、未过热」。
+    #   故只在「非正常轮动」（过热熔断 / 粘性带保留旧仓 / 空仓）时才保留文字解释——
+    #   那几种情形下原因需要展开，且表格依据列写不下。
+    _guide_normal = (not overheated) and final_code == eff0 and final_nm == eff0_nm
+    if _guide_normal:
+        guide_note = ""
+    else:
+        guide_note = f"今日建议持仓 = <b>{final_code} {html.escape(final_nm)}</b>。{final_note}。"
+        if not overheated:
+            guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热、你现在持有的是排名第一的轮动 ETF，"
+                           "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
+                           "下方操作指南已列出备用。</span>")
 
     # ---- 防守位操作指南（规则常驻报告，不必记；强度随是否进入防守期切换）----
     if ve_state == "数据不足":
@@ -3202,10 +3222,8 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 </style></head><body><div class="wrap">
 <div class="hero">
 <h1>ETF 动横阶梯轮动报告</h1>
-<div class="sub">锚定日 <b>{pivot}</b> ｜ 窗口 <b>动横{window}</b> ｜ 粘性带 <b>领先&lt;{sticky:.1f}pp 视为平手</b>
- ｜ 主选池 <b>{len(ranked)} 只轮动 + {len([r for r in snap if r.role == 'defensive'])} 只防守</b>
- ｜ 备选观察池 <b>{len(watch)} 只（报告末尾，不参与调仓）</b>
- ｜ 数据源 <b>{html.escape(source)}</b> ｜ 生成 {now}</div>
+<div class="sub"><b>动横{window}</b> · 粘性带 <b>{sticky:.1f}pp</b> · 主选 <b>{len(ranked)}+{len([r for r in snap if r.role == 'defensive'])}</b> 只
+ ｜ 生成 {now}</div>
 </div>
 {fresh_html}
 
@@ -3215,7 +3233,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准</span>
 </div>
 {_combo_summary_html(recent)}
-<div class="note" style="margin-bottom:10px">{guide_note}</div>
+{('<div class="note" style="margin-bottom:8px">' + guide_note + '</div>') if guide_note else ''}
 <table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead>
 <tbody>{''.join(guide_rows)}</tbody></table>
 </section>
