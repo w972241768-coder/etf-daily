@@ -3043,6 +3043,64 @@ def _fmt_factors(res):
         return ""
 
 
+# 手机端「一键刷新」浮窗：点击触发 GitHub Actions 工作流重算日报。
+# 关键安全设计：GitHub Token 仅由用户在本机浏览器 localStorage 保存，
+# 不进入仓库源码、不发送给任何第三方，只发往 api.github.com。
+# 注意：report 主体是一个 f-string（其中 { } 会被当格式字段），本常量必须是
+# 普通字符串（非 f-string），并在写文件时用 .replace 注入到 </body> 前，
+# 以避免 JS 里的 { }（如 JSON.stringify({ref:...})）被 f-string 误解析。
+REFRESH_WIDGET = """
+<style>
+#rfFab{position:fixed;right:14px;bottom:14px;z-index:9999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+#rfBtn{background:#3d57e5;color:#fff;border:none;border-radius:24px;padding:12px 18px;font-size:15px;font-weight:600;box-shadow:0 4px 14px rgba(61,87,229,.45);cursor:pointer}
+#rfPanel{display:none;position:fixed;right:14px;bottom:66px;z-index:9999;width:min(88vw,320px);background:#fff;border:1px solid #e2e5ea;border-radius:12px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.18);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;color:#202020;box-sizing:border-box}
+#rfPanel h4{margin:0 0 8px;font-size:14px;color:#3d57e5}
+#rfPanel p{margin:0 0 8px;line-height:1.5;color:#42474f}
+#rfToken{width:100%;box-sizing:border-box;padding:8px;border:1px solid #e2e5ea;border-radius:8px;font-size:13px;margin-bottom:8px}
+#rfPanel button{background:#3d57e5;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;margin:0 6px 0 0}
+#rfPanel a{color:#3d57e5}
+#rfStatus{margin-top:8px;line-height:1.5;color:#42474f}
+</style>
+<div id="rfFab"><button id="rfBtn" onclick="rfToggle()">🔄 刷新日报</button></div>
+<div id="rfPanel">
+  <h4>一键刷新（触发云端重算）</h4>
+  <p>首次使用粘贴一次 <b>GitHub Token</b>（仅需 repo 权限）。<b>仅存你本机浏览器</b>，不进仓库、不发给任何第三方，只发往 api.github.com。</p>
+  <input id="rfToken" type="password" placeholder="ghp_... 或 github_pat_..." />
+  <button onclick="rfSaveRun()">保存并刷新</button>
+  <button onclick="rfRun()">直接刷新</button>
+  <div id="rfStatus"></div>
+</div>
+<script>
+(function(){
+  var REPO="w972241768-coder/etf-daily", WF="daily.yml", REF="main";
+  function el(id){return document.getElementById(id);}
+  window.rfToggle=function(){var p=el("rfPanel");p.style.display=p.style.display==="none"?"block":"none";};
+  var saved=localStorage.getItem("rfGhToken");
+  if(saved){el("rfToken").value=saved;el("rfToken").placeholder="已保存（可留空直接刷新）";}
+  function run(){
+    var tok=el("rfToken").value.trim()||localStorage.getItem("rfGhToken")||"";
+    var st=el("rfStatus");
+    if(!tok){st.textContent="请先粘贴 GitHub Token。";return;}
+    st.textContent="正在触发刷新，GitHub 云端约 2~3 分钟后重算完成，届时刷新本页即可。";
+    fetch("https://api.github.com/repos/"+REPO+"/actions/workflows/"+WF+"/dispatches",{
+      method:"POST",
+      headers:{"Authorization":"token "+tok,"Accept":"application/vnd.github+json","Content-Type":"application/json"},
+      body:JSON.stringify({ref:REF})
+    }).then(function(r){
+      if(r.status===204){st.innerHTML="✅ 已触发！<b>约 2~3 分钟后</b>本页会自动刷新（或手动刷新）。";setTimeout(function(){location.reload();},180000);}
+      else if(r.status===401||r.status===403){st.textContent="❌ Token 无效或无权限（需 repo 权限）。";}
+      else{st.textContent="⚠️ 返回状态 "+r.status+"，可能已触发或受限，请稍后看本页是否更新。";}
+    }).catch(function(e){
+      st.innerHTML="❌ 浏览器跨域(CORS)受限导致请求失败。请改用：右上菜单 → 打开 <a href='https://github.com/"+REPO+"/actions/workflows/"+WF+"' target='_blank'>Actions 手动触发</a>。";
+    });
+  }
+  window.rfRun=run;
+  window.rfSaveRun=function(){localStorage.setItem("rfGhToken",el("rfToken").value.trim());run();};
+})();
+</script>
+"""
+
+
 def main():
     ap = argparse.ArgumentParser(description="ETF 动横阶梯轮动 · 一键报告（在线前复权，可回退本地）")
     ap.add_argument("--pool", default=None, help="标的池 CSV (code,name,role)")
@@ -3347,6 +3405,7 @@ def main():
     out_dir = a.out and os.path.dirname(os.path.abspath(a.out)) or DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     out_path = a.out or os.path.join(out_dir, f"etf_rotation_{pivot}.html")
+    html_doc = html_doc.replace("</body>", REFRESH_WIDGET + "\n</body>", 1)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html_doc)
 
