@@ -3702,7 +3702,7 @@ def main():
     html_doc = html_doc.replace(
         "</body>",
         REFRESH_WIDGET.replace("__RF_GEN__", gen_now) + PWA_TAIL + "\n</body>", 1)
-    with open(out_path, "w", encoding="utf-8") as f:
+    with open(out_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(html_doc)
 
     print("=" * 70)
@@ -3768,7 +3768,7 @@ def main():
             _sd = os.path.dirname(os.path.abspath(a.state_out))
             if _sd:
                 os.makedirs(_sd, exist_ok=True)
-            with open(a.state_out, "w", encoding="utf-8") as _f:
+            with open(a.state_out, "w", encoding="utf-8", newline="\n") as _f:
                 json.dump(_snap_state, _f, ensure_ascii=False, indent=1,
                           sort_keys=True, default=str)
             print(f"状态快照: {a.state_out}")
