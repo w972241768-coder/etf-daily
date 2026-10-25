@@ -90,6 +90,14 @@
     white-space:normal}
   .gidxnote.hot{background:#fff4ec;border-color:#ffd0b0;color:#8a2c08}
   .gidxnote.pos{background:#f2fbf6;border-color:#c9ecd9;color:#0b6b3a}
+  /* 「近 1 年偏离区间」= 历史参照条：中性灰虚线，刻意弱于上面的 action 条（暖/冷实线），
+     避免被误读成「今天要做的事」 */
+  .hspan{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 14px;margin-top:5px;
+    padding:6px 10px;border:1px dashed #d8dee6;border-radius:8px;background:#fafbfc;
+    font-size:11.5px;line-height:1.65;color:#4b5563;min-width:0}
+  .hspan .k{font-weight:600;color:#5b6472;white-space:nowrap}
+  .hspan .v{white-space:nowrap}
+  .hspan .v i{font-style:normal;color:#8b93a1;margin-left:4px;font-size:11px}
   /* 策略二（512890）：每日跟踪行 */
   table.gtbl tr.tvmk td{border-bottom:none}
   table.gtbl tr.tvx td{padding:0 7px 8px}
@@ -213,7 +221,7 @@
 <div class="sub">锚定日 <b>2026-10-23</b> ｜ 窗口 <b>动横20</b> ｜ 粘性带 <b>领先&lt;1.0pp 视为平手</b>
  ｜ 主选池 <b>9 只轮动 + 1 只防守</b>
  ｜ 备选观察池 <b>15 只（报告末尾，不参与调仓）</b>
- ｜ 数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b> ｜ 生成 2026-10-25 02:44</div>
+ ｜ 数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b> ｜ 生成 2026-10-25 03:40</div>
 </div>
 <div class="fresh live">✓ <b>在线前复权数据</b>　数据源 <b>新浪财经 · 不复权日线（前复权因子校正）</b>　｜　数据截至 <b>2026-10-23</b>（已收盘/非交易时段）　｜　成功 25/25 只。分红与拆分已按前复权还原，无除权假跳空。</div>
 
@@ -237,7 +245,7 @@
 </div>
 <div class="note" style="margin-bottom:10px">今日建议持仓 = <b>513100 纳指ETF</b>。头名未过热，按「粘性带后有效头名」持仓。<br><span class='dimtxt'>ℹ️ 头名未过热、你现在持有的是排名第一的轮动 ETF，<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，下方操作指南已列出备用。</span></div>
 <table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead>
-<tbody><tr><td class='mono'>513100</td><td class='nm2'>纳指ETF <span class='tag rot'>今日建议持仓</span></td><td><b>无需动作</b></td><td class='rs'>正常轮动（未触发过热熔断），当前持仓已与今日建议一致，不产生交易与成本</td></tr><tr class='defdim defmain'><td class='mono'>512040</td><td class='nm2'>价值ETF富国 <span class='tag def'>防守位</span></td><td class='dimtxt'>本轮无需关注</td><td class='rs dimtxt'>仅当头名乖离 &gt; 12% 或领先 &gt; 15pp（过热熔断）时才启用；届时按下方「防守位操作指南」执行</td></tr><tr class='defx dimx'><td colspan='4'><div class="gidxbar"><span class="k">MA200 偏离（买线 −3%）</span><span class="v">基金 512040 <b style="color:#0f9d58">-4.38%</b><i>已破 1.38pp</i></span><span class="v">指数 931052 <b style="color:#0f9d58">-6.38%</b><i>已破 3.38pp</i></span><span class="v">口径差 <b>+2.00pp</b></span></div><div class="gidxnote pos">✅ 两个口径都已跌破 −3% → 按价值引擎<b>该建仓 / 补仓</b>防守位</div></td></tr><tr class='tvmk tvmid'><td class='mono'>512890</td><td class='nm2'>红利低波ETF华泰柏瑞 <span class='tag tvt'>策略二 · 每日跟踪</span></td><td><b>继续持有</b></td><td class='rs'>收盘 <b>1.201</b> vs MA200 <b>1.1726</b> → 偏离 <b style='color:#d4380d'>+2.42%</b>；当前状态<b>持有中</b>（最近买入 2026-01-05、最近卖出 2025-11-10）</td></tr><tr class='tvx'><td colspan='4'><div class="tvbar"><span class="k">规则：回踩 MA200 买 / 超 +6% 卖</span><span class="v">买线 <b>1.1726</b><i>还差 <b>2.42pp</b></i></span><span class="v">卖线 <b>1.2430</b><i>还差 <b>3.58pp</b></i></span><span class="v">偏离 <b style="color:#d4380d">+2.42%</b></span><span class="v">状态 <b>持有中</b></span></div><div class="gidxnote pos">介于买线 1.1726 ~ 卖线 1.2430 之间 → 沿用状态机记忆：<b>继续持有</b>，不动作。距 +6% 卖线还差 3.58pp。</div></td></tr><tr><td>其他</td><td class='nm2'>既非今日建议持仓、也非防守位</td><td>换到 <span class='mono'>513100</span> 纳指ETF</td><td class='rs'>换仓成本按双边约 0.2% 估算</td></tr></tbody></table>
+<tbody><tr><td class='mono'>513100</td><td class='nm2'>纳指ETF <span class='tag rot'>今日建议持仓</span></td><td><b>无需动作</b></td><td class='rs'>正常轮动（未触发过热熔断），当前持仓已与今日建议一致，不产生交易与成本</td></tr><tr class='defdim defmain'><td class='mono'>512040</td><td class='nm2'>价值ETF富国 <span class='tag def'>防守位</span></td><td class='dimtxt'>本轮无需关注</td><td class='rs dimtxt'>仅当头名乖离 &gt; 12% 或领先 &gt; 15pp（过热熔断）时才启用；届时按下方「防守位操作指南」执行</td></tr><tr class='defx dimx'><td colspan='4'><div class="gidxbar"><span class="k">MA200 偏离（买线 −3%）</span><span class="v">基金 512040 <b style="color:#0f9d58">-4.38%</b><i>已破 1.38pp</i></span><span class="v">指数 931052 <b style="color:#0f9d58">-6.38%</b><i>已破 3.38pp</i></span><span class="v">口径差 <b>+2.00pp</b></span></div><div class="hspan"><span class="k">近 1 年 MA200 偏离区间（243 日）</span><span class="v">最深回踩 <b style="color:#0f9d58">-5.03%</b><i>2026-10-22</i></span><span class="v">最高冲高 <b style="color:#d4380d">+19.53%</b><i>2026-01-28</i></span><span class="v">当前 <b style="color:#0f9d58">-4.38%</b>位于 <b>3 分位</b><i>≈近 1 年最便宜</i></span><span class="v">−3% 买线下方 <b>7/243</b> 日（2.9%）</span><span class="v">更长期 · 3 年 <b>-8.66%</b><i>当前 15 分位</i></span><span class="v">更长期 · 5 年 <b>-12.76%</b><i>当前 26 分位</i></span><span class="v dimtxt">指数口径 -7.06% ~ +17.55%</span><span class="v dimtxt">窗口 2025-10-23 ~ 2026-10-23</span></div><div class="gidxnote pos">✅ 两个口径都已跌破 −3% → 按价值引擎<b>该建仓 / 补仓</b>防守位</div></td></tr><tr class='tvmk tvmid'><td class='mono'>512890</td><td class='nm2'>红利低波ETF华泰柏瑞 <span class='tag tvt'>策略二 · 每日跟踪</span></td><td><b>继续持有</b></td><td class='rs'>收盘 <b>1.201</b> vs MA200 <b>1.1726</b> → 偏离 <b style='color:#d4380d'>+2.42%</b>；当前状态<b>持有中</b>（最近买入 2026-01-05、最近卖出 2025-11-10）</td></tr><tr class='tvx'><td colspan='4'><div class="tvbar"><span class="k">规则：回踩 MA200 买 / 超 +6% 卖</span><span class="v">买线 <b>1.1726</b><i>还差 <b>2.42pp</b></i></span><span class="v">卖线 <b>1.2430</b><i>还差 <b>3.58pp</b></i></span><span class="v">偏离 <b style="color:#d4380d">+2.42%</b></span><span class="v">状态 <b>持有中</b></span></div><div class="hspan"><span class="k">近 1 年 MA200 偏离区间（243 日）</span><span class="v">最深回踩 <b style="color:#0f9d58">-9.38%</b><i>2026-06-30</i></span><span class="v">最高冲高 <b style="color:#d4380d">+7.77%</b><i>2025-11-12</i></span><span class="v">当前 <b style="color:#d4380d">+2.42%</b>位于 <b>69 分位</b><i>近 1 年偏贵区</i></span><span class="v">MA200 买线下方 <b>109/243</b> 日（44.9%）</span><span class="v">更长期 · 3 年 <b>-9.38%</b><i>当前 51 分位</i></span><span class="v">更长期 · 5 年 <b>-9.38%</b><i>当前 42 分位</i></span><span class="v dimtxt">窗口 2025-10-23 ~ 2026-10-23</span></div><div class="gidxnote pos">介于买线 1.1726 ~ 卖线 1.2430 之间 → 沿用状态机记忆：<b>继续持有</b>，不动作。距 +6% 卖线还差 3.58pp。</div></td></tr><tr><td>其他</td><td class='nm2'>既非今日建议持仓、也非防守位</td><td>换到 <span class='mono'>513100</span> 纳指ETF</td><td class='rs'>换仓成本按双边约 0.2% 估算</td></tr></tbody></table>
 <div class="sub" style="margin-top:8px">本指引基于锚定日 <b>2026-10-23</b> 的信号。
 若为盘中实时数据，数字会随盘中波动，请以<b>收盘价</b>为准再做操作。</div>
 </div>
@@ -634,8 +642,8 @@ table.d3tbl.sm{font-size:11.5px}
       <div class="cmps">3353.15 vs MA200 3581.68（2026-10-23）→ <b>已跌破</b> −3% 建仓线</div>
     </div>
     <div class="cmpgap hot">
-      <b>口径差 +2.00pp</b>（基金 − 指数；近 281 个交易日
-      +0.63 ~ +2.66pp、均值 +1.84pp）。这不是数据错误，是
+      <b>口径差 +2.00pp</b>（基金 − 指数；近 500 个交易日
+      +0.40 ~ +2.66pp、均值 +1.64pp）。这不是数据错误，是
       <b>系统性偏移</b>：基金用前复权价（分红已加回 → 历史价被压低、MA200 更平 → 偏离天然偏高），
       指数是价格指数（成分股除息直接扣点位 → 偏离天然偏低）。<b>同一条 −3% 线对两者不是同一件事。</b><br>
       ✅ <b>两个口径都已在 −3% 建仓线下方</b>（基金 -4.38% / 指数 -6.38%）→ 按价值引擎规则，<b>现在该建仓 / 补仓 512040</b>，并进入「持有」状态直到偏离涨过 +6%。

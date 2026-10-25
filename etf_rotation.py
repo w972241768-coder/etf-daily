@@ -1190,6 +1190,147 @@ def _curve_block(curve):
 """
 
 
+# ---------------------------------------------------------------- 近 1 年偏离区间
+def _dev_win_stats(s, days: int, buy_line=None):
+    """单窗口内 MA200 偏离的极值 / 当前分位 / 买线下方天数（s 已 dropna 升序）。
+
+    窗口优先按**日历**切（「近 1 年」= 最近 365 天）；index 解析不了日期时
+    按 244 日/年 折算成 bar 数兜底。样本 < 20 根返回 None。
+    """
+    if s is None or len(s) == 0:
+        return None
+    w = None
+    try:
+        t = pd.to_datetime(s.index)
+        # ⚠️ `DatetimeIndex >= Timestamp` 返回 **numpy.ndarray** 而非 pandas 数组，
+        #    早先多写一个 `.values` 直接 AttributeError → 整段静默退化成 tail()，
+        #    窗口天数与声称的「近 1 年」不符（实测少 18 天）。用 timedelta 而非
+        #    pd.Timedelta，避免 pandas 2.3 + numpy 2.x 的 generic-unit 弃用警告刷屏。
+        w = s[t >= (t[-1] - timedelta(days=int(days)))]
+    except Exception:                                  # noqa: BLE001
+        w = None
+    if w is None or len(w) < 20:
+        w = s.tail(max(20, int(round(days * 244 / 365.0))))
+    if len(w) < 20:
+        return None
+
+    def _d(x):
+        try:
+            return pd.Timestamp(x).strftime("%Y-%m-%d")
+        except Exception:                              # noqa: BLE001
+            return str(x)[:10]
+
+    lo, hi = float(w.min()), float(w.max())
+    cur = float(s.iloc[-1])
+    pos = 50.0 if hi - lo < 1e-9 else (cur - lo) / (hi - lo) * 100.0
+    nb = nbp = None
+    if buy_line is not None:
+        nb = int((w <= float(buy_line)).sum())
+        nbp = nb / len(w) * 100.0
+    return dict(
+        lo=lo, lo_date=_d(w.idxmin()), hi=hi, hi_date=_d(w.idxmax()),
+        cur=cur, pos=max(0.0, min(100.0, pos)), n=int(len(w)),
+        start=_d(w.index[0]), end=_d(w.index[-1]),
+        n_below=nb, below_pct=nbp,
+    )
+
+
+def _ma_dev_span(dev, *, days: int = 365, buy_line=None, extra_years=(3, 5)):
+    """「近 N 年 MA200 偏离」的极值区间 —— 给当前偏离找一个历史坐标。
+
+    dev      : 偏离序列（百分数，index 为交易日；可含 NaN）
+    buy_line : 买线偏离（%）。给了就统计「窗口内有多少交易日低于买线」，
+               用来回答「这种入场机会一年能遇到几次 / 有多稀缺」
+    extra_years : 额外给这些年的**同一统计**（只取极值与当前分位）。
+
+    ⚠️ 为什么必须给长窗口：只看 1 年会严重误判。实测 512040 近 1 年最深仅
+       −5.03%、当前 3 分位（看着像一年最便宜），但近 3 年最深 −8.66%、近 5 年
+       −12.76%，当前在 5 年区间只是 26 分位 ⇒ 单窗口会把「年内相对位置」误读成
+       「历史低位」。长窗口就是用来防这个的。
+
+    返回 dict(lo, lo_date, hi, hi_date, cur, pos, n, start, end, n_below,
+              below_pct, extra=[{years, lo, lo_date, hi, pos, n}])；数据不足返回 None。
+    """
+    if dev is None:
+        return None
+    try:
+        s = pd.Series(dev).astype(float).dropna()
+    except Exception:                                  # noqa: BLE001
+        return None
+    if len(s) < 30:
+        return None
+
+    base = _dev_win_stats(s, days, buy_line)
+    if base is None:
+        return None
+    extra = []
+    for yr in extra_years or ():
+        st = _dev_win_stats(s, 365 * int(yr), buy_line)
+        if st is None or st["n"] < 244:                # 不足约 1 年样本就不硬凑
+            continue
+        extra.append(dict(years=int(yr), lo=st["lo"], lo_date=st["lo_date"],
+                          hi=st["hi"], pos=st["pos"], n=st["n"]))
+    base["extra"] = extra
+    return base
+
+
+def _span_word(pos: float) -> str:
+    """把分位翻成一句人话（低 = 便宜，因为偏离越低越接近/跌破 MA200）。"""
+    if pos <= 5.0:
+        return "≈近 1 年最便宜"
+    if pos <= 33.0:
+        return "近 1 年偏便宜区"
+    if pos <= 67.0:
+        return "近 1 年中性区"
+    if pos <= 95.0:
+        return "近 1 年偏贵区"
+    return "≈近 1 年最贵"
+
+
+def _hspan_html(span, *, label: str = "近 1 年 MA200 偏离区间",
+                buy_label: str = "", alt=None, alt_label: str = "指数口径") -> str:
+    """渲染「历史参照」条带：近 1 年偏离极值 + 当前所处位置 + 买线下方天数 + 长窗口参照。
+
+    与 512040 的暖色 action 条（.gidxbar）、512890 的冷色 action 条（.tvbar）
+    用中性灰虚线区分 —— 这是**判贵贱的参照数据**，不是当日动作信号。
+    alt(可选) = 另一口径的同一统计，只在末尾并排给极值，省宽度。
+    """
+    if not span:
+        return ""
+    RED_, GRN_ = RED, GREEN
+
+    def _c(v):
+        return RED_ if v > 0 else GRN_
+
+    parts = [
+        f'<span class="k">{html.escape(label)}（{span["n"]} 日）</span>',
+        f'<span class="v">最深回踩 <b style="color:{_c(span["lo"])}">{span["lo"]:+.2f}%</b>'
+        f'<i>{html.escape(span["lo_date"])}</i></span>',
+        f'<span class="v">最高冲高 <b style="color:{_c(span["hi"])}">{span["hi"]:+.2f}%</b>'
+        f'<i>{html.escape(span["hi_date"])}</i></span>',
+        f'<span class="v">当前 <b style="color:{_c(span["cur"])}">{span["cur"]:+.2f}%</b>'
+        f'位于 <b>{span["pos"]:.0f} 分位</b><i>{_span_word(span["pos"])}</i></span>',
+    ]
+    if span.get("n_below") is not None:
+        _bl = html.escape(buy_label) if buy_label else "买线"
+        parts.append(
+            f'<span class="v">{_bl}下方 <b>{span["n_below"]}/{span["n"]}</b> 日'
+            f'（{span["below_pct"]:.1f}%）</span>')
+    if span.get("extra"):
+        # 每个长窗口单独一格（不合并成一句）：单格文字短，flex-wrap 才能在各宽度下
+        # 自然换行、不会撑出横向滚动条；合并成一长句在 600px 屏会超出容器。
+        for e in span["extra"]:
+            parts.append(
+                f'<span class="v">更长期 · {e["years"]} 年 <b>{e["lo"]:+.2f}%</b>'
+                f'<i>当前 {e["pos"]:.0f} 分位</i></span>')
+    if alt:
+        parts.append(
+            f'<span class="v dimtxt">{html.escape(alt_label)} '
+            f'{alt["lo"]:+.2f}% ~ {alt["hi"]:+.2f}%</span>')
+    parts.append(f'<span class="v dimtxt">窗口 {span["start"]} ~ {span["end"]}</span>')
+    return '<div class="hspan">' + "".join(parts) + "</div>"
+
+
 # ---------------------------------------------------------------- 指数口径对照
 # 512040 价值ETF富国（场内简称 价值100ETF）跟踪【中证国信价值指数 931052.CSI】。
 IDX_OF_DEF = {"512040": ("931052", "中证国信价值")}
@@ -1211,10 +1352,12 @@ def build_index_cmp(df, def_code, ma=200, index_code=None, lookback=500):
         return None
     index_code, index_name = info
     try:
-        g = df[df["code"] == def_code].sort_values("date")
-        sf = g.set_index("date")["close"].astype(float)
-        sf = sf[~sf.index.duplicated(keep="last")].sort_index()
-        if len(sf) < ma + 5:
+        # ⚠️ 必须用「长历史 CSV 打底 + 在线补尾」的合并序列，不能只用在线：
+        #    512040 在 2023-10-11 有份额折算，新浪日线（不复权）留一根 −50.1% 假跳空，
+        #    单靠常数复权因子修不掉。近 1 年窗口虽不含它，但「近 3/5 年参照」和
+        #    MA200 的早期回溯段会中招 ⇒ 用已修正的长历史（整段按复权比重定基）。
+        sf, _vnotes = _ve_merged_series(df, def_code, ma=ma)
+        if sf is None or len(sf) < ma + 5:
             return None
         maf = sf.rolling(ma).mean()
         devf = (sf / maf - 1.0) * 100.0
@@ -1245,6 +1388,10 @@ def build_index_cmp(df, def_code, ma=200, index_code=None, lookback=500):
             gap_p90=float(rec["gap"].quantile(0.90)),
             n_gap_days=both, n_days=int(len(rec)),
             ohlc_bars=int(len(si)),
+            # 近 1 年偏离区间（2026-10-25 用户要求）：给「当前偏离算不算便宜」一个历史坐标。
+            # 两口径都算 —— 基金口径用于实盘判断，指数口径只作交叉参照。
+            f_span=_ma_dev_span(devf, buy_line=-3.0),
+            i_span=_ma_dev_span(devi, buy_line=-3.0),
         )
     except Exception:                                  # noqa: BLE001
         return None
@@ -1357,6 +1504,10 @@ def build_ve_track(df, code, *, ma=200, buy=1.00, sell=1.06, name=""):
         last_buy=(last_buy[-1] if len(last_buy) else None),
         last_sell=(last_sell[-1] if len(last_sell) else None),
         n=len(s), d0=s.index[0], notes=notes,
+        # 近 1 年偏离区间（2026-10-25）：买线偏离 = (buy-1)*100，
+        # 例 512890 回踩即买 → 0.0；512040 跌 3% 买 → −3.0。
+        span=_ma_dev_span((s / mav - 1.0) * 100.0,
+                          buy_line=(buy - 1.0) * 100.0),
     )
 
 
@@ -2012,6 +2163,9 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
             f'<i>{_dist(_idv)}</i></span>'
             f'<span class="v">口径差 <b>{idx["gap"]:+.2f}pp</b></span>'
             '</div>'
+            # 近 1 年偏离区间：判「今天 −4.38% 到底算便宜还是还在半山腰」的参照
+            + _hspan_html(idx.get("f_span"), buy_label="−3% 买线",
+                          alt=idx.get("i_span"), alt_label="指数口径")
             + (f'<div class="gidxnote {_gtip_cls}">{_gtip}</div>' if _gtip else "")
             + "</td></tr>")
     else:
@@ -2088,7 +2242,9 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
             f'<span class="v">偏离 <b style="color:{_tcls}">{_tdev:+.2f}%</b></span>'
             f'<span class="v">状态 <b>{_tstate}</b></span>'
             f'</div>'
-            f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>'
+            # 近 1 年偏离区间：判「现在 +2.42% 该不该等回踩」的参照
+            + _hspan_html(_t.get("span"), buy_label="MA200 买线")
+            + f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>'
             f"</td></tr>")
 
     guide_rows = [
@@ -2615,6 +2771,14 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
     white-space:normal}}
   .gidxnote.hot{{background:#fff4ec;border-color:#ffd0b0;color:#8a2c08}}
   .gidxnote.pos{{background:#f2fbf6;border-color:#c9ecd9;color:#0b6b3a}}
+  /* 「近 1 年偏离区间」= 历史参照条：中性灰虚线，刻意弱于上面的 action 条（暖/冷实线），
+     避免被误读成「今天要做的事」 */
+  .hspan{{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 14px;margin-top:5px;
+    padding:6px 10px;border:1px dashed #d8dee6;border-radius:8px;background:#fafbfc;
+    font-size:11.5px;line-height:1.65;color:#4b5563;min-width:0}}
+  .hspan .k{{font-weight:600;color:#5b6472;white-space:nowrap}}
+  .hspan .v{{white-space:nowrap}}
+  .hspan .v i{{font-style:normal;color:#8b93a1;margin-left:4px;font-size:11px}}
   /* 策略二（512890）：每日跟踪行 */
   table.gtbl tr.tvmk td{{border-bottom:none}}
   table.gtbl tr.tvx td{{padding:0 7px 8px}}
