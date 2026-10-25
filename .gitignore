@@ -1,0 +1,23 @@
+# ===== Python 缓存 =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== WorkBuddy 应用产物 =====
+*.genie
+
+# ===== 生成的报告产物 =====
+out/
+
+# ===== 飞书鉴权二维码 / 消息池（敏感，含登录凭据，禁止上传）=====
+feishu_auth_qr*.png
+feishu_msg_pool.md
+
+# ===== 项目记忆（含策略细节与个人笔记，公开仓库不建议上传）=====
+.workbuddy/
+
+# ===== 系统 / 编辑器垃圾 =====
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini

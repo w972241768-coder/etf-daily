@@ -1,0 +1,66 @@
+name: ETF 轮动日报 · 每日生成
+
+# 免费额度说明：
+#   · 公开仓库 → Actions 分钟数不计量，Pages 托管免费
+#   · 私有仓库 → 每月 2000 分钟免费（本任务每次约 2~3 分钟，30 天约 90 分钟）
+#     但私有仓库开 Pages 需要 GitHub Pro（付费）⇒ 免费方案请用「私有代码仓 + 公开产物仓」
+#     或直接公开仓库（代价：策略代码与回测参数公开）
+
+on:
+  schedule:
+    # UTC 08:30 = 北京 16:30 = 南非 10:30（周一到周五）
+    # 新浪日线收盘后常延迟到 16:00 才更新，所以定在 16:30
+    - cron: "30 8 * * 1-5"
+  workflow_dispatch:          # 支持在 GitHub 网页上手动点一次立刻跑
+
+permissions:
+  contents: write             # 需要写权限才能把生成的 HTML 提交回仓库
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas numpy
+
+      - name: 解压长历史数据
+        run: gunzip -kf tdx_adj_long_2019_2026.csv.gz
+
+      - name: 生成日报
+        env:
+          OPENBLAS_NUM_THREADS: "1"
+          OMP_NUM_THREADS: "1"
+          MPLBACKEND: "Agg"
+          TZ: Asia/Shanghai
+        run: |
+          mkdir -p docs
+          python etf_rotation.py --no-open --out docs/index.html
+          touch docs/.nojekyll
+          echo "--- 产物 ---"
+          ls -lh docs/
+
+      - name: 提交并推送（Pages 自动更新）
+        run: |
+          git config user.name  "etf-daily-bot"
+          git config user.email "etf-daily-bot@users.noreply.github.com"
+          git add docs/
+          if git diff --cached --quiet; then
+            echo "内容无变化，跳过提交"
+          else
+            git commit -m "chore: 日报 $(TZ=Asia/Shanghai date +%Y-%m-%d) $(TZ=Asia/Shanghai date +%H:%M) CST"
+            git push
+          fi
+
+      # 失败时保留上一版 docs/index.html，Pages 继续显示上一份可用报告
