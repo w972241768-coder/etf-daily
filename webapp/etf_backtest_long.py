@@ -148,6 +148,52 @@ def value_engine_hold(panel: pd.DataFrame, code: str, dates: pd.DatetimeIndex,
     return pd.Series(out)
 
 
+def roc_head_state(panel: pd.DataFrame, pool: List[str], dates: pd.DatetimeIndex,
+                   W: int = 20, n: int = 60, q: float = 0.95,
+                   min_periods: int = 250):
+    """头名 ROC(n) 的「是否触发 / 当日分位 / 当日 ROC / 当日阈值」四件套。
+
+    头名 = 当日动横 W 最高的标的；取其 n 日动量 ROC(n)，与**该序列自身的滚动扩张 q 分位**比较
+    （只用历史，无前视偏差）。分位 = 当日值在自身扩张历史中的百分位（0~100）。
+
+    返回 (hold: bool Series, pct: float Series, roc: float Series, thr: float Series)。
+    分位与阈值同源同口径，因此「pct >= q*100」与「hold == True」严格等价。
+    """
+    empty = (pd.Series(False, index=dates), pd.Series(np.nan, index=dates),
+             pd.Series(np.nan, index=dates), pd.Series(np.nan, index=dates))
+    mom = {c: (panel[c] / panel[c].shift(W) - 1.0) * 100.0
+           for c in pool if c in panel.columns}
+    if not mom:
+        return empty
+    mom_df = pd.DataFrame(mom)
+    # 取每行动横最大的列名（=当日头名）。
+    # ⚠ 不用 mom_df.idxmax(axis=1)：pandas 对「全 NA 行」的行为已废弃警告、
+    #   3.0 起直接抛 ValueError（回测前 W 行必然全 NA）。这里手写等价实现：
+    #   跳过 NaN 取最大值所在列（并列取首个），全 NA 行返回 NaN —— 与 2.x 语义一致，
+    #   且不随 pandas 版本变化。
+    _mat = mom_df.to_numpy(dtype="float64", copy=True)
+    _cols = mom_df.columns.to_numpy()
+    _allna = np.isnan(_mat).all(axis=1)
+    _arg = np.where(np.isnan(_mat), -np.inf, _mat).argmax(axis=1)
+    head_codes = pd.Series(np.where(_allna, np.nan, _cols[_arg].astype(object)),
+                           index=mom_df.index)
+    roc_df = pd.DataFrame({c: (panel[c] / panel[c].shift(n) - 1.0) * 100.0
+                           for c in mom_df.columns if c in panel.columns})
+    if roc_df.empty:
+        return empty
+    stacked = roc_df.stack(future_stack=True)
+    hv = stacked.reindex(pd.MultiIndex.from_arrays(
+        [head_codes.index, head_codes.values])).reset_index(level=1, drop=True)
+    hv.index.name = roc_df.index.name
+    hv = hv.reindex(roc_df.index)
+    exp = hv.expanding(min_periods=min_periods)
+    thr = exp.quantile(q)
+    pct = exp.rank(pct=True) * 100.0          # 当日值在自身扩张历史中的百分位
+    hold = (hv >= thr)
+    return (hold.reindex(dates).fillna(False).astype(bool),
+            pct.reindex(dates), hv.reindex(dates), thr.reindex(dates))
+
+
 def roc_head_hold(panel: pd.DataFrame, pool: List[str], dates: pd.DatetimeIndex,
                   W: int = 20, n: int = 60, q: float = 0.95,
                   min_periods: int = 250) -> pd.Series:
@@ -158,24 +204,7 @@ def roc_head_hold(panel: pd.DataFrame, pool: List[str], dates: pd.DatetimeIndex,
       若 >= 该序列的**滚动扩张 q 分位**（只用历史，无前视偏差）⇒ 触发。
     实测该信号触发后头名未来 20 日中位 -4.11%、胜率仅 37%（动量透支）。
     """
-    mom = {c: (panel[c] / panel[c].shift(W) - 1.0) * 100.0
-           for c in pool if c in panel.columns}
-    if not mom:
-        return pd.Series(False, index=dates)
-    mom_df = pd.DataFrame(mom)
-    head_codes = mom_df.idxmax(axis=1)
-    roc_df = pd.DataFrame({c: (panel[c] / panel[c].shift(n) - 1.0) * 100.0
-                           for c in mom_df.columns if c in panel.columns})
-    if roc_df.empty:
-        return pd.Series(False, index=dates)
-    stacked = roc_df.stack(future_stack=True)
-    hv = stacked.reindex(pd.MultiIndex.from_arrays(
-        [head_codes.index, head_codes.values])).reset_index(level=1, drop=True)
-    hv.index.name = roc_df.index.name
-    hv = hv.reindex(roc_df.index)
-    thr = hv.expanding(min_periods=min_periods).quantile(q)
-    out = (hv >= thr).reindex(dates)
-    return out.fillna(False).astype(bool)
+    return roc_head_state(panel, pool, dates, W, n, q, min_periods)[0]
 
 
 def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: int,
@@ -226,8 +255,10 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     cool_until = -1                      # 冷却到期日（含），仅 loss_cool 开启时用
     cools: List[dict] = []               # 冷却事件明细
     cool_days_n = 0
-    roc_hold = (roc_head_hold(panel, pool, dates, W, roc_n, roc_q, roc_min_periods)
-                if roc_q is not None else None)
+    roc_hold = roc_pct = roc_val = None
+    if roc_q is not None:
+        roc_hold, roc_pct, roc_val, _roc_thr = roc_head_state(
+            panel, pool, dates, W, roc_n, roc_q, roc_min_periods)
     roc_until = -1                       # P3 空仓到期日（含），仅 roc_q 开启时用
     roc_cools: List[dict] = []           # P3 触发事件明细
     roc_days_n = 0
@@ -313,10 +344,23 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                     and bool(roc_hold.iloc[i]):
                 roc_until = min(i + roc_days, len(dates) - 1)
                 roc_days_n += 1
+                # ⚠️ 三处口径必须分清（2026-10-25 修）：
+                #   · 触发依据 = **当日动横 W 排名第 1 名**（raw_head）的 ROC(n) 进 95 分位；
+                #   · 当日卖出 = **当时实际持仓**（held，可能是更早买入、尚未换仓的那只）；
+                #   · 旧版把 roc 写成 sig["m"][held]（那是动横20 且是被持仓的），
+                #     导致卡片「ROC60」列显示的其实是持仓的动横20，已修。
+                _rv = float(roc_val.iloc[i]) if roc_val is not None else float("nan")
+                _pv = float(roc_pct.iloc[i]) if roc_pct is not None else float("nan")
+                _hm = sig["m"].get(raw_head, float("nan"))
+                _pm = sig["m"].get(held, float("nan"))
                 roc_cools.append(dict(
-                    date=str(dates[i].date()), code=held,
-                    name=NAMES.get(held, held),
-                    roc=round(float(sig["m"].get(held, float("nan"))), 2),
+                    date=str(dates[i].date()),
+                    head=raw_head, head_name=NAMES.get(raw_head, raw_head),
+                    roc=(round(_rv, 2) if _rv == _rv else None),
+                    pct=(round(_pv, 1) if _pv == _pv else None),
+                    m20=(round(float(_hm), 2) if _hm == _hm else None),
+                    code=held, name=NAMES.get(held, held),
+                    held_m20=(round(float(_pm), 2) if _pm == _pm else None),
                     until=str(dates[roc_until].date()),
                     days=int(np.searchsorted(dates, dates[roc_until]) - i)))
                 if target != "CASH":

@@ -50,6 +50,16 @@ FEISHU_USER = "ou_137e56eb64ada250b5f52fd691f8ec2e"
 RED = "#d4380d"    # 涨 (中国习惯: 红涨)
 GREEN = "#0f9d58"  # 跌 (绿跌)
 
+# ---- 三条策略序列的统一配色（2026-10-25 改）----
+# 旧版「红 / 紫 / 品红」三种色相太近（紫 #7b3fe4 与品红 #c2185b 几乎分不开），
+# 改为「蓝 / 橙 / 玫红」——色相分别约 225° / 36° / 336°，两两间隔足够大。
+# ⚠️ 年度柱状图、净值曲线、图例、注释文字必须全部引用这三个常量，不要再散写颜色。
+CLR_STRAT = "#3d57e5"   # 现用策略（沿用报告主色蓝）
+CLR_D3 = "#e8890c"      # D3 单笔止损（橙）
+CLR_P3 = "#c2185b"      # D3+P3 止盈（玫红）
+CLR_BENCH_SH = "#9aa3b2"  # 上证指数（基准，灰）
+CLR_BENCH_NDX = "#00897b"  # 纳斯达克综合指数（基准，青）
+
 # ---- 策略二：512890 红利低波「回踩 MA200 买 / 超 +6% 卖」每日跟踪 ----
 # 2026-10-21 用户指定。与 512040 价值引擎同一状态机，唯一差别是买线改成「回踩即买」：
 #   512040: 收盘 < MA200×0.97 才买（要求跌破 3 个点，安全垫更厚）
@@ -94,9 +104,9 @@ table.d3tbl.sm{font-size:11.5px}
 .d3sw{background:#fff;border-left:3px solid #3d57e5;border-radius:6px;padding:7px 11px;
   margin-top:9px;line-height:1.7}
 .d3foot{color:#98a1ad;font-size:11.3px;margin-top:8px;line-height:1.6}
-.d3card.p3{background:#fbfaff;border-color:#d3c8f0}
-.d3card.p3 .d3tag{background:#f0eafc;border-color:#d8c9f5;color:#6b3fd4}
-.d3card.p3 .d3sw{border-left-color:#7b3fe4}
+.d3card.p3{background:#fffafc;border-color:#f0c7d6}
+.d3card.p3 .d3tag{background:#fceef4;border-color:#f2c8d9;color:#c2185b}
+.d3card.p3 .d3sw{border-left-color:#c2185b}
 """
 
 
@@ -229,15 +239,33 @@ def _p3_card_html(p3, recent, cost):
                      f'现用策略持 <b>{html.escape(str(p3.get("base_hold_name") or "—"))}</b>')
             act = f'若按 D3+P3 执行：今天应调整为 <b>{html.escape(p3["hold_name"])}</b>。'
 
-        rows_last = "".join(
-            f'<tr><td class="mono">{html.escape(str(x["date"]))}</td>'
-            f'<td>{html.escape(str(x["name"]))}</td>'
-            f'<td class="num" style="color:#6b3fd4">{x["roc"]:+.2f}%</td>'
-            f'<td class="num">{x["days"]} 日</td>'
-            f'<td class="mono">{html.escape(str(x["until"]))}</td></tr>'
-            for x in p3.get("last") or [])
+        def _n(v, unit="%", sign=True):
+            """None/NaN 统一显示「—」，避免卡片出现 nan。"""
+            if not isinstance(v, (int, float)) or v != v:
+                return "—"
+            return f"{v:+.2f}{unit}" if sign else f"{v:.2f}{unit}"
+
+        rows_last = ""
+        for x in (p3.get("last") or []):
+            _p = x.get("pct")
+            _pcell = (f'<span style="color:{CLR_P3};font-weight:700">{_p:.1f} 分位</span>'
+                      if isinstance(_p, (int, float)) and _p == _p else "—")
+            _head_cell = (f'{html.escape(str(x.get("head_name") or "—"))}'
+                          f'<span class="dimtxt"> {html.escape(str(x.get("head") or ""))}</span>')
+            _sell_cell = (f'{html.escape(str(x.get("name") or "—"))}'
+                          f'<span class="dimtxt"> {html.escape(str(x.get("code") or ""))}</span>')
+            if x.get("head") == x.get("code"):
+                _sell_cell += '<span class="dimtxt">（同上）</span>'
+            rows_last += (
+                f'<tr><td class="mono">{html.escape(str(x["date"]))}</td>'
+                f'<td>{_head_cell}</td>'
+                f'<td class="num" style="color:{CLR_P3};font-weight:700">{_n(x.get("roc"))}</td>'
+                f'<td class="num">{_pcell}</td>'
+                f'<td>{_sell_cell}</td>'
+                f'<td class="num">{x["days"]} 日</td>'
+                f'<td class="mono">{html.escape(str(x["until"]))}</td></tr>')
         if not rows_last:
-            rows_last = '<tr><td colspan="5" class="dimtxt">区间内没有触发</td></tr>'
+            rows_last = '<tr><td colspan="7" class="dimtxt">区间内没有触发</td></tr>'
 
         return f"""<style>{_D3_CSS}</style>
 <div class="d3card p3">
@@ -294,10 +322,20 @@ def _p3_card_html(p3, recent, cost):
     <span>口径 <b>D3 亏≥{int(p3.get('thr', 0.03) * 100)}% 空仓 5 日 + ROC{p3['n']} 滚动 {p3['q']*100:.0f} 分位 空仓 {p3['days']} 日</b></span>
   </div>
   <div class="d3last">
-    <div class="cap">最近 {len(p3.get('last') or [])} 次追高止盈事件（空仓起点）</div>
-    <div class="tblwrap"><table class="d3tbl sm"><thead><tr><th>触发日</th><th>当时头名</th>
-      <th class="num">ROC60</th><th class="num">空仓</th><th>回场日</th></tr></thead>
+    <div class="cap">最近 {len(p3.get('last') or [])} 次追高止盈事件</div>
+    <div class="tblwrap"><table class="d3tbl sm"><thead><tr>
+      <th>触发日（＝清仓日）</th>
+      <th title="当日动横20 排名第 1 名；P3 看的是它的 ROC60">触发依据 · 当日头名</th>
+      <th class="num" title="当日头名的 60 日动量">该头名 ROC60</th>
+      <th class="num" title="该 ROC60 在自身扩张历史中的百分位；触发线 95，故必然 ≥95">自身历史分位</th>
+      <th>当日卖出（当时持仓）</th>
+      <th class="num">空仓</th><th>回场日</th></tr></thead>
       <tbody>{rows_last}</tbody></table></div>
+    <div class="sub" style="margin-top:6px;font-size:11px;line-height:1.6">
+    <b>三件事别混</b>：①「触发依据 · 当日头名」= 当天动横20 排名第 1 名，P3 判定的是<b>它的</b> ROC60 有没有进自身历史 95 分位；
+    ②「当日卖出」= 你那时<b>实际持有的</b>那只 —— 因为冷却/未换仓，它可能不是当日头名，两者不同是正常的；
+    ③ <b>触发日＝清仓日</b>：当天收盘判定、当天收盘清仓，次日起空仓；<b>回场日</b> = 空仓满 {p3['days']} 个交易日后那天，按当日动横20 第 1 名买回。
+    <br>「自身历史分位」= 该值在该标的自身扩张历史里排第几（0~100），触发线固定 95，所以必然 ≥95；越接近 100 说明当时涨得越极端。</div>
   </div>
   <div class="d3sw">{act}</div>
   <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 {cost*100:.1f}%，
@@ -764,11 +802,11 @@ def data_freshness(pivot, now=None):
 ZOOM_DAYS = 62            # 「近 2 个月」放大窗口（自然日）
 
 CURVE_SERIES = [
-    ("nv",  "策略净值（规则复算）",  "#3d57e5", 2.4),
-    ("d3",  "D3 单笔止损（若切换）", "#7b3fe4", 1.9),
-    ("p3",  "D3+P3 止盈（若切换）", "#c2185b", 1.9),
-    ("sh",  "上证指数",              "#b26a00", 1.4),
-    ("ndx", "纳斯达克综合指数",      "#0f9d58", 1.4),
+    ("nv",  "策略净值（规则复算）",  CLR_STRAT, 2.4),
+    ("d3",  "D3 单笔止损（若切换）", CLR_D3, 1.9),
+    ("p3",  "D3+P3 止盈（若切换）", CLR_P3, 1.9),
+    ("sh",  "上证指数",              CLR_BENCH_SH, 1.4),
+    ("ndx", "纳斯达克综合指数",      CLR_BENCH_NDX, 1.4),
 ]
 CURVE_LEGEND = ("nv", "d3", "p3", "sh", "ndx")          # 图例/光标顺序
 # 末端标注用短名（全名在图例里，末端太长会压住折线）
@@ -1121,7 +1159,7 @@ def _curve_block(curve):
 {small["html"]}
 """
 
-    d3_note = ("；<b style=\"color:#7b3fe4\">D3 单笔止损</b>是并行影子组合"
+    d3_note = ("；<b style=\"color:" + CLR_D3 + "\">D3 单笔止损</b>是并行影子组合"
                "（任一笔换出时亏 ≥3% 就空仓 5 日，不改卖出条件），与「② 近期换仓复盘」"
                "里的 D3 参考卡同源，<b>当前未启用</b>，只作随时切换的对照") \
         if "d3" in pct else ""
@@ -1152,6 +1190,147 @@ def _curve_block(curve):
 """
 
 
+# ---------------------------------------------------------------- 近 1 年偏离区间
+def _dev_win_stats(s, days: int, buy_line=None):
+    """单窗口内 MA200 偏离的极值 / 当前分位 / 买线下方天数（s 已 dropna 升序）。
+
+    窗口优先按**日历**切（「近 1 年」= 最近 365 天）；index 解析不了日期时
+    按 244 日/年 折算成 bar 数兜底。样本 < 20 根返回 None。
+    """
+    if s is None or len(s) == 0:
+        return None
+    w = None
+    try:
+        t = pd.to_datetime(s.index)
+        # ⚠️ `DatetimeIndex >= Timestamp` 返回 **numpy.ndarray** 而非 pandas 数组，
+        #    早先多写一个 `.values` 直接 AttributeError → 整段静默退化成 tail()，
+        #    窗口天数与声称的「近 1 年」不符（实测少 18 天）。用 timedelta 而非
+        #    pd.Timedelta，避免 pandas 2.3 + numpy 2.x 的 generic-unit 弃用警告刷屏。
+        w = s[t >= (t[-1] - timedelta(days=int(days)))]
+    except Exception:                                  # noqa: BLE001
+        w = None
+    if w is None or len(w) < 20:
+        w = s.tail(max(20, int(round(days * 244 / 365.0))))
+    if len(w) < 20:
+        return None
+
+    def _d(x):
+        try:
+            return pd.Timestamp(x).strftime("%Y-%m-%d")
+        except Exception:                              # noqa: BLE001
+            return str(x)[:10]
+
+    lo, hi = float(w.min()), float(w.max())
+    cur = float(s.iloc[-1])
+    pos = 50.0 if hi - lo < 1e-9 else (cur - lo) / (hi - lo) * 100.0
+    nb = nbp = None
+    if buy_line is not None:
+        nb = int((w <= float(buy_line)).sum())
+        nbp = nb / len(w) * 100.0
+    return dict(
+        lo=lo, lo_date=_d(w.idxmin()), hi=hi, hi_date=_d(w.idxmax()),
+        cur=cur, pos=max(0.0, min(100.0, pos)), n=int(len(w)),
+        start=_d(w.index[0]), end=_d(w.index[-1]),
+        n_below=nb, below_pct=nbp,
+    )
+
+
+def _ma_dev_span(dev, *, days: int = 365, buy_line=None, extra_years=(3, 5)):
+    """「近 N 年 MA200 偏离」的极值区间 —— 给当前偏离找一个历史坐标。
+
+    dev      : 偏离序列（百分数，index 为交易日；可含 NaN）
+    buy_line : 买线偏离（%）。给了就统计「窗口内有多少交易日低于买线」，
+               用来回答「这种入场机会一年能遇到几次 / 有多稀缺」
+    extra_years : 额外给这些年的**同一统计**（只取极值与当前分位）。
+
+    ⚠️ 为什么必须给长窗口：只看 1 年会严重误判。实测 512040 近 1 年最深仅
+       −5.03%、当前 3 分位（看着像一年最便宜），但近 3 年最深 −8.66%、近 5 年
+       −12.76%，当前在 5 年区间只是 26 分位 ⇒ 单窗口会把「年内相对位置」误读成
+       「历史低位」。长窗口就是用来防这个的。
+
+    返回 dict(lo, lo_date, hi, hi_date, cur, pos, n, start, end, n_below,
+              below_pct, extra=[{years, lo, lo_date, hi, pos, n}])；数据不足返回 None。
+    """
+    if dev is None:
+        return None
+    try:
+        s = pd.Series(dev).astype(float).dropna()
+    except Exception:                                  # noqa: BLE001
+        return None
+    if len(s) < 30:
+        return None
+
+    base = _dev_win_stats(s, days, buy_line)
+    if base is None:
+        return None
+    extra = []
+    for yr in extra_years or ():
+        st = _dev_win_stats(s, 365 * int(yr), buy_line)
+        if st is None or st["n"] < 244:                # 不足约 1 年样本就不硬凑
+            continue
+        extra.append(dict(years=int(yr), lo=st["lo"], lo_date=st["lo_date"],
+                          hi=st["hi"], pos=st["pos"], n=st["n"]))
+    base["extra"] = extra
+    return base
+
+
+def _span_word(pos: float) -> str:
+    """把分位翻成一句人话（低 = 便宜，因为偏离越低越接近/跌破 MA200）。"""
+    if pos <= 5.0:
+        return "≈近 1 年最便宜"
+    if pos <= 33.0:
+        return "近 1 年偏便宜区"
+    if pos <= 67.0:
+        return "近 1 年中性区"
+    if pos <= 95.0:
+        return "近 1 年偏贵区"
+    return "≈近 1 年最贵"
+
+
+def _hspan_html(span, *, label: str = "近 1 年 MA200 偏离区间",
+                buy_label: str = "", alt=None, alt_label: str = "指数口径") -> str:
+    """渲染「历史参照」条带：近 1 年偏离极值 + 当前所处位置 + 买线下方天数 + 长窗口参照。
+
+    与 512040 的暖色 action 条（.gidxbar）、512890 的冷色 action 条（.tvbar）
+    用中性灰虚线区分 —— 这是**判贵贱的参照数据**，不是当日动作信号。
+    alt(可选) = 另一口径的同一统计，只在末尾并排给极值，省宽度。
+    """
+    if not span:
+        return ""
+    RED_, GRN_ = RED, GREEN
+
+    def _c(v):
+        return RED_ if v > 0 else GRN_
+
+    parts = [
+        f'<span class="k">{html.escape(label)}（{span["n"]} 日）</span>',
+        f'<span class="v">最深回踩 <b style="color:{_c(span["lo"])}">{span["lo"]:+.2f}%</b>'
+        f'<i>{html.escape(span["lo_date"])}</i></span>',
+        f'<span class="v">最高冲高 <b style="color:{_c(span["hi"])}">{span["hi"]:+.2f}%</b>'
+        f'<i>{html.escape(span["hi_date"])}</i></span>',
+        f'<span class="v">当前 <b style="color:{_c(span["cur"])}">{span["cur"]:+.2f}%</b>'
+        f'位于 <b>{span["pos"]:.0f} 分位</b><i>{_span_word(span["pos"])}</i></span>',
+    ]
+    if span.get("n_below") is not None:
+        _bl = html.escape(buy_label) if buy_label else "买线"
+        parts.append(
+            f'<span class="v">{_bl}下方 <b>{span["n_below"]}/{span["n"]}</b> 日'
+            f'（{span["below_pct"]:.1f}%）</span>')
+    if span.get("extra"):
+        # 每个长窗口单独一格（不合并成一句）：单格文字短，flex-wrap 才能在各宽度下
+        # 自然换行、不会撑出横向滚动条；合并成一长句在 600px 屏会超出容器。
+        for e in span["extra"]:
+            parts.append(
+                f'<span class="v">更长期 · {e["years"]} 年 <b>{e["lo"]:+.2f}%</b>'
+                f'<i>当前 {e["pos"]:.0f} 分位</i></span>')
+    if alt:
+        parts.append(
+            f'<span class="v dimtxt">{html.escape(alt_label)} '
+            f'{alt["lo"]:+.2f}% ~ {alt["hi"]:+.2f}%</span>')
+    parts.append(f'<span class="v dimtxt">窗口 {span["start"]} ~ {span["end"]}</span>')
+    return '<div class="hspan">' + "".join(parts) + "</div>"
+
+
 # ---------------------------------------------------------------- 指数口径对照
 # 512040 价值ETF富国（场内简称 价值100ETF）跟踪【中证国信价值指数 931052.CSI】。
 IDX_OF_DEF = {"512040": ("931052", "中证国信价值")}
@@ -1173,10 +1352,12 @@ def build_index_cmp(df, def_code, ma=200, index_code=None, lookback=500):
         return None
     index_code, index_name = info
     try:
-        g = df[df["code"] == def_code].sort_values("date")
-        sf = g.set_index("date")["close"].astype(float)
-        sf = sf[~sf.index.duplicated(keep="last")].sort_index()
-        if len(sf) < ma + 5:
+        # ⚠️ 必须用「长历史 CSV 打底 + 在线补尾」的合并序列，不能只用在线：
+        #    512040 在 2023-10-11 有份额折算，新浪日线（不复权）留一根 −50.1% 假跳空，
+        #    单靠常数复权因子修不掉。近 1 年窗口虽不含它，但「近 3/5 年参照」和
+        #    MA200 的早期回溯段会中招 ⇒ 用已修正的长历史（整段按复权比重定基）。
+        sf, _vnotes = _ve_merged_series(df, def_code, ma=ma)
+        if sf is None or len(sf) < ma + 5:
             return None
         maf = sf.rolling(ma).mean()
         devf = (sf / maf - 1.0) * 100.0
@@ -1207,6 +1388,10 @@ def build_index_cmp(df, def_code, ma=200, index_code=None, lookback=500):
             gap_p90=float(rec["gap"].quantile(0.90)),
             n_gap_days=both, n_days=int(len(rec)),
             ohlc_bars=int(len(si)),
+            # 近 1 年偏离区间（2026-10-25 用户要求）：给「当前偏离算不算便宜」一个历史坐标。
+            # 两口径都算 —— 基金口径用于实盘判断，指数口径只作交叉参照。
+            f_span=_ma_dev_span(devf, buy_line=-3.0),
+            i_span=_ma_dev_span(devi, buy_line=-3.0),
         )
     except Exception:                                  # noqa: BLE001
         return None
@@ -1319,6 +1504,10 @@ def build_ve_track(df, code, *, ma=200, buy=1.00, sell=1.06, name=""):
         last_buy=(last_buy[-1] if len(last_buy) else None),
         last_sell=(last_sell[-1] if len(last_sell) else None),
         n=len(s), d0=s.index[0], notes=notes,
+        # 近 1 年偏离区间（2026-10-25）：买线偏离 = (buy-1)*100，
+        # 例 512890 回踩即买 → 0.0；512040 跌 3% 买 → −3.0。
+        span=_ma_dev_span((s / mav - 1.0) * 100.0,
+                          buy_line=(buy - 1.0) * 100.0),
     )
 
 
@@ -1703,11 +1892,11 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     # 三条序列：[(键, 显示名, 颜色, {year: ret}, {year: mdd})]
     # 第三根 = D3+P3 止盈（叠加组合，2026-10-25 起的现行组合口径）
     _yseries = [
-        ("nv", "现用策略", RED,        {str(d["year"]): d.get("ret") for d in _yl},
+        ("nv", "现用策略", CLR_STRAT, {str(d["year"]): d.get("ret") for d in _yl},
          {str(d["year"]): d.get("mdd") for d in _yl}),
-        ("d3", "D3 止损",  "#7b3fe4", {k: v["ret"] for k, v in _d3y.items()},
+        ("d3", "D3 止损",  CLR_D3, {k: v["ret"] for k, v in _d3y.items()},
          {k: v["mdd"] for k, v in _d3y.items()}),
-        ("p3", "D3+P3 止盈", "#c2185b", {k: v["ret"] for k, v in _p3y.items()},
+        ("p3", "D3+P3 止盈", CLR_P3, {k: v["ret"] for k, v in _p3y.items()},
          {k: v["mdd"] for k, v in _p3y.items()}),
     ]
     _yv = [v for _k, _n, _c, rr, _m in _yseries for v in rr.values()
@@ -1825,16 +2014,16 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     n_yr = len(_yl)
     ytd_block = f"""
 <div class="ytdchart">
-<div class="ytdh">年度表现<span class="sphs">（策略 / D3 / D3+P3 · 近 {n_yr} 年 · 长历史复算）</span></div>
+<div class="ytdh">年度表现<span class="sphs">（近 {n_yr} 年 · 三柱对比）</span></div>
 <div class="ytdbody">
 {ytd_svg}
 </div>
-<div class="ytdfoot">每年收益（含换仓成本，单位 %）· <span style="color:{RED}">红</span
->涨 <span style="color:{GREEN}">绿</span>跌 ｜ 每年三柱：<span
-style="color:{RED};font-weight:700">现用策略</span> / <span
-style="color:#7b3fe4;font-weight:700">D3 单笔止损</span> / <span
-style="color:#c2185b;font-weight:700">D3+P3 止盈</span>（后两者是并行影子，<b>未启用</b>）·
-同一刻度 · 鼠标悬停看当年最大回撤 · 前复权长历史回测</div>
+<div class="ytdfoot">每年收益（含换仓成本，单位 %）· <b>柱子颜色区分策略</b>：<span
+style="color:{CLR_STRAT};font-weight:700">现用策略</span> / <span
+style="color:{CLR_D3};font-weight:700">D3 单笔止损</span> / <span
+style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行影子，<b>未启用</b>）·
+柱体<b>向上=盈利、向下=亏损</b>；柱上数字沿用 <span style="color:{RED}">红涨</span>
+<span style="color:{GREEN}">绿跌</span> · 同一刻度 · 悬停看当年最大回撤 · 前复权长历史回测</div>
 </div>"""
 
     # 阶梯表
@@ -1974,6 +2163,9 @@ style="color:#c2185b;font-weight:700">D3+P3 止盈</span>（后两者是并行�
             f'<i>{_dist(_idv)}</i></span>'
             f'<span class="v">口径差 <b>{idx["gap"]:+.2f}pp</b></span>'
             '</div>'
+            # 近 1 年偏离区间：判「今天 −4.38% 到底算便宜还是还在半山腰」的参照
+            + _hspan_html(idx.get("f_span"), buy_label="−3% 买线",
+                          alt=idx.get("i_span"), alt_label="指数口径")
             + (f'<div class="gidxnote {_gtip_cls}">{_gtip}</div>' if _gtip else "")
             + "</td></tr>")
     else:
@@ -2050,7 +2242,9 @@ style="color:#c2185b;font-weight:700">D3+P3 止盈</span>（后两者是并行�
             f'<span class="v">偏离 <b style="color:{_tcls}">{_tdev:+.2f}%</b></span>'
             f'<span class="v">状态 <b>{_tstate}</b></span>'
             f'</div>'
-            f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>'
+            # 近 1 年偏离区间：判「现在 +2.42% 该不该等回踩」的参照
+            + _hspan_html(_t.get("span"), buy_label="MA200 买线")
+            + f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>'
             f"</td></tr>")
 
     guide_rows = [
@@ -2563,7 +2757,7 @@ style="color:#c2185b;font-weight:700">D3+P3 止盈</span>（后两者是并行�
   .defbar .dim2{{color:#6c717f;font-size:11px;white-space:nowrap}}
   /* 今日操作指引 · 防守位口径条带：跨 4 列独占一行，数值并列 chip + 结论单行 */
   table.gtbl tr.defmain td{{border-bottom:none}}
-  table.gtbl tr.defx td{{padding:0 7px 8px}}
+  table.gtbl tr.defx td{{padding:0 9px 8px}}
   tr.defx.dimx td{{background:#fbfcfd}}
   tr.defx.hotx td{{background:#fff8f3}}
   .gidxbar{{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;
@@ -2577,9 +2771,17 @@ style="color:#c2185b;font-weight:700">D3+P3 止盈</span>（后两者是并行�
     white-space:normal}}
   .gidxnote.hot{{background:#fff4ec;border-color:#ffd0b0;color:#8a2c08}}
   .gidxnote.pos{{background:#f2fbf6;border-color:#c9ecd9;color:#0b6b3a}}
+  /* 「近 1 年偏离区间」= 历史参照条：中性灰虚线，刻意弱于上面的 action 条（暖/冷实线），
+     避免被误读成「今天要做的事」 */
+  .hspan{{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 14px;margin-top:5px;
+    padding:6px 10px;border:1px dashed #d8dee6;border-radius:8px;background:#fafbfc;
+    font-size:11.5px;line-height:1.65;color:#4b5563;min-width:0}}
+  .hspan .k{{font-weight:600;color:#5b6472;white-space:nowrap}}
+  .hspan .v{{white-space:nowrap}}
+  .hspan .v i{{font-style:normal;color:#8b93a1;margin-left:4px;font-size:11px}}
   /* 策略二（512890）：每日跟踪行 */
   table.gtbl tr.tvmk td{{border-bottom:none}}
-  table.gtbl tr.tvx td{{padding:0 7px 8px}}
+  table.gtbl tr.tvx td{{padding:0 9px 8px}}
   /* 「三方案今日对照」摘要条：贴在【今日操作指引】顶部，一眼可见不用往下翻 */
   .cbsum{{background:#fbfcfe;border:1px solid #e2e5ea;border-left:3px solid #c2185b;
     border-radius:8px;padding:8px 10px;margin:0 0 10px}}
@@ -2622,22 +2824,82 @@ style="color:#c2185b;font-weight:700">D3+P3 止盈</span>（后两者是并行�
   .foot{{margin-top:24px;padding-top:14px;border-top:1px solid #dfe3e8;
     color:var(--mut);font-size:11.5px;line-height:1.8}}
   .lead{{margin:14px 0 0;color:#5b6472;font-size:13px}}
+  /* ===== 今日操作（2026-10-25 重排：置顶 + 独占整宽）=====
+     旧版是「左 42% 放 4 列操作表 | 右放排名表+年度卡」，4 列被挤在 42% 里文字
+     严重折行、整页显乱。现在操作表拿到整宽（表格 auto 布局，依据列自然变宽，
+     不需要 table-layout:fixed——那样反而会留大片空白），并把排名表与年度卡
+     降到它下面并排。 */
+  .gsec{{background:#fff;border:1px solid var(--bd);border-radius:12px;
+    padding:14px 16px 12px;margin:16px 0 0;box-shadow:0 1px 3px rgba(16,24,40,.05)}}
+  .ghead{{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:0 0 10px}}
+  .gh2{{font-size:16px;font-weight:700;margin:0;color:#202020;
+    padding-left:10px;border-left:4px solid;
+    border-image:linear-gradient(180deg,#3d57e5,#566de7) 1}}
+  .gh2 .gtip{{font-size:12px;font-weight:400;color:var(--mut);margin-left:8px}}
+  .gdate{{margin-left:auto;font-size:12px;color:var(--mut);white-space:nowrap}}
+  .gsec table.gtbl{{font-size:12.5px;width:100%;table-layout:fixed;
+    border:none;border-radius:0;box-shadow:none;background:transparent}}
+  /* ⚠️ 全局 table 自带 border+圆角+阴影（卡片样式）；放进 .gsec 白卡片里会变成
+     「卡片套卡片」的双层边框与双层圆角 —— 这是之前显乱的主要原因之一，故清零。 */
+  /* fixed 布局：前三列定宽，第 4 列（依据）吃掉剩余，避免 auto 布局下
+     「依据」列被拉到近千 px、文字只占左侧一小段的空旷感 */
+  .gsec table.gtbl th:nth-child(1){{width:104px}}
+  .gsec table.gtbl th:nth-child(2){{width:296px}}
+  .gsec table.gtbl th:nth-child(3){{width:214px}}
+  .gsec table.gtbl th{{background:#f4f6fa;font-weight:600;color:#4b5563;
+    padding:7px 9px;border-bottom:1px solid var(--bd)}}
+  .gsec table.gtbl td{{padding:7px 9px;border-bottom:1px solid #eef0f3}}
+  .gsec table.gtbl tbody tr:last-child td{{border-bottom:none}}
+  /* 白卡片里的说明块改成浅灰底，避免「白上白」看不出层次 */
+  .gsec .note{{background:#f7f9fb;box-shadow:none;border-color:#e2e5ea}}
+  /* 排名表 + 年度卡：并排、等高（年度卡被拉伸到排名表高度，底边齐平） */
+  .split2{{display:flex;gap:14px;align-items:stretch;margin:14px 0 0}}
+  .s2l{{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;min-height:0}}
+  /* 年度卡 400px（原 300）：给图更多横向空间，同时把排名表自然压窄、
+     列间距收紧，不再出现「表格被拉得很散」的观感 */
+  .s2r{{flex:0 0 400px;min-width:0;display:flex;flex-direction:column;min-height:0}}
+  /* min-height 防「排名表很矮时年度卡被压扁到看不见图」；两者底边仍由 stretch 齐平 */
+  .s2r .ytdchart{{flex:1 1 auto;min-height:250px}}
+  /* ===== ① 今日排名卡片（2026-10-25 补）=====
+     此前 h2 写在卡片**外面**、表格自带边框当「框」，而右边年度卡把标题包在**框内**，
+     于是左框整体下移约 30px、两框底边永远对不上。现在左边也包成同规格卡片、
+     标题收进框内，两框的顶边与底边同时对齐。 */
+  .pcard{{display:flex;flex-direction:column;min-height:0;flex:1 1 auto;
+    background:#fff;border:1px solid var(--bd);border-radius:10px;
+    padding:10px 12px;box-shadow:0 1px 3px rgba(16,24,40,.05)}}
+  .pcard h2.sph2{{margin:0 0 8px;font-size:15px;padding-left:9px;
+    border-left-width:3px;display:flex;align-items:baseline;gap:2px;flex-wrap:wrap}}
+  .pcard .rtblwrap2{{flex:1 1 auto;min-height:0;overflow-x:auto}}
+  /* 全局 table 自带 border+radius+shadow（卡片样式）→ 内层清零，避免「卡片套卡片」 */
+  .pcard table.rtbl{{border:none;border-radius:0;box-shadow:none;background:transparent}}
+  /* 旧布局遗留（.split/.rwrap）保留但已不在主流程使用 */
   /* 操作指引 与 ① 今日排名 并排（左右等高） */
   .split{{display:flex;gap:18px;align-items:stretch;margin:20px 0 6px}}
   .split .l{{flex:0 0 42%;min-width:0}}
-  .split .r{{flex:1;min-width:0}}
-  /* ① 今日排名表 + 年度表现柱状图 并排（等高，表内溢出不外泄到页面） */
-  .rwrap{{display:flex;gap:12px;align-items:stretch}}
-  .rtblwrap{{flex:1 1 auto;min-width:0;overflow-x:auto}}
+  .split .r{{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}}
+  /* ① 今日排名表 + 年度表现柱状图 并排（等高，表内溢出不外泄到页面）
+     ⚠️ 对齐约束（2026-10-25）：右列整体撑满 .split 行高 → .rwrap 撑满右列 →
+     年度卡再撑满 .rwrap，SVG 用 height:100% 等比缩放填充剩余空间。
+     这样「左列底边 = 排名表底边 = 年度卡底边」三条线天然重合，不会出现台阶。 */
+  .rwrap{{display:flex;gap:12px;align-items:stretch;flex:1 1 auto;min-height:0}}
+  .rtblwrap{{flex:1 1 auto;min-width:0;overflow-x:auto;min-height:0}}
   .ytdchart{{flex:0 0 268px;min-width:0;display:flex;flex-direction:column;
+    min-height:0;overflow:hidden;
     background:#fff;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;
     box-shadow:0 1px 3px rgba(16,24,40,.05)}}
-  .ytdh{{font-size:12.5px;font-weight:600;color:#202020;margin:0 0 4px;
-    padding-left:8px;border-left:3px solid #3d57e5}}
-  /* 年度表现 = SVG 分组竖柱（每年三根：现用策略 / D3 / P3） */
-  .ytdbody{{flex:1;display:block;min-height:0}}
+  /* 与 .pcard 的标题同规格（字号/缩进/左边框/下间距一致）⇒ 两框内部内容起点也齐平 */
+  .ytdh{{font-size:15px;font-weight:600;color:#202020;margin:0 0 8px;
+    padding-left:9px;border-left:3px solid #3d57e5;
+    display:flex;align-items:baseline;gap:2px;flex-wrap:wrap}}
+  /* 年度表现 = SVG 分组竖柱（每年三根：现用策略 / D3 / D3+P3） */
+  .ytdbody{{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center}}
   .ytdbody svg{{display:block;width:100%;height:auto}}
-  .ytdfoot{{margin-top:4px;font-size:9.5px;color:#98a1ad;line-height:1.5}}
+  @media (min-width:761px){{
+    /* 并排时让 SVG 吃满卡片剩余高度，卡片底边不被内容顶出去 */
+    .ytdbody svg{{height:100%;max-height:100%}}
+  }}
+  .ytdfoot{{margin-top:4px;font-size:9.5px;color:#98a1ad;line-height:1.5;
+    white-space:normal;flex:0 0 auto}}
   .split .l .rs{{min-width:0}}
   .sphs{{font-size:12px;font-weight:400;color:var(--mut)}}
   h2.sph2{{margin:0 0 8px}}
@@ -2657,18 +2919,43 @@ style="color:#c2185b;font-weight:700">D3+P3 止盈</span>（后两者是并行�
   table.gtbl td.nm2{{white-space:normal}}
   .split .l .note{{font-size:12px;line-height:1.7}}
   /* ≤1320px：年度表现柱状图移到排名表下方，把整宽让给 8 列排名表 → 不再出现横向滚动条 */
+  /* 旧布局（.split / .rwrap）遗留规则保留，但已不在主流程使用 */
   @media (max-width:1320px){{
     .rwrap{{flex-direction:column}}
-    .ytdchart{{flex:0 0 auto}}
-    .ytdbody{{min-height:150px}}
+  }}
+  /* 中等窗口：年度卡收窄到 300px（400px 在 ≤1050 太占宽），把宽度让给 9 列排名表 */
+  @media (max-width:1050px){{
+    .s2r{{flex:0 0 300px}}
+  }}
+  /* ===== 并排断点 760px（2026-10-25 修）=====
+     ⚠️ 原来断点是 1320px，导致「内嵌预览面板 / 未最大化窗口」等实际渲染宽度
+     <1320 的环境一律退化成上下堆叠 —— 用户看到的正是堆叠而非并排。
+     现降到 760：≥761 一律并排（左栏 flex:1 自动占剩余宽度；排名表放不下时由
+     .rtblwrap2 内部横向滚动兜底，绝不撑破页面）；≤760（手机/极窄）才堆叠。 */
+  @media (max-width:760px){{
+    .split2{{flex-direction:column}}
+    .s2r{{flex:0 0 auto}}
+    .s2r .ytdchart{{flex:0 0 auto;overflow:visible}}
+    .ytdchart{{flex:0 0 auto;overflow:visible}}
+    /* 堆叠后容器变全宽，svg width:100% 会把图等比放大到极高 → 按高度上限缩放并居中 */
+    .ytdbody{{flex:0 0 auto;min-height:150px;display:block}}
+    .ytdbody svg{{width:auto;max-width:100%;height:auto;max-height:330px;margin:0 auto}}
   }}
   @media (max-width:1100px){{
     .split{{flex-direction:column}}
     .split .l,.split .r{{flex:1 1 auto;align-self:stretch}}
     .rwrap{{flex-direction:column}}
-    .ytdchart{{flex:0 0 auto}}
-    .ytdbody{{min-height:180px}}
   }}
+  /* 窄屏：定宽列会把内容挤爆 → 退回 auto 布局，让内容自己决定宽度 */
+  @media (max-width:900px){{
+    .gsec table.gtbl{{table-layout:auto}}
+    .gsec table.gtbl th:nth-child(1),
+    .gsec table.gtbl th:nth-child(2),
+    .gsec table.gtbl th:nth-child(3){{width:auto}}
+    .ghead{{gap:6px}}
+    .gdate{{margin-left:0;width:100%}}
+  }}
+
   /* 净值曲线 SVG */
   .csvg{{display:block;width:100%;height:auto;min-width:560px;background:#fff;
     border:1px solid var(--bd);border-radius:10px;box-shadow:0 1px 3px rgba(16,24,40,.05)}}
@@ -2694,34 +2981,38 @@ style="color:#c2185b;font-weight:700">D3+P3 止盈</span>（后两者是并行�
 </div>
 {fresh_html}
 
-<div class="lead">以上为主选池结论（第 ① ~ ⑤ 节）。备选观察池在报告末尾第 ⑥ 节，与主选池完全独立。
-<span class="dimtxt">① 「切换至今」= 该标的最近一次被系统买入 → 至今（已换出的算到换出日）的
-<span style="color:{RED}">价格</span>涨跌，与 ② 节同源同口径，悬停看起止日与持仓天数；
-<span class="stale">淡色虚线下划线</span> = 买入日距今已超 120 个交易日（半年前的老仓位，非近期表现）；
-「—」= 回测区间内从未被买入。</span></div>
-
-<div class="split">
-<div class="l">
-<h3 class="sph3">今日操作指引<span class="sphs">（按你当前持仓对号入座）</span></h3>
+<section class="gsec">
+<div class="ghead">
+  <h2 class="gh2">🎯 今日操作<span class="gtip">按你当前持仓对号入座</span></h2>
+  <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准</span>
+</div>
 {_combo_summary_html(recent)}
 <div class="note" style="margin-bottom:10px">{guide_note}</div>
 <table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead>
 <tbody>{''.join(guide_rows)}</tbody></table>
-<div class="sub" style="margin-top:8px">本指引基于锚定日 <b>{pivot}</b> 的信号。
-若为盘中实时数据，数字会随盘中波动，请以<b>收盘价</b>为准再做操作。</div>
-</div>
-<div class="r">
-<h2 class="sph2">① 今日排名 · 主选池（按 动横{window} 降序）</h2>
-<div class="rwrap">
-<div class="rtblwrap">
+</section>
+
+<div class="lead">以下为主选池结论（第 ① ~ ⑤ 节），备选观察池在报告末尾第 ⑥ 节、与主选池完全独立。
+<span class="dimtxt">① 「切换至今」= 该标的最近一次被系统买入 → 至今（已换出）的
+<span style="color:{RED}">价格</span>涨跌，与 ② 节同源同口径，悬停看起止日与持仓天数；
+<span class="stale">淡色虚线下划线</span> = 买入日距今已超 120 个交易日（半年前的老仓位，非近期表现）；
+「—」= 回测区间内从未被买入。</span></div>
+
+<div class="split2">
+<div class="s2l">
+<div class="pcard">
+<h2 class="sph2">① 今日排名 · 主选池<span class="sphs">（按 动横{window} 降序）</span></h2>
+<div class="rtblwrap2">
 <table class="rtbl"><thead><tr><th>#</th><th>代码</th><th>名称</th><th>动横{window}</th><th>乖离</th>
 <th title="该标的最近一次被系统买入 → 至今（或已换出）的价格涨跌，口径与 ② 节一致">切换至今</th>
 <th>现价</th><th>今日涨跌</th><th>MA20</th></tr></thead><tbody>
 {''.join(rank_rows)}
 </tbody></table>
 </div>
-{ytd_block}
 </div>
+</div>
+<div class="s2r">
+{ytd_block}
 </div>
 </div>
 
@@ -2775,6 +3066,68 @@ def _fmt_factors(res):
         return ", ".join(f"{c} F={v:.4f}" for c, v in sorted(ev.items())) if ev else ""
     except Exception:                                # noqa: BLE001
         return ""
+
+
+# 手机端「一键刷新」浮窗：点击触发 GitHub Actions 工作流重算日报。
+# 关键安全设计：GitHub Token 仅由用户在本机浏览器 localStorage 保存，
+# 不进入仓库源码、不发送给任何第三方，只发往 api.github.com。
+# 注意：report 主体是一个 f-string（其中 { } 会被当格式字段），本常量必须是
+# 普通字符串（非 f-string），并在写文件时用 .replace 注入到 </body> 前，
+# 以避免 JS 里的 { }（如 JSON.stringify({ref:...})）被 f-string 误解析。
+REFRESH_WIDGET = """
+<style>
+#rfFab{position:fixed;right:14px;bottom:14px;z-index:9999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+#rfBtn{background:#3d57e5;color:#fff;border:none;border-radius:24px;padding:12px 18px;font-size:15px;font-weight:600;box-shadow:0 4px 14px rgba(61,87,229,.45);cursor:pointer}
+#rfPanel{display:none;position:fixed;right:14px;bottom:66px;z-index:9999;width:min(88vw,320px);background:#fff;border:1px solid #e2e5ea;border-radius:12px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.18);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;color:#202020;box-sizing:border-box}
+#rfPanel h4{margin:0 0 8px;font-size:14px;color:#3d57e5}
+#rfPanel p{margin:0 0 8px;line-height:1.5;color:#42474f}
+#rfToken{width:100%;box-sizing:border-box;padding:8px;border:1px solid #e2e5ea;border-radius:8px;font-size:13px;margin-bottom:8px}
+#rfPanel button{background:#3d57e5;color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:600;cursor:pointer;margin:0 6px 0 0}
+#rfPanel a{color:#3d57e5}
+#rfStatus{margin-top:8px;line-height:1.5;color:#42474f}
+#rfGen{margin:0 0 8px;color:#6c717f;font-size:12px}
+</style>
+<div id="rfFab"><button id="rfBtn" onclick="rfToggle()">🔄 刷新日报</button></div>
+<div id="rfPanel">
+  <h4>一键刷新（触发云端重算）</h4>
+  <div id="rfGen">本页生成于：__RF_GEN__</div>
+  <p>首次使用粘贴一次 <b>GitHub Token</b>（仅需 repo 权限）。<b>仅存你本机浏览器</b>，不进仓库、不发给任何第三方，只发往 api.github.com。</p>
+  <input id="rfToken" type="password" placeholder="ghp_... 或 github_pat_..." />
+  <button onclick="rfSaveRun()">保存并刷新</button>
+  <button onclick="rfRun()">直接刷新</button>
+  <div id="rfStatus"></div>
+</div>
+<script>
+(function(){
+  var REPO="w972241768-coder/etf-daily", WF="daily.yml", REF="main";
+  function el(id){return document.getElementById(id);}
+  window.rfToggle=function(){var p=el("rfPanel");p.style.display=p.style.display==="none"?"block":"none";};
+  var saved=localStorage.getItem("rfGhToken");
+  if(saved){el("rfToken").value=saved;el("rfToken").placeholder="已保存（可留空直接刷新）";}
+  function run(){
+    var tok=el("rfToken").value.trim()||localStorage.getItem("rfGhToken")||"";
+    var st=el("rfStatus");
+    if(!tok){st.textContent="请先粘贴 GitHub Token。";return;}
+    st.textContent="正在触发刷新，GitHub 云端约 2~3 分钟后重算完成，届时刷新本页即可。";
+    fetch("https://api.github.com/repos/"+REPO+"/actions/workflows/"+WF+"/dispatches",{
+      method:"POST",
+      headers:{"Authorization":"token "+tok,"Accept":"application/vnd.github+json","Content-Type":"application/json"},
+      body:JSON.stringify({ref:REF})
+    }).then(function(r){
+      if(r.status===204){st.innerHTML="✅ 已触发！<b>约 2~3 分钟后</b>本页会自动刷新（或手动刷新）。";setTimeout(function(){location.reload();},180000);}
+      else if(r.status===401||r.status===403){st.textContent="❌ Token 无效或无权限（需 repo 权限）。";}
+      else{st.textContent="⚠️ 返回状态 "+r.status+"，可能已触发或受限，请稍后看本页是否更新。";}
+    }).catch(function(e){
+      var url="https://github.com/"+REPO+"/actions/workflows/"+WF;
+      st.innerHTML="❌ 浏览器跨域(CORS)受限，已自动为你打开 <a href='"+url+"' target='_blank'>Actions 手动触发页</a>，点右上 Run workflow 即可。";
+      try{window.open(url,"_blank");}catch(_){}
+    });
+  }
+  window.rfRun=run;
+  window.rfSaveRun=function(){localStorage.setItem("rfGhToken",el("rfToken").value.trim());run();};
+})();
+</script>
+"""
 
 
 def main():
@@ -2860,14 +3213,14 @@ def main():
                     live_on = True
                     if res["live"]:
                         live_txt = (
-                            f"⚡ <b>盘中实时数据</b>（未收盘）　数据源 <b>新浪财经 · 不复权日线（前复权因子校正）</b>"
+                            f"⚡ <b>盘中实时数据</b>（未收盘）　数据源 <b>{source}</b>"
                             f"　｜　最后一根 = <b>{res['lastdate']}</b> 盘中快照"
                             f"　｜　成功 {res['ok']} 只"
                             f"。⚠ <b>价格为盘中快照、非收盘价</b>，动横与信号会随盘中波动；"
                             f"收盘后请再跑一次以收盘价复算。")
                     else:
                         live_txt = (
-                            f"✓ <b>在线前复权数据</b>　数据源 <b>新浪财经 · 不复权日线（前复权因子校正）</b>"
+                            f"✓ <b>在线前复权数据</b>　数据源 <b>{source}</b>"
                             f"　｜　数据截至 <b>{res['lastdate']}</b>（已收盘/非交易时段）"
                             f"　｜　成功 {res['ok']} 只。分红与拆分已按前复权还原，无除权假跳空。"
                             + (f"　｜　近期事件校正: {_adj_ev}" if (_adj_ev := _fmt_factors(res)) else ""))
@@ -2904,19 +3257,36 @@ def main():
         if df is None:
             tdx_root = find_tdx_root(a.tdx_root)
             if not tdx_root:
-                raise SystemExit("在线取数失败且找不到通达信根目录(含 vipdoc)。"
-                                 "请用 --tdx-root 指定，或检查网络后重试。")
-            # 防守位需要 MA200 价值引擎, 必须多取历史; 其余标的 window+8 根够算动横即可。
-            want_def = max(a.window + 8, 260)      # 260 = 200(MA) + 60 余量
-            df, _info2, info_by_code = build_panel_from_tdx(
-                pool, tdx_root, want=a.window + 8,
-                want_by_code={c: want_def for c in _def_codes})
-            info.extend(_info2)
-            source = f"本地通达信 {tdx_root}/vipdoc (不复权)"
-            info.insert(0, f"[SRC] ⚠ {source}（在线前复权失败后的回退，口径为不复权）"
-                           f" ｜ 池: {os.path.basename(pool_path)} "
-                           f"({len(pool)} 只 = 主选池 {len(pool) - n_watch} 只 + "
-                           f"备选观察池 {n_watch} 只)")
+                # 云端 / 无通达信环境兜底：直接用仓库已提交的长表 CSV（前复权口径），
+                # 避免 workflow 因找不到 TDX 根目录而崩溃退出。
+                # 数据为最近一次本地推送的快照，可能不是最新交易日（页面会明确标注）。
+                csv_fb = os.path.join(HERE, "tdx_adj_long_2019_2026.csv")
+                if os.path.exists(csv_fb):
+                    df = core.load_panel(csv_fb)
+                    source = (f"仓库历史CSV {os.path.basename(csv_fb)}"
+                              "（在线/通达信均不可用时的兜底，口径为前复权）")
+                    info.insert(0, f"[SRC] ⚠ {source}（在线前复权失败后的兜底，"
+                                   f"数据可能滞后于最新交易日）"
+                                   f" ｜ 池: {os.path.basename(pool_path)} "
+                                   f"({len(pool)} 只 = 主选池 {len(pool) - n_watch} 只 + "
+                                   f"备选观察池 {n_watch} 只)")
+                    live_err = ("在线与本地通达信均不可用，已回退到仓库历史数据"
+                                "(可能滞后于最新交易日)")
+                else:
+                    raise SystemExit("在线取数失败且找不到通达信根目录(含 vipdoc)。"
+                                     "请用 --tdx-root 指定，或检查网络后重试。")
+            else:
+                # 防守位需要 MA200 价值引擎, 必须多取历史; 其余标的 window+8 根够算动横即可。
+                want_def = max(a.window + 8, 260)      # 260 = 200(MA) + 60 余量
+                df, _info2, info_by_code = build_panel_from_tdx(
+                    pool, tdx_root, want=a.window + 8,
+                    want_by_code={c: want_def for c in _def_codes})
+                info.extend(_info2)
+                source = f"本地通达信 {tdx_root}/vipdoc (不复权)"
+                info.insert(0, f"[SRC] ⚠ {source}（在线前复权失败后的回退，口径为不复权）"
+                               f" ｜ 池: {os.path.basename(pool_path)} "
+                               f"({len(pool)} 只 = 主选池 {len(pool) - n_watch} 只 + "
+                               f"备选观察池 {n_watch} 只)")
 
     if df.empty:
         raise SystemExit("没有任何可用数据, 无法生成报告。")
@@ -3067,12 +3437,13 @@ def main():
     else:
         info_main.append(f"[VE2] {VE_TRACK_CODE} 净值曲线不可用（历史数据不足）")
 
+    gen_now = datetime.now().strftime("%Y-%m-%d %H:%M")
     html_doc = render_html(
         pivot=pivot, window=W, sticky=a.sticky_lead, defensive=defensive, snap=snap_main,
         ranked=ranked, cols=cols, steps=steps, swap_days=swap_days, tie_days=tie_days,
         head1=head1, head2=head2, lead=lead, overheated=overheated,
         overheat_dev=a.overheat_dev, overheat_lead=a.overheat_lead,
-        info=info_main, source=source, now=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        info=info_main, source=source, now=gen_now,
         watch=watched, info_watch=info_watch,
         freshness=(is_stale, fresh_txt), live=(live_on, live_txt),
         recent=recent, adj_note=adj_note, yearly=yearly, idx=idx, ve_curve=ve_curve,
@@ -3081,6 +3452,7 @@ def main():
     out_dir = a.out and os.path.dirname(os.path.abspath(a.out)) or DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
     out_path = a.out or os.path.join(out_dir, f"etf_rotation_{pivot}.html")
+    html_doc = html_doc.replace("</body>", REFRESH_WIDGET.replace("__RF_GEN__", gen_now) + "\n</body>", 1)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(html_doc)
 

@@ -217,9 +217,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              roc_q: Optional[float] = None, roc_days: int = 20,
              roc_n: int = 60, roc_min_periods: int = 250,
              gate_mask: Optional[pd.Series] = None,
-             sig_list: Optional[list] = None,
-             pos_scale: Optional[pd.Series] = None,
-             pos_exempt: Optional[set] = None) -> dict:
+             sig_list: Optional[list] = None) -> dict:
     """策略B 状态机 (ROT / DEF)。value_engine=True 时防守期叠加价值引擎择时,
     不满足条件则持币 CASH —— 这会打破策略B「始终满仓」的设计, 属设计变更非缺陷。
 
@@ -411,15 +409,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             p0, p1 = panel[target].iloc[i], panel[target].iloc[i + 1]
             if not pd.isna(p0) and not pd.isna(p1) and p0 != 0:
                 ret = p1 / p0 - 1.0
-        # 仓位系数（可选）：pos_scale=None 时恒为 1.0，与旧版逐位一致。
-        # 未投入的部分按现金处理（0 收益），用于「多头全仓 / 空头半仓」这类闸门。
-        _w = 1.0 if pos_scale is None else float(pos_scale.iloc[i])
-        if _w != _w:                              # NaN 兜底
-            _w = 1.0
-        # 豁免名单：持这些标的时不打折（用于「空头只减 A 股、放过黄金/纳指」这类变体）
-        if pos_exempt and target in pos_exempt:
-            _w = 1.0
-        nav *= (1.0 + _w * ret)
+        nav *= (1.0 + ret)
         held = target
         prev_eff = eff_head
         avail_log.append((dates[i + 1], len(sig["rank"])))
