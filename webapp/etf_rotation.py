@@ -187,14 +187,43 @@ def _combo_summary_html(recent):
                      f"（该组合净值/回撤均最优，见 ② 卡片）。")
             tone = "diff"
 
-        return f"""<div class="cbsum">
-<div class="cbsh">今日执行口径<span>（默认 = D3+P3 止盈 · 现用策略与 D3 作参照，同一起点同成本）</span></div>
+        # ---- 一行胶囊：打开页面第一眼只需要知道「今天持什么 · 要不要动手」----
+        # ⚠️ 回测表本身**不删**（用户 2026-10-25 明确要求三口径对照），
+        #    只是收进 <details>：一致时默认收起（多数日子），
+        #    口径不一致时默认展开（那天必须看细节对比）。
+        _h_p3, _h_base = p3.get("hold"), d3.get("base_hold")
+        _h_disp = ("空仓持币" if _h_p3 == "CASH"
+                   else html.escape(f"{_h_p3 or ''} {p3_hold_nm or ''}".strip()))
+        if not p3.get("ok"):
+            pill_cls = "warn"
+            pill = "⚠ D3+P3 本次未算出 · 暂按现用策略执行"
+        elif _h_p3 == _h_base:
+            pill_cls = "ok"
+            pill = (f"✓ 三口径一致（默认 D3+P3）｜ 今日 <b>{_h_disp}</b>"
+                    f" → <b>无需动作</b>")
+        elif _h_p3 == "CASH":
+            pill_cls = "diff"
+            pill = (f"⚠ 默认口径要求<b>空仓</b>（现用策略本应持 "
+                    f"{html.escape(str(base_hold_nm))}）→ <b>今天不持仓</b>")
+        else:
+            pill_cls = "diff"
+            pill = (f"⚠ 口径不一致 → <b>按 D3+P3 调整为 {_h_disp}</b>"
+                    f"（现用策略持 {html.escape(str(base_hold_nm))}）")
+        _cal = (p3.get("calmar") if p3.get("ok") else None) or base_pack.get("calmar")
+        if _cal:
+            pill += f' ｜ 历史 Calmar <b>{_cal:.2f}</b>'
+        _det_open = "" if pill_cls == "ok" else " open"
+
+        return f"""<div class="cbsum {pill_cls}">
+<div class="cbpill">{pill}
+<details class="cbdet"{_det_open}><summary>回测对比 · 规则</summary>
 <div class="tblwrap"><table class="cbst"><thead><tr>
 <th>方案</th><th>今日应持</th><th class="num">净值</th><th class="num">最大回撤</th><th class="num">Calmar</th>
 </tr></thead><tbody>{body}</tbody></table></div>
 <div class="cbsn">{concl}
 <span class="dimtxt">　<b>默认口径＝第一行 D3+P3</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；
 两者独立判定、叠加使用。详细规则与触发明细见下方 ② 的两张卡片。</span></div>
+</details>
 </div>"""
     except Exception:                          # noqa: BLE001
         return ""
@@ -1842,10 +1871,23 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         return f"{v:+.2f}%", _color(v), tip, False, mob
 
     rank_rows = []
+    # 「② 近期换仓复盘」同口径复算出的当前真实持仓（用于排名表里标出「你现在拿着哪只」）
+    _held_row = None
+    if recent and not recent.get("error"):
+        try:
+            _held_row = (recent["rows"][-1] or {}).get("to")
+        except Exception:                              # noqa: BLE001
+            _held_row = None
     for i, r in enumerate(ranked, 1):
         _sc, _scl, _stip, _scl2, _smob = _since_cell(r.code)
+        _rcls = []
+        if i == 1:
+            _rcls.append("row-top1")
+        if _held_row and r.code == _held_row:
+            _rcls.append("row-held")
+        _tr = ' class="%s"' % " ".join(_rcls) if _rcls else ""
         rank_rows.append(
-            "<tr>"
+            f'<tr{_tr}>'
             f'<td class="num c-idx">{i}</td>'
             f'<td class="mono c-code">{r.code}</td>'
             f'<td class="c-nm">{html.escape(r.name)}'
@@ -2706,9 +2748,11 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             rr_block = f"""
 <h2>② 近期换仓复盘 · 近 {_n} 次建议换仓（vs 同期上证指数）</h2>
 <div class="note" style="margin-bottom:10px">
-按<b>同一套策略规则</b>（动横{window} 排名 + 粘性带 {sticky:.1f}pp + 过热熔断 + 价值引擎）在长历史前复权数据上复算，
+已复算最近 {_n} 次建议换仓的收益、持仓天数与同期上证对比。
+<details class="lgd"><summary>复算规则</summary>
+<div class="lgdb">按<b>同一套策略规则</b>（动横{window} 排名 + 粘性带 {sticky:.1f}pp + 过热熔断 + 价值引擎）在长历史前复权数据上复算，
 取最近 {_n} 次系统建议换仓，计算「该次换仓日起到下一次换仓（或至今）」的净值收益与<b>持仓天数</b>，
-并与<b>同期上证指数</b>对比。{rr_src}
+并与<b>同期上证指数</b>对比。{rr_src}</div></details>
 </div>
 <div class="tblwrap"><table class="rtbl"><thead><tr><th>#</th><th>建议换仓日</th><th>买入</th><th>持仓至</th>
 <th title="该段实际持仓的交易日根数">持仓天数</th>
@@ -2724,8 +2768,53 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     _fs_stale, _fs_txt = freshness
     fresh_cls = "fresh stale" if _fs_stale else "fresh"
     _lv_on, _lv_txt = live
-    fresh_html = (f'<div class="fresh live">{_lv_txt}</div>' if _lv_on
-                  else f'<div class="{fresh_cls}">{_fs_txt}</div>')
+    # ★ 2026-10-25：数据校验条平时只占**一行小徽章**（正常 = 不需要每天读两行说明），
+    #   只有抓取失败 / 数据非最新时才退回整宽醒目横幅。详细来源收进 <details>。
+    _fresh_ok = (_lv_on and not _fs_stale
+                 and "⚠" not in _lv_txt and "失败" not in _lv_txt)
+    if _fresh_ok:
+        fresh_html = (
+            f'<div class="fdot"><span class="fdot-i"></span>数据正常 · 截至 '
+            f'<b>{html.escape(str(pivot))}</b>'
+            f'<details class="fdet"><summary>来源</summary>'
+            f'<div class="fdetb">{_lv_txt}</div></details></div>')
+    else:
+        fresh_html = (f'<div class="fresh live">{_lv_txt}</div>' if _lv_on
+                      else f'<div class="{fresh_cls}">{_fs_txt}</div>')
+
+    # ---- 粘性带安全垫（2026-10-25）：一眼回答「今天收盘前会不会换仓」----
+    # 用户原来要自己心算「第1名 − 第2名 − 粘性带」，现在直接给结果。
+    # 距换仓 = lead − sticky：次名相对头名追近这么多 pp，才会触发换仓判定。
+    _sr = []
+    if overheated:
+        _sr.append(f'<span class="sr-t">🔥 头名已过热熔断</span>')
+        _sr.append(f'<span>乖离 <b>{head1.dev:+.2f}%</b> 或 领先 <b>{lead:+.2f}pp</b> 触线 → '
+                   f'<b>今日切防守/持币</b>（见上方今日操作）</span>')
+        _saferow_html = '<div class="saferow hot">' + "".join(_sr) + "</div>"
+    else:
+        _sr.append(f'<span class="sr-t">🥇 {html.escape(head1.code)} '
+                   f'{html.escape(head1.name)}</span>')
+        if head2 is not None and lead == lead:
+            _sr.append(f'<span>领先次名 <b>{lead:+.2f}pp</b></span>')
+            _pad = lead - sticky
+            if _pad > 0:
+                _sr.append(f'<span>距换仓 <b>{_pad:.2f}pp</b>'
+                           f'<i>次名需再追近这么多</i></span>')
+            else:
+                _sr.append('<span style="color:#d4380d;font-weight:700">'
+                           '已在粘性带内 · 头名一变就可能换仓</span>')
+            _sr.append(f'<span class="dimtxt2">粘性带 {sticky:.1f}pp</span>')
+        _cands = []
+        if head1.dev == head1.dev:
+            _cands.append((overheat_dev - head1.dev, "乖离"))
+        if lead == lead:
+            _cands.append((overheat_lead - lead, "领先"))
+        if _cands:
+            _m, _w = min(_cands, key=lambda x: x[0])
+            if _m > 0:
+                _sr.append(f'<span>距过热 <b>{_m:.2f}pp</b>'
+                           f'<i>（{_w}口径）</i></span>')
+        _saferow_html = '<div class="saferow">' + "".join(_sr) + "</div>"
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -2850,9 +2939,19 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   /* 策略二（512890）：每日跟踪行 */
   table.gtbl tr.tvmk td{{border-bottom:none}}
   table.gtbl tr.tvx td{{padding:0 9px 8px}}
-  /* 「三方案今日对照」摘要条：贴在【今日操作指引】顶部，一眼可见不用往下翻 */
-  .cbsum{{background:#fbfcfe;border:1px solid #e2e5ea;border-left:3px solid #c2185b;
-    border-radius:8px;padding:8px 10px;margin:0 0 10px}}
+  /* 「今日执行口径」胶囊条：一行给结论，回测表收进 details（不一致时自动展开） */
+  .cbsum{{background:#fbfcfe;border:1px solid #e2e5ea;border-left:3px solid #2e9e5b;
+    border-radius:8px;padding:7px 10px;margin:0 0 8px}}
+  .cbsum.diff{{border-left-color:#d4380d;background:#fff8f6}}
+  .cbsum.warn{{border-left-color:#d4a017;background:#fffdf6}}
+  .cbpill{{font-size:12.5px;line-height:1.62;color:#202020;white-space:normal}}
+  .cbdet{{display:inline}}
+  .cbdet>summary{{cursor:pointer;color:#3d57e5;font-size:11.5px;font-weight:600;
+    list-style:none;display:inline-block;margin-left:8px}}
+  .cbdet>summary::-webkit-details-marker{{display:none}}
+  .cbdet>summary::before{{content:"▸ "}}
+  .cbdet[open]>summary::before{{content:"▾ "}}
+  .cbdet .tblwrap{{margin-top:7px}}
   .cbsh{{font-size:12px;font-weight:600;color:#202020;margin-bottom:5px}}
   .cbsh span{{font-weight:400;color:#6c717f;font-size:11px}}
   table.cbst{{font-size:11.5px;margin:0;width:100%}}
@@ -2889,9 +2988,32 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     margin:12px 0 4px;border:1px solid #d8dee6;background:#f7f9fb;color:#4b5563}}
   .fresh.stale{{background:#fffbe6;border-color:#ffe58f;color:#614700}}
   .fresh.live{{background:#eef1fe;border-color:#cdd8fb;color:#2c4fb8}}
+  /* 数据正常 = 一行小徽章（异常才用上面的整宽横幅） */
+  .fdot{{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:8px 0 2px;
+    font-size:11.5px;color:#5b6472}}
+  .fdot-i{{width:7px;height:7px;border-radius:50%;background:#2e9e5b;flex:0 0 auto;
+    box-shadow:0 0 0 3px rgba(46,158,91,.14)}}
+  .fdet{{display:inline}}
+  .fdet>summary{{cursor:pointer;color:#3d57e5;font-weight:600;list-style:none;
+    display:inline;font-size:11.5px}}
+  .fdet>summary::-webkit-details-marker{{display:none}}
+  .fdet>summary::before{{content:"· "}}
+  .fdetb{{flex:0 0 100%;margin-top:3px;padding:5px 8px;background:#f7f9fb;
+    border:1px solid #e6eaf0;border-radius:7px;color:#4b5563;font-size:11.5px;
+    line-height:1.6;white-space:normal}}
   .foot{{margin-top:24px;padding-top:14px;border-top:1px solid #dfe3e8;
     color:var(--mut);font-size:11.5px;line-height:1.8}}
   .lead{{margin:14px 0 0;color:#5b6472;font-size:13px}}
+  /* 图例 / 复算规则折叠：每天一字不差的说明书式段落默认收起（2026-10-25） */
+  .lgd{{display:inline}}
+  .lgd>summary{{cursor:pointer;color:#3d57e5;font-size:12px;font-weight:600;
+    list-style:none;display:inline-block;margin-left:6px}}
+  .lgd>summary::-webkit-details-marker{{display:none}}
+  .lgd>summary::before{{content:"▸ "}}
+  .lgd[open]>summary::before{{content:"▾ "}}
+  .lgdb{{margin-top:5px;padding:6px 9px;background:#f9fafc;border:1px dashed #dfe4ea;
+    border-radius:7px;line-height:1.72;font-size:12px;color:#5b6472;
+    white-space:normal}}
   /* ===== 今日操作（2026-10-25 重排：置顶 + 独占整宽）=====
      旧版是「左 42% 放 4 列操作表 | 右放排名表+年度卡」，4 列被挤在 42% 里文字
      严重折行、整页显乱。现在操作表拿到整宽（表格 auto 布局，依据列自然变宽，
@@ -2975,6 +3097,19 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   h3.sph3{{margin:0 0 10px;font-size:15px;font-weight:600;color:#202020;
     padding-left:10px;border-left:4px solid;border-image:linear-gradient(180deg,#3d57e5,#566de7) 1}}
   table.rtbl{{font-size:12px}}
+  /* ① 排名表：粘性带安全垫横条 + 第1名 / 当前持仓行标记（2026-10-25） */
+  .saferow{{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 12px;
+    margin:0 0 7px;padding:6px 9px;background:#f4f8ff;border:1px solid #dbe6fb;
+    border-radius:8px;font-size:11.5px;line-height:1.6;color:#3b4a63}}
+  .saferow.hot{{background:#fff6f3;border-color:#ffd6c8;color:#8a3a1c}}
+  .saferow .sr-t{{font-weight:700;color:#3d57e5;white-space:nowrap}}
+  .saferow.hot .sr-t{{color:#c2410c}}
+  .saferow b{{color:#202020}}
+  .saferow i{{font-style:normal;color:#8b93a1;margin-left:3px;font-size:10.5px}}
+  .saferow .dimtxt2{{color:#8b93a1}}
+  table.rtbl tr.row-top1 td:first-child{{border-left:3px solid #3d57e5}}
+  table.rtbl tr.row-held td{{background:#f1faf4}}
+  table.rtbl tr.row-held td:first-child{{border-left:3px solid #2e9e5b}}
   table.rtbl th,table.rtbl td{{padding:6px 6px}}
   table.rtbl td.vcell{{white-space:normal;min-width:130px}}
   /* ①「切换至今」列：买入日距今 >120 交易日 → 数字淡色 + 虚线下划线，
@@ -3086,15 +3221,18 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 </section>
 
 <div class="lead">以下为主选池结论（第 ① ~ ⑤ 节），备选观察池在报告末尾第 ⑥ 节、与主选池完全独立。
-<span class="dimtxt">① 「切换至今」= 该标的最近一次被系统买入 → 至今（已换出）的
+<details class="lgd"><summary>📖 表格字段与图例说明</summary>
+<div class="lgdb"><span class="dimtxt">① 「切换至今」= 该标的最近一次被系统买入 → 至今（已换出）的
 <span style="color:{RED}">价格</span>涨跌，与 ② 节同源同口径，悬停看起止日与持仓天数；
 <span class="stale">淡色虚线下划线</span> = 买入日距今已超 120 个交易日（半年前的老仓位，非近期表现）；
 「—」= 回测区间内从未被买入。</span></div>
+</details></div>
 
 <div class="split2">
 <div class="s2l">
 <div class="pcard">
 <h2 class="sph2">① 今日排名 · 主选池<span class="sphs">（按 动横{window} 降序）</span></h2>
+{_saferow_html}
 <div class="rtblwrap2">
 <table class="rtbl"><thead><tr><th class="c-idx">#</th><th class="c-code">代码</th>
 <th class="c-nm">名称</th><th class="c-m20">动横{window}</th><th class="c-dev">乖离</th>
