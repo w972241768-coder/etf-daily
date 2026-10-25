@@ -334,17 +334,23 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                     and bool(roc_hold.iloc[i]):
                 roc_until = min(i + roc_days, len(dates) - 1)
                 roc_days_n += 1
-                # ⚠️ roc 必须是 ROC(roc_n)（真 60 日动量）而不是 sig["m"]（那是动横 W=20）。
-                #    旧版误写成 sig["m"]，导致卡片「ROC60」列显示的其实是动横20，已修。
+                # ⚠️ 三处口径必须分清（2026-10-25 修）：
+                #   · 触发依据 = **当日动横 W 排名第 1 名**（raw_head）的 ROC(n) 进 95 分位；
+                #   · 当日卖出 = **当时实际持仓**（held，可能是更早买入、尚未换仓的那只）；
+                #   · 旧版把 roc 写成 sig["m"][held]（那是动横20 且是被持仓的），
+                #     导致卡片「ROC60」列显示的其实是持仓的动横20，已修。
                 _rv = float(roc_val.iloc[i]) if roc_val is not None else float("nan")
                 _pv = float(roc_pct.iloc[i]) if roc_pct is not None else float("nan")
-                _mv = sig["m"].get(held, float("nan"))
+                _hm = sig["m"].get(raw_head, float("nan"))
+                _pm = sig["m"].get(held, float("nan"))
                 roc_cools.append(dict(
-                    date=str(dates[i].date()), code=held,
-                    name=NAMES.get(held, held),
+                    date=str(dates[i].date()),
+                    head=raw_head, head_name=NAMES.get(raw_head, raw_head),
                     roc=(round(_rv, 2) if _rv == _rv else None),
                     pct=(round(_pv, 1) if _pv == _pv else None),
-                    m20=(round(float(_mv), 2) if _mv == _mv else None),
+                    m20=(round(float(_hm), 2) if _hm == _hm else None),
+                    code=held, name=NAMES.get(held, held),
+                    held_m20=(round(float(_pm), 2) if _pm == _pm else None),
                     until=str(dates[roc_until].date()),
                     days=int(np.searchsorted(dates, dates[roc_until]) - i)))
                 if target != "CASH":

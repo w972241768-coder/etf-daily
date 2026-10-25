@@ -250,13 +250,18 @@ def _p3_card_html(p3, recent, cost):
             _p = x.get("pct")
             _pcell = (f'<span style="color:{CLR_P3};font-weight:700">{_p:.1f} 分位</span>'
                       if isinstance(_p, (int, float)) and _p == _p else "—")
+            _head_cell = (f'{html.escape(str(x.get("head_name") or "—"))}'
+                          f'<span class="dimtxt"> {html.escape(str(x.get("head") or ""))}</span>')
+            _sell_cell = (f'{html.escape(str(x.get("name") or "—"))}'
+                          f'<span class="dimtxt"> {html.escape(str(x.get("code") or ""))}</span>')
+            if x.get("head") == x.get("code"):
+                _sell_cell += '<span class="dimtxt">（同上）</span>'
             rows_last += (
                 f'<tr><td class="mono">{html.escape(str(x["date"]))}</td>'
-                f'<td>{html.escape(str(x["name"]))}'
-                f'<span class="dimtxt"> {html.escape(str(x.get("code") or ""))}</span></td>'
-                f'<td class="num" style="color:{CLR_P3}">{_n(x.get("roc"))}</td>'
+                f'<td>{_head_cell}</td>'
+                f'<td class="num" style="color:{CLR_P3};font-weight:700">{_n(x.get("roc"))}</td>'
                 f'<td class="num">{_pcell}</td>'
-                f'<td class="num dimtxt">{_n(x.get("m20"))}</td>'
+                f'<td>{_sell_cell}</td>'
                 f'<td class="num">{x["days"]} 日</td>'
                 f'<td class="mono">{html.escape(str(x["until"]))}</td></tr>')
         if not rows_last:
@@ -319,17 +324,18 @@ def _p3_card_html(p3, recent, cost):
   <div class="d3last">
     <div class="cap">最近 {len(p3.get('last') or [])} 次追高止盈事件</div>
     <div class="tblwrap"><table class="d3tbl sm"><thead><tr>
-      <th>触发日（＝清仓日）</th><th>当时头名</th>
-      <th class="num" title="触发当日头名的 60 日动量（ROC60）">ROC60</th>
+      <th>触发日（＝清仓日）</th>
+      <th title="当日动横20 排名第 1 名；P3 看的是它的 ROC60">触发依据 · 当日头名</th>
+      <th class="num" title="当日头名的 60 日动量">该头名 ROC60</th>
       <th class="num" title="该 ROC60 在自身扩张历史中的百分位；触发线 95，故必然 ≥95">自身历史分位</th>
-      <th class="num" title="触发当日头名的动横20（排名信号），仅供对照">动横20</th>
+      <th>当日卖出（当时持仓）</th>
       <th class="num">空仓</th><th>回场日</th></tr></thead>
       <tbody>{rows_last}</tbody></table></div>
     <div class="sub" style="margin-top:6px;font-size:11px;line-height:1.6">
-    <b>触发日 = 清仓日</b>：当日收盘算出「头名 ROC60 已进自身历史 95 分位」，<b>当天收盘就清仓</b>，
-    次日起空仓；<b>回场日</b> = 空仓满 {p3['days']} 个交易日后的那天，按当日动横20 第 1 名买回。
-    <br>「自身历史分位」= 该值在该标的自身扩张历史里排第几（0~100），触发线固定 95，
-    所以这列必然 ≥95；越接近 100 说明当时涨得越极端。</div>
+    <b>三件事别混</b>：①「触发依据 · 当日头名」= 当天动横20 排名第 1 名，P3 判定的是<b>它的</b> ROC60 有没有进自身历史 95 分位；
+    ②「当日卖出」= 你那时<b>实际持有的</b>那只 —— 因为冷却/未换仓，它可能不是当日头名，两者不同是正常的；
+    ③ <b>触发日＝清仓日</b>：当天收盘判定、当天收盘清仓，次日起空仓；<b>回场日</b> = 空仓满 {p3['days']} 个交易日后那天，按当日动横20 第 1 名买回。
+    <br>「自身历史分位」= 该值在该标的自身扩张历史里排第几（0~100），触发线固定 95，所以必然 ≥95；越接近 100 说明当时涨得越极端。</div>
   </div>
   <div class="d3sw">{act}</div>
   <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 {cost*100:.1f}%，
@@ -2657,19 +2663,28 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   /* 操作指引 与 ① 今日排名 并排（左右等高） */
   .split{{display:flex;gap:18px;align-items:stretch;margin:20px 0 6px}}
   .split .l{{flex:0 0 42%;min-width:0}}
-  .split .r{{flex:1;min-width:0}}
-  /* ① 今日排名表 + 年度表现柱状图 并排（等高，表内溢出不外泄到页面） */
-  .rwrap{{display:flex;gap:12px;align-items:stretch}}
-  .rtblwrap{{flex:1 1 auto;min-width:0;overflow-x:auto}}
+  .split .r{{flex:1;min-width:0;display:flex;flex-direction:column;min-height:0}}
+  /* ① 今日排名表 + 年度表现柱状图 并排（等高，表内溢出不外泄到页面）
+     ⚠️ 对齐约束（2026-10-25）：右列整体撑满 .split 行高 → .rwrap 撑满右列 →
+     年度卡再撑满 .rwrap，SVG 用 height:100% 等比缩放填充剩余空间。
+     这样「左列底边 = 排名表底边 = 年度卡底边」三条线天然重合，不会出现台阶。 */
+  .rwrap{{display:flex;gap:12px;align-items:stretch;flex:1 1 auto;min-height:0}}
+  .rtblwrap{{flex:1 1 auto;min-width:0;overflow-x:auto;min-height:0}}
   .ytdchart{{flex:0 0 268px;min-width:0;display:flex;flex-direction:column;
+    min-height:0;overflow:hidden;
     background:#fff;border:1px solid var(--bd);border-radius:10px;padding:10px 12px;
     box-shadow:0 1px 3px rgba(16,24,40,.05)}}
   .ytdh{{font-size:12.5px;font-weight:600;color:#202020;margin:0 0 4px;
     padding-left:8px;border-left:3px solid #3d57e5}}
-  /* 年度表现 = SVG 分组竖柱（每年三根：现用策略 / D3 / P3） */
-  .ytdbody{{flex:1;display:block;min-height:0}}
+  /* 年度表现 = SVG 分组竖柱（每年三根：现用策略 / D3 / D3+P3） */
+  .ytdbody{{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center}}
   .ytdbody svg{{display:block;width:100%;height:auto}}
-  .ytdfoot{{margin-top:4px;font-size:9.5px;color:#98a1ad;line-height:1.5}}
+  @media (min-width:1321px){{
+    /* 并排时让 SVG 吃满卡片剩余高度，卡片底边不被内容顶出去 */
+    .ytdbody svg{{height:100%;max-height:100%}}
+  }}
+  .ytdfoot{{margin-top:4px;font-size:9.5px;color:#98a1ad;line-height:1.5;
+    white-space:normal;flex:0 0 auto}}
   .split .l .rs{{min-width:0}}
   .sphs{{font-size:12px;font-weight:400;color:var(--mut)}}
   h2.sph2{{margin:0 0 8px}}
@@ -2691,8 +2706,9 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   /* ≤1320px：年度表现柱状图移到排名表下方，把整宽让给 8 列排名表 → 不再出现横向滚动条 */
   @media (max-width:1320px){{
     .rwrap{{flex-direction:column}}
-    .ytdchart{{flex:0 0 auto}}
-    .ytdbody{{min-height:150px}}
+    .ytdchart{{flex:0 0 auto;overflow:visible}}
+    /* 竖向堆叠时卡片高度由内容决定，SVG 回到自然高度（height:100% 会退化成 0） */
+    .ytdbody{{flex:0 0 auto;min-height:150px;display:block}}
   }}
   @media (max-width:1100px){{
     .split{{flex-direction:column}}

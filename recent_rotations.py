@@ -504,8 +504,11 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         p3_hold_name=_hname(p3_hold),
         same_base=(hold == base_hold), active=bool(active),
         remain=remain, back=back,
-        last=[dict(date=c["date"], name=c["name"], code=c.get("code"),
+        last=[dict(date=c["date"],
+                   head=c.get("head"), head_name=c.get("head_name"),
                    roc=c.get("roc"), pct=c.get("pct"), m20=c.get("m20"),
+                   code=c.get("code"), name=c.get("name"),
+                   held_m20=c.get("held_m20"),
                    until=c["until"], days=c["days"]) for c in rc[-3:]][::-1],
         # 三列对比：现用策略 / D3+P3（主口径） / 参照 D3 / 参照 仅P3
         base=_pack(sb, base_navs), d3=_pack(sd, d3_navs),

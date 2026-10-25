@@ -72,10 +72,15 @@ def main():
     bad = 0
     for w in WIDTHS:
         title = probe(w)
-        # 页面溢出 = PAGE= 后第一个数
-        page_ovf = "0"
-        if "PAGE=" in title:
-            page_ovf = title.split("PAGE=")[1].split(" ")[0].split("｜")[0].strip()
+        # ⚠️ 2026-10-25 修：Chrome 起不来时 probe() 返回 "(chrome failed)"，
+        # 而旧逻辑「title 里没有 PAGE= 就当 0」会把**失败静默报成 PASS**。
+        # 现在必须先确认真拿到了 PAGE=，否则直接判 FAIL 并打红。
+        if "PAGE=" not in (title or ""):
+            bad += 1
+            print(f"[{w:5d}px] PROBE_ERROR  FAIL   ← 浏览器没返回数据，本次结果不可用")
+            print("    ", (title or "")[:200])
+            continue
+        page_ovf = title.split("PAGE=")[1].split(" ")[0].split("｜")[0].strip()
         ok = (page_ovf == "0")
         if not ok:
             bad += 1
