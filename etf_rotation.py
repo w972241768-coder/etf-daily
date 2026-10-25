@@ -1309,33 +1309,53 @@ def _hspan_html(span, *, label: str = "近 1 年 MA200 偏离区间",
     def _c(v):
         return RED_ if v > 0 else GRN_
 
-    parts = [
+    # ★ 2026-10-25 移动端改造：常显只留「窗口 + 当前值与分位」（判贵贱的核心结论），
+    #   极值/买线下方天数/长窗口/口径/起止全部收进 <details> —— 手机首屏不再被
+    #   十几行 span 淹没，且**无需 JS**；桌面端点一下 summary 即可展开。
+    # ⚠️ 但「只报近 1 年分位会说反」是硬坑（512040 近1年 3 分位 vs 近5年 26 分位），
+    #   所以把**最长的那个窗口分位**提到常显，折叠区只放极值等细节。
+    _long = None
+    for _e in (span.get("extra") or []):
+        if _e.get("years") == 5:
+            _long = _e
+    if _long is None and span.get("extra"):
+        _long = span["extra"][-1]
+    _long_txt = (f'<span class="v dimtxt">｜近 {_long["years"]} 年仍 {_long["pos"]:.0f} 分位</span>'
+                 if _long else "")
+    head = [
         f'<span class="k">{html.escape(label)}（{span["n"]} 日）</span>',
+        f'<span class="v">当前 <b style="color:{_c(span["cur"])}">{span["cur"]:+.2f}%</b>'
+        f'位于 <b>{span["pos"]:.0f} 分位</b><i>{_span_word(span["pos"])}</i></span>',
+        _long_txt,
+    ]
+
+    body = [
         f'<span class="v">最深回踩 <b style="color:{_c(span["lo"])}">{span["lo"]:+.2f}%</b>'
         f'<i>{html.escape(span["lo_date"])}</i></span>',
         f'<span class="v">最高冲高 <b style="color:{_c(span["hi"])}">{span["hi"]:+.2f}%</b>'
         f'<i>{html.escape(span["hi_date"])}</i></span>',
-        f'<span class="v">当前 <b style="color:{_c(span["cur"])}">{span["cur"]:+.2f}%</b>'
-        f'位于 <b>{span["pos"]:.0f} 分位</b><i>{_span_word(span["pos"])}</i></span>',
     ]
     if span.get("n_below") is not None:
         _bl = html.escape(buy_label) if buy_label else "买线"
-        parts.append(
+        body.append(
             f'<span class="v">{_bl}下方 <b>{span["n_below"]}/{span["n"]}</b> 日'
             f'（{span["below_pct"]:.1f}%）</span>')
     if span.get("extra"):
         # 每个长窗口单独一格（不合并成一句）：单格文字短，flex-wrap 才能在各宽度下
         # 自然换行、不会撑出横向滚动条；合并成一长句在 600px 屏会超出容器。
         for e in span["extra"]:
-            parts.append(
+            body.append(
                 f'<span class="v">更长期 · {e["years"]} 年 <b>{e["lo"]:+.2f}%</b>'
                 f'<i>当前 {e["pos"]:.0f} 分位</i></span>')
     if alt:
-        parts.append(
+        body.append(
             f'<span class="v dimtxt">{html.escape(alt_label)} '
             f'{alt["lo"]:+.2f}% ~ {alt["hi"]:+.2f}%</span>')
-    parts.append(f'<span class="v dimtxt">窗口 {span["start"]} ~ {span["end"]}</span>')
-    return '<div class="hspan">' + "".join(parts) + "</div>"
+    body.append(f'<span class="v dimtxt">窗口 {span["start"]} ~ {span["end"]}</span>')
+
+    return ('<div class="hspan">' + "".join(head)
+            + '<details class="hdet"><summary>极值 · 长窗口 · 买点稀缺度</summary>'
+            + '<div class="hdetb">' + "".join(body) + "</div></details></div>")
 
 
 # ---------------------------------------------------------------- 指数口径对照
@@ -1788,24 +1808,28 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     _asof = (recent or {}).get("asof") or pivot
 
     def _since_cell(code):
-        """返回 (显示文本, 颜色, 悬停明细, 是否陈旧)。
+        """返回 (显示文本, 颜色, 悬停明细, 是否陈旧, 移动端副文本)。
 
         ⚠️ 陈旧标记：若「买入日」距锚定日超过 120 个**日历日**（约半年），数字虽对
         但代表的是很久以前那一段行情（例 510300 最近一次被买入是 2023-07-31，
         收益率是三年前的），直接摆在「今日涨跌」旁边极易被误读为近期表现
         ⇒ 加淡色 + 虚线下划线。注意用「距今」而不是「该段持仓天数」——
         后者只描述那一段有多长，510300 那一段本身只有 15 个交易日。
+
+        ★ 第 5 项「移动端副文本」（2026-10-25）：手机没有 hover，title 完全看不到，
+          把「持仓/已换出 + 天数」直接渲染成 <small> 挂在单元格内，桌面端 CSS 隐藏。
         """
         d = _since.get(code)
         if not d:
-            return "—", "#98a1ad", "回测区间内从未被系统买入", False
+            return "—", "#98a1ad", "回测区间内从未被系统买入", False, ""
         r_ = d.get("ret")
         if r_ is None or r_ != r_:
-            return "—", "#98a1ad", "缺价，无法计算", False
+            return "—", "#98a1ad", "缺价，无法计算", False, ""
         v = r_ * 100.0
         _days = d.get("days") or 0
         tip = (f"{d['start']} 买入 → {d['end']}"
                f"（{'持有中' if d['holding'] else '已换出'}，持仓 {_days} 个交易日）")
+        mob = f"{'持仓' if d['holding'] else '已换出'} {_days} 日"
         try:
             _gap = (pd.Timestamp(_asof) - pd.Timestamp(d["start"])).days
         except Exception:                                  # noqa: BLE001
@@ -1813,23 +1837,27 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         stale = bool(_gap > 120 and not d["holding"])
         if stale:
             tip += f"　⚠ 该买入日距 {_asof} 已 {_gap} 天，非近期表现"
-            return f'<span class="stale">{v:+.2f}%</span>', _color(v), tip, True
-        return f"{v:+.2f}%", _color(v), tip, False
+            return f'<span class="stale">{v:+.2f}%</span>', _color(v), tip, True, mob
+        return f"{v:+.2f}%", _color(v), tip, False, mob
 
     rank_rows = []
     for i, r in enumerate(ranked, 1):
-        _sc, _scl, _stip, _scl2 = _since_cell(r.code)
+        _sc, _scl, _stip, _scl2, _smob = _since_cell(r.code)
         rank_rows.append(
             "<tr>"
-            f'<td class="num">{i}</td>'
-            f'<td class="mono">{r.code}</td><td>{html.escape(r.name)}</td>'
-            f'<td class="num" style="color:{_color(r.momentum[window])};font-weight:600">'
+            f'<td class="num c-idx">{i}</td>'
+            f'<td class="mono c-code">{r.code}</td>'
+            f'<td class="c-nm">{html.escape(r.name)}'
+            f'<span class="code-sub">{r.code}</span></td>'
+            f'<td class="num c-m20" style="color:{_color(r.momentum[window])};font-weight:600">'
             f'{_fmt(r.momentum[window])}</td>'
-            f'<td class="num" style="color:{_color(r.dev)}">{_fmt(r.dev)}</td>'
-            f'<td class="num" title="{html.escape(_stip)}" '
-            f'style="color:{_scl};font-weight:600">{_sc}</td>'            f'<td class="num">{r.close:.3f}</td>'
-            f'<td class="num" style="color:{_color(r.chg1)};font-weight:600">{_fmt(r.chg1)}</td>'
-            f'<td class="num">{_ma20(r):.3f}</td>'
+            f'<td class="num c-dev" style="color:{_color(r.dev)}">{_fmt(r.dev)}</td>'
+            f'<td class="num c-since" title="{html.escape(_stip)}" '
+            f'style="color:{_scl};font-weight:600">{_sc}'
+            f'<small class="since-sub">{html.escape(_smob)}</small></td>'
+            f'<td class="num c-px">{r.close:.3f}</td>'
+            f'<td class="num c-chg" style="color:{_color(r.chg1)};font-weight:600">{_fmt(r.chg1)}</td>'
+            f'<td class="num c-ma20">{_ma20(r):.3f}</td>'
             "</tr>")
     for r in snap:
         if r.role != "defensive":
@@ -1855,17 +1883,20 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                        f'<b style="color:{_cfd}">{_fdv:+.2f}%</b> ｜ '
                        f'指数{idx["code"]} <b style="color:{_cid}">{_idv:+.2f}%</b>'
                        f'（差 {idx["gap"]:+.2f}pp）</span>')
-        _sc2, _scl2, _stip2, _sstale2 = _since_cell(r.code)
+        _sc2, _scl2, _stip2, _sstale2, _smob2 = _since_cell(r.code)
         rank_rows.append(
             "<tr class='def'>"
-            f'<td class="num">—</td>'
-            f'<td class="mono">{r.code}</td><td>{html.escape(r.name)} (防守)</td>'
-            f'<td class="num" style="color:{_color(r.momentum[window])}">{_fmt(r.momentum[window])}</td>'
-            f'<td class="num" style="color:{_color(r.dev)}">{_fmt(r.dev)}</td>'
-            f'<td class="num" title="{html.escape(_stip2)}" style="color:{_scl2}">{_sc2}</td>'
-            f'<td class="num">{r.close:.3f}</td>'
-            f'<td class="num" style="color:{_color(r.chg1)}">{_fmt(r.chg1)}</td>'
-            f'<td class="num">{_ma20(r):.3f}</td>'
+            f'<td class="num c-idx">—</td>'
+            f'<td class="mono c-code">{r.code}</td>'
+            f'<td class="c-nm">{html.escape(r.name)} (防守)'
+            f'<span class="code-sub">{r.code}</span></td>'
+            f'<td class="num c-m20" style="color:{_color(r.momentum[window])}">{_fmt(r.momentum[window])}</td>'
+            f'<td class="num c-dev" style="color:{_color(r.dev)}">{_fmt(r.dev)}</td>'
+            f'<td class="num c-since" title="{html.escape(_stip2)}" style="color:{_scl2}">{_sc2}'
+            f'<small class="since-sub">{html.escape(_smob2)}</small></td>'
+            f'<td class="num c-px">{r.close:.3f}</td>'
+            f'<td class="num c-chg" style="color:{_color(r.chg1)}">{_fmt(r.chg1)}</td>'
+            f'<td class="num c-ma20">{_ma20(r):.3f}</td>'
             "</tr>")
         rank_rows.append(
             "<tr class='defsub'><td colspan='9'>"
@@ -2020,6 +2051,13 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                f'aria-label="年度表现分组柱状图">{"".join(_yparts)}</svg>')
 
     n_yr = len(_yl)
+    # ★ 2026-10-25：手机触屏无 hover，SVG 里 <title> 的年度回撤根本点不出来。
+    #   这里把「默认口径 D3+P3」的逐年最大回撤压成一行小字直接印在脚注里，
+    #   桌面端仍保留柱子悬停（信息重复但无害），手机端则始终可读。
+    _mdd_line = " · ".join(
+        f"{str(y)[-2:]}′ {(_p3y.get(str(y)) or {}).get('mdd'):.1f}%"
+        for y in (str(d["year"]) for d in _yl)
+        if (_p3y.get(str(y)) or {}).get("mdd") is not None)
     ytd_block = f"""
 <div class="ytdchart">
 <div class="ytdh">年度表现<span class="sphs">（近 {n_yr} 年 · 三柱对比）</span></div>
@@ -2031,7 +2069,8 @@ style="color:{CLR_P3};font-weight:700">D3+P3（默认口径）</span> / <span
 style="color:{CLR_STRAT};font-weight:700">现用策略</span> / <span
 style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅作参照</b>）·
 柱体<b>向上=盈利、向下=亏损</b>；柱上数字沿用 <span style="color:{RED}">红涨</span>
-<span style="color:{GREEN}">绿跌</span> · 同一刻度 · 悬停看当年最大回撤 · 前复权长历史回测</div>
+<span style="color:{GREEN}">绿跌</span> · 同一刻度 · 悬停看当年最大回撤 · 前复权长历史回测
+<br><span class="ytdmdd">各年最大回撤（默认口径 D3+P3）：{_mdd_line}</span></div>
 </div>"""
 
     # 阶梯表
@@ -2787,6 +2826,17 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .hspan .k{{font-weight:600;color:#5b6472;white-space:nowrap}}
   .hspan .v{{white-space:nowrap}}
   .hspan .v i{{font-style:normal;color:#8b93a1;margin-left:4px;font-size:11px}}
+  /* MA200 条带的「极值 · 长窗口」折叠区（2026-10-25 手机端改造，纯 HTML 无需 JS） */
+  .hspan .hdet{{flex:0 0 100%;margin:1px 0 0}}
+  .hdet>summary{{cursor:pointer;color:#3d57e5;font-size:11px;font-weight:600;
+    list-style:none;display:inline-flex;align-items:center;gap:4px;outline:none;
+    padding:1px 0}}
+  .hdet>summary::-webkit-details-marker{{display:none}}
+  .hdet>summary::before{{content:"▸";font-size:10px;color:#3d57e5}}
+  .hdet[open]>summary::before{{content:"▾"}}
+  .hdetb{{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 14px;
+    margin-top:3px;padding-top:4px;border-top:1px dashed #e4e8ee}}
+  .hdetb .v{{white-space:nowrap}}   /* 手机端改为 normal（见媒体查询） */
   /* 策略二（512890）：每日跟踪行 */
   table.gtbl tr.tvmk td{{border-bottom:none}}
   table.gtbl tr.tvx td{{padding:0 9px 8px}}
@@ -2908,6 +2958,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   }}
   .ytdfoot{{margin-top:4px;font-size:9.5px;color:#98a1ad;line-height:1.5;
     white-space:normal;flex:0 0 auto}}
+  .ytdfoot .ytdmdd{{color:#6c717f;font-variant-numeric:tabular-nums}}
   .split .l .rs{{min-width:0}}
   .sphs{{font-size:12px;font-weight:400;color:var(--mut)}}
   h2.sph2{{margin:0 0 8px}}
@@ -2964,6 +3015,30 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     .gdate{{margin-left:0;width:100%}}
   }}
 
+  /* ===== 手机竖屏（≤640px）排名表瘦身（2026-10-25）=====
+     问题：9 列在 375px 宽下每列仅约 41px，字小如蚂蚁；
+           且「切换至今」的持仓信息只写在 title 里，触屏无 hover 完全看不到。
+     方案：① 代码并入名称列（名称在上、代码灰色小字在下）
+           ② 隐藏 现价 / MA20 —— 乖离 = P/MA20−1，已完整包含这两列的信息
+           ③ 「切换至今」把持仓状态+天数渲染成单元格内小字
+           ④ 条带内 nowrap 改 normal，避免长文本撑出横向滚动
+     结果：9 列 → 6 列，375px 下每列约 62px，无需左右拖动。 */
+  .code-sub,.since-sub{{display:none}}
+  @media (max-width:640px){{
+    table.rtbl{{font-size:11.5px}}
+    table.rtbl th,table.rtbl td{{padding:5px 4px}}
+    table.rtbl .c-code,table.rtbl .c-px,table.rtbl .c-ma20{{display:none}}
+    table.rtbl .c-nm .code-sub{{display:block;font-size:10px;color:#98a1ad;
+      font-weight:400;line-height:1.2;margin-top:1px}}
+    table.rtbl .c-since .since-sub{{display:block;font-size:10px;color:#8b93a1;
+      font-weight:400;line-height:1.2;margin-top:1px}}
+    .hspan{{font-size:11px;padding:5px 8px;gap:2px 10px}}
+    .hdetb .v,.hspan .v{{white-space:normal}}
+    .hdet>summary{{font-size:10.5px}}
+    /* 今日操作明细表：手机上允许换行，避免长名称撑宽 */
+    .gsec table.gtbl{{font-size:11.5px}}
+  }}
+
   /* 净值曲线 SVG */
   .csvg{{display:block;width:100%;height:auto;min-width:560px;background:#fff;
     border:1px solid var(--bd);border-radius:10px;box-shadow:0 1px 3px rgba(16,24,40,.05)}}
@@ -3011,9 +3086,10 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 <div class="pcard">
 <h2 class="sph2">① 今日排名 · 主选池<span class="sphs">（按 动横{window} 降序）</span></h2>
 <div class="rtblwrap2">
-<table class="rtbl"><thead><tr><th>#</th><th>代码</th><th>名称</th><th>动横{window}</th><th>乖离</th>
-<th title="该标的最近一次被系统买入 → 至今（或已换出）的价格涨跌，口径与 ② 节一致">切换至今</th>
-<th>现价</th><th>今日涨跌</th><th>MA20</th></tr></thead><tbody>
+<table class="rtbl"><thead><tr><th class="c-idx">#</th><th class="c-code">代码</th>
+<th class="c-nm">名称</th><th class="c-m20">动横{window}</th><th class="c-dev">乖离</th>
+<th class="c-since" title="该标的最近一次被系统买入 → 至今（或已换出）的价格涨跌，口径与 ② 节一致">切换至今</th>
+<th class="c-px">现价</th><th class="c-chg">今日涨跌</th><th class="c-ma20">MA20</th></tr></thead><tbody>
 {''.join(rank_rows)}
 </tbody></table>
 </div>
