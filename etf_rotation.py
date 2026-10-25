@@ -2014,7 +2014,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     n_yr = len(_yl)
     ytd_block = f"""
 <div class="ytdchart">
-<div class="ytdh">年度表现<span class="sphs">（策略 / D3 / D3+P3 · 近 {n_yr} 年 · 长历史复算）</span></div>
+<div class="ytdh">年度表现<span class="sphs">（近 {n_yr} 年 · 三柱对比）</span></div>
 <div class="ytdbody">
 {ytd_svg}
 </div>
@@ -2757,7 +2757,7 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   .defbar .dim2{{color:#6c717f;font-size:11px;white-space:nowrap}}
   /* 今日操作指引 · 防守位口径条带：跨 4 列独占一行，数值并列 chip + 结论单行 */
   table.gtbl tr.defmain td{{border-bottom:none}}
-  table.gtbl tr.defx td{{padding:0 7px 8px}}
+  table.gtbl tr.defx td{{padding:0 9px 8px}}
   tr.defx.dimx td{{background:#fbfcfd}}
   tr.defx.hotx td{{background:#fff8f3}}
   .gidxbar{{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;
@@ -2781,7 +2781,7 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   .hspan .v i{{font-style:normal;color:#8b93a1;margin-left:4px;font-size:11px}}
   /* 策略二（512890）：每日跟踪行 */
   table.gtbl tr.tvmk td{{border-bottom:none}}
-  table.gtbl tr.tvx td{{padding:0 7px 8px}}
+  table.gtbl tr.tvx td{{padding:0 9px 8px}}
   /* 「三方案今日对照」摘要条：贴在【今日操作指引】顶部，一眼可见不用往下翻 */
   .cbsum{{background:#fbfcfe;border:1px solid #e2e5ea;border-left:3px solid #c2185b;
     border-radius:8px;padding:8px 10px;margin:0 0 10px}}
@@ -2824,6 +2824,42 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   .foot{{margin-top:24px;padding-top:14px;border-top:1px solid #dfe3e8;
     color:var(--mut);font-size:11.5px;line-height:1.8}}
   .lead{{margin:14px 0 0;color:#5b6472;font-size:13px}}
+  /* ===== 今日操作（2026-10-25 重排：置顶 + 独占整宽）=====
+     旧版是「左 42% 放 4 列操作表 | 右放排名表+年度卡」，4 列被挤在 42% 里文字
+     严重折行、整页显乱。现在操作表拿到整宽（表格 auto 布局，依据列自然变宽，
+     不需要 table-layout:fixed——那样反而会留大片空白），并把排名表与年度卡
+     降到它下面并排。 */
+  .gsec{{background:#fff;border:1px solid var(--bd);border-radius:12px;
+    padding:14px 16px 12px;margin:16px 0 0;box-shadow:0 1px 3px rgba(16,24,40,.05)}}
+  .ghead{{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:0 0 10px}}
+  .gh2{{font-size:16px;font-weight:700;margin:0;color:#202020;
+    padding-left:10px;border-left:4px solid;
+    border-image:linear-gradient(180deg,#3d57e5,#566de7) 1}}
+  .gh2 .gtip{{font-size:12px;font-weight:400;color:var(--mut);margin-left:8px}}
+  .gdate{{margin-left:auto;font-size:12px;color:var(--mut);white-space:nowrap}}
+  .gsec table.gtbl{{font-size:12.5px;width:100%;table-layout:fixed;
+    border:none;border-radius:0;box-shadow:none;background:transparent}}
+  /* ⚠️ 全局 table 自带 border+圆角+阴影（卡片样式）；放进 .gsec 白卡片里会变成
+     「卡片套卡片」的双层边框与双层圆角 —— 这是之前显乱的主要原因之一，故清零。 */
+  /* fixed 布局：前三列定宽，第 4 列（依据）吃掉剩余，避免 auto 布局下
+     「依据」列被拉到近千 px、文字只占左侧一小段的空旷感 */
+  .gsec table.gtbl th:nth-child(1){{width:104px}}
+  .gsec table.gtbl th:nth-child(2){{width:296px}}
+  .gsec table.gtbl th:nth-child(3){{width:214px}}
+  .gsec table.gtbl th{{background:#f4f6fa;font-weight:600;color:#4b5563;
+    padding:7px 9px;border-bottom:1px solid var(--bd)}}
+  .gsec table.gtbl td{{padding:7px 9px;border-bottom:1px solid #eef0f3}}
+  .gsec table.gtbl tbody tr:last-child td{{border-bottom:none}}
+  /* 白卡片里的说明块改成浅灰底，避免「白上白」看不出层次 */
+  .gsec .note{{background:#f7f9fb;box-shadow:none;border-color:#e2e5ea}}
+  /* 排名表 + 年度卡：并排、等高（年度卡被拉伸到排名表高度，底边齐平） */
+  .split2{{display:flex;gap:14px;align-items:stretch;margin:14px 0 0}}
+  .s2l{{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;min-height:0}}
+  .rtblwrap2{{overflow-x:auto;min-height:0}}
+  .s2r{{flex:0 0 300px;min-width:0;display:flex;flex-direction:column;min-height:0}}
+  /* min-height 防「排名表很矮时年度卡被压扁到看不见图」；两者底边仍由 stretch 齐平 */
+  .s2r .ytdchart{{flex:1 1 auto;min-height:250px}}
+  /* 旧布局遗留（.split/.rwrap）保留但已不在主流程使用 */
   /* 操作指引 与 ① 今日排名 并排（左右等高） */
   .split{{display:flex;gap:18px;align-items:stretch;margin:20px 0 6px}}
   .split .l{{flex:0 0 42%;min-width:0}}
@@ -2870,16 +2906,32 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
   /* ≤1320px：年度表现柱状图移到排名表下方，把整宽让给 8 列排名表 → 不再出现横向滚动条 */
   @media (max-width:1320px){{
     .rwrap{{flex-direction:column}}
+    /* 排名表与年度卡改竖向堆叠 */
+    .split2{{flex-direction:column}}
+    .s2r{{flex:0 0 auto}}
+    .s2r .ytdchart{{flex:0 0 auto;overflow:visible}}
     .ytdchart{{flex:0 0 auto;overflow:visible}}
-    /* 竖向堆叠时卡片高度由内容决定，SVG 回到自然高度（height:100% 会退化成 0） */
+    /* 堆叠后容器变全宽，svg width:100% 会把图等比放大到极高 → 改按高度上限缩放并居中 */
     .ytdbody{{flex:0 0 auto;min-height:150px;display:block}}
+    .ytdbody svg{{width:auto;max-width:100%;height:auto;max-height:330px;margin:0 auto}}
   }}
   @media (max-width:1100px){{
     .split{{flex-direction:column}}
     .split .l,.split .r{{flex:1 1 auto;align-self:stretch}}
     .rwrap{{flex-direction:column}}
+    .split2{{flex-direction:column}}
+    .s2r{{flex:0 0 auto}}
     .ytdchart{{flex:0 0 auto}}
     .ytdbody{{min-height:180px}}
+  }}
+  /* 窄屏：定宽列会把内容挤爆 → 退回 auto 布局，让内容自己决定宽度 */
+  @media (max-width:900px){{
+    .gsec table.gtbl{{table-layout:auto}}
+    .gsec table.gtbl th:nth-child(1),
+    .gsec table.gtbl th:nth-child(2),
+    .gsec table.gtbl th:nth-child(3){{width:auto}}
+    .ghead{{gap:6px}}
+    .gdate{{margin-left:0;width:100%}}
   }}
   /* 净值曲线 SVG */
   .csvg{{display:block;width:100%;height:auto;min-width:560px;background:#fff;
@@ -2906,34 +2958,36 @@ style="color:{CLR_P3};font-weight:700">D3+P3 止盈</span>（后两者是并行�
 </div>
 {fresh_html}
 
-<div class="lead">以上为主选池结论（第 ① ~ ⑤ 节）。备选观察池在报告末尾第 ⑥ 节，与主选池完全独立。
-<span class="dimtxt">① 「切换至今」= 该标的最近一次被系统买入 → 至今（已换出的算到换出日）的
-<span style="color:{RED}">价格</span>涨跌，与 ② 节同源同口径，悬停看起止日与持仓天数；
-<span class="stale">淡色虚线下划线</span> = 买入日距今已超 120 个交易日（半年前的老仓位，非近期表现）；
-「—」= 回测区间内从未被买入。</span></div>
-
-<div class="split">
-<div class="l">
-<h3 class="sph3">今日操作指引<span class="sphs">（按你当前持仓对号入座）</span></h3>
+<section class="gsec">
+<div class="ghead">
+  <h2 class="gh2">🎯 今日操作<span class="gtip">按你当前持仓对号入座</span></h2>
+  <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准</span>
+</div>
 {_combo_summary_html(recent)}
 <div class="note" style="margin-bottom:10px">{guide_note}</div>
 <table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead>
 <tbody>{''.join(guide_rows)}</tbody></table>
-<div class="sub" style="margin-top:8px">本指引基于锚定日 <b>{pivot}</b> 的信号。
-若为盘中实时数据，数字会随盘中波动，请以<b>收盘价</b>为准再做操作。</div>
-</div>
-<div class="r">
+</section>
+
+<div class="lead">以下为主选池结论（第 ① ~ ⑤ 节），备选观察池在报告末尾第 ⑥ 节、与主选池完全独立。
+<span class="dimtxt">① 「切换至今」= 该标的最近一次被系统买入 → 至今（已换出）的
+<span style="color:{RED}">价格</span>涨跌，与 ② 节同源同口径，悬停看起止日与持仓天数；
+<span class="stale">淡色虚线下划线</span> = 买入日距今已超 120 个交易日（半年前的老仓位，非近期表现）；
+「—」= 回测区间内从未被买入。</span></div>
+
+<div class="split2">
+<div class="s2l">
 <h2 class="sph2">① 今日排名 · 主选池（按 动横{window} 降序）</h2>
-<div class="rwrap">
-<div class="rtblwrap">
+<div class="rtblwrap2">
 <table class="rtbl"><thead><tr><th>#</th><th>代码</th><th>名称</th><th>动横{window}</th><th>乖离</th>
 <th title="该标的最近一次被系统买入 → 至今（或已换出）的价格涨跌，口径与 ② 节一致">切换至今</th>
 <th>现价</th><th>今日涨跌</th><th>MA20</th></tr></thead><tbody>
 {''.join(rank_rows)}
 </tbody></table>
 </div>
-{ytd_block}
 </div>
+<div class="s2r">
+{ytd_block}
 </div>
 </div>
 
