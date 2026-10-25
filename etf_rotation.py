@@ -3257,19 +3257,36 @@ def main():
         if df is None:
             tdx_root = find_tdx_root(a.tdx_root)
             if not tdx_root:
-                raise SystemExit("在线取数失败且找不到通达信根目录(含 vipdoc)。"
-                                 "请用 --tdx-root 指定，或检查网络后重试。")
-            # 防守位需要 MA200 价值引擎, 必须多取历史; 其余标的 window+8 根够算动横即可。
-            want_def = max(a.window + 8, 260)      # 260 = 200(MA) + 60 余量
-            df, _info2, info_by_code = build_panel_from_tdx(
-                pool, tdx_root, want=a.window + 8,
-                want_by_code={c: want_def for c in _def_codes})
-            info.extend(_info2)
-            source = f"本地通达信 {tdx_root}/vipdoc (不复权)"
-            info.insert(0, f"[SRC] ⚠ {source}（在线前复权失败后的回退，口径为不复权）"
-                           f" ｜ 池: {os.path.basename(pool_path)} "
-                           f"({len(pool)} 只 = 主选池 {len(pool) - n_watch} 只 + "
-                           f"备选观察池 {n_watch} 只)")
+                # 云端 / 无通达信环境兜底：直接用仓库已提交的长表 CSV（前复权口径），
+                # 避免 workflow 因找不到 TDX 根目录而崩溃退出。
+                # 数据为最近一次本地推送的快照，可能不是最新交易日（页面会明确标注）。
+                csv_fb = os.path.join(HERE, "tdx_adj_long_2019_2026.csv")
+                if os.path.exists(csv_fb):
+                    df = core.load_panel(csv_fb)
+                    source = (f"仓库历史CSV {os.path.basename(csv_fb)}"
+                              "（在线/通达信均不可用时的兜底，口径为前复权）")
+                    info.insert(0, f"[SRC] ⚠ {source}（在线前复权失败后的兜底，"
+                                   f"数据可能滞后于最新交易日）"
+                                   f" ｜ 池: {os.path.basename(pool_path)} "
+                                   f"({len(pool)} 只 = 主选池 {len(pool) - n_watch} 只 + "
+                                   f"备选观察池 {n_watch} 只)")
+                    live_err = ("在线与本地通达信均不可用，已回退到仓库历史数据"
+                                "(可能滞后于最新交易日)")
+                else:
+                    raise SystemExit("在线取数失败且找不到通达信根目录(含 vipdoc)。"
+                                     "请用 --tdx-root 指定，或检查网络后重试。")
+            else:
+                # 防守位需要 MA200 价值引擎, 必须多取历史; 其余标的 window+8 根够算动横即可。
+                want_def = max(a.window + 8, 260)      # 260 = 200(MA) + 60 余量
+                df, _info2, info_by_code = build_panel_from_tdx(
+                    pool, tdx_root, want=a.window + 8,
+                    want_by_code={c: want_def for c in _def_codes})
+                info.extend(_info2)
+                source = f"本地通达信 {tdx_root}/vipdoc (不复权)"
+                info.insert(0, f"[SRC] ⚠ {source}（在线前复权失败后的回退，口径为不复权）"
+                               f" ｜ 池: {os.path.basename(pool_path)} "
+                               f"({len(pool)} 只 = 主选池 {len(pool) - n_watch} 只 + "
+                               f"备选观察池 {n_watch} 只)")
 
     if df.empty:
         raise SystemExit("没有任何可用数据, 无法生成报告。")

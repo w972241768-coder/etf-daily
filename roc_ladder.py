@@ -118,7 +118,16 @@ def split_pools(snap: List[SnapRow]):
 def load_panel(path: str) -> pd.DataFrame:
     df = pd.read_csv(path, dtype={"code": str})
     df["code"] = df["code"].astype(str).str.strip()
-    df["date"] = pd.to_datetime(df["date"])
+    # ⚠ 兼容两种日期格式: 整数串 YYYYMMDD(如 20260924) 与 YYYY-MM-DD。
+    # 不能用裸 pd.to_datetime(df["date"]): 当列为 int64(20260924) 时会被当成
+    # 纳秒时间戳 → 全部解析成 1970 年, 导致后续 date<=pivot 过滤为空、000001 变 0 天而崩。
+    _d = df["date"]
+    _dt = pd.to_datetime(
+        _d.astype(str).str.replace("-", "", regex=False).str.replace(" ", "", regex=False),
+        format="%Y%m%d", errors="coerce")
+    if _dt.isna().all():                       # 兜底: 上述格式解析不出时回退通用解析
+        _dt = pd.to_datetime(_d, errors="coerce")
+    df["date"] = _dt
     if "role" not in df.columns:
         df["role"] = ""
     if "name" not in df.columns:
