@@ -4,19 +4,23 @@ name: ETF 轮动日报 · 每日生成
 #
 # ⚠️ GitHub 的 schedule 是「尽力而为」调度：高负载时会延后十几分钟，也可能整次丢弃
 #    （2026-10-26 实测：04:30 UTC 那次首跑被直接跳过，仓库里 12 次运行全是手动）。
-#    因此设双时段冗余，两次都在南非 07:00 之前完成：
-#      主时段 UTC 04:20 = 北京 12:20 = 南非 06:20
-#      备援   UTC 04:50 = 北京 12:50 = 南非 06:50
-#    备援仅在「主时段没成功」时才真正执行（见 jobs.gate 判重），正常情况下每天只提交一次。
-# 交易日此时为当日盘中价（新浪快照补末根）；周末/非交易日为上一交易日收盘。
+#    因此设三个时段冗余，均在南非 10:00 之前完成：
+#      时段一  UTC 04:20 = 北京 12:20 = 南非 06:20
+#      时段二  UTC 04:50 = 北京 12:50 = 南非 06:50
+#      时段三  UTC 07:45 = 北京 15:45 = 南非 09:45（收盘后，用收盘数据）
+#    三个时段都走 jobs.gate 判重：只有当天首次运行才会真正提交，
+#    其他时段发现已生成日报就跳过——正常情况下每天只提交一次。
+# 交易日：时段一/时段二为盘中价（新浪快照补末根）；时段三为收盘数据。
+# 周末/非交易日：均为上一交易日收盘。
 
 on:
   schedule:
-    - cron: "20 4 * * 1-5"      # 主时段（南非 06:20）
-    - cron: "50 4 * * 1-5"      # 备援（南非 06:50）——主时段被跳过时兜底
+    - cron: "20 4 * * 1-5"      # 时段一（南非 06:20）
+    - cron: "50 4 * * 1-5"      # 时段二（南非 06:50）——时段一被跳过时兜底
+    - cron: "45 7 * * 1-5"      # 时段三（南非 09:45）——盘中时段再兜底，用收盘数据
   workflow_dispatch:            # 也可在 Actions 页手动点一次立刻跑
 
-# 同一时间只允许一个实例，避免两次运行同时 push 到 main 造成冲突
+# 同一时间只允许一个实例，避免多次运行同时 push 到 main 造成冲突
 concurrency:
   group: etf-daily-report
   cancel-in-progress: false
@@ -25,8 +29,12 @@ permissions:
   contents: write             # 需要写权限才能把生成的 HTML 提交回仓库
 
 jobs:
-  # 判重闸门：只在「备援时段」且「当天已有日报提交」时把后续构建跳过。
-  # 主时段 / 手动触发一律放行；主时段跑挂（无提交）时备援会正常接上，等于自动重试。
+# 判重闸门：所有 schedule 触发都先检查「北京时间当天是否已有日报提交」，
+# 已有则 skip=1（跳过构建），无则放行。
+# 效果：每天只真正执行一次 build——
+#   时段一跑挂（无提交）→ 时段二/三依次兜底；
+#   任一时段成功提交 → 其余时段自动跳过。
+# 手动触发一律放行（skip=0）。
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -40,21 +48,20 @@ jobs:
         env:
           SCHEDULE: ${{ github.event.schedule }}
         run: |
-          if [ "$SCHEDULE" != "50 4 * * 1-5" ]; then
+          if [ -z "$SCHEDULE" ]; then
             echo "skip=0" >> "$GITHUB_OUTPUT"
-            echo "非备援时段（$SCHEDULE），直接执行"
+            echo "手动触发，直接执行"
             exit 0
           fi
-          # 以北京时间为「当天」口径（主/备援都在北京同日 12:2x~12:5x）
           today_start=$(TZ=Asia/Shanghai date -d 'today 00:00' +%s)
           last=$(git log -1 --format=%ct -- docs/state.json 2>/dev/null || echo 0)
           echo "state.json 上次提交时间戳=$last　今日零点=$today_start"
           if [ "$last" -ge "$today_start" ]; then
             echo "skip=1" >> "$GITHUB_OUTPUT"
-            echo "::notice::主时段今日已成功生成日报，备援跳过"
+            echo "::notice::北京时间当天已有日报提交（上次 $last），跳过本次：$SCHEDULE"
           else
             echo "skip=0" >> "$GITHUB_OUTPUT"
-            echo "今日尚无日报，备援接上执行"
+            echo "今日尚无日报，执行本次：$SCHEDULE"
           fi
 
   build:
@@ -125,3 +132,6 @@ jobs:
             git push
           fi
       # 生成失败时本步报错终止，docs/index.html 保持上一版 → Pages 继续显示上一份可用报告
+
+
+
