@@ -238,7 +238,7 @@ def _combo_summary_html(recent):
 </tr></thead><tbody>{body}</tbody></table></div>
 <div class="cbsn">{concl}
 <span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；
-抄底＝主选池动横20 全为负时换持末位（同标的 {bl.LIVE_COMPOSITE.get("weak_cd", 0)} 日内不重复、池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做）。
+抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做）。
 三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
 </div>"""
@@ -334,7 +334,7 @@ def _p3_card_html(p3, recent, cost):
   ② <b>P3 追高止盈</b>（不看盈亏）：<b>头名的 60 日动量（ROC60）冲进它自身历史的 95 分位</b>
   ——即已涨到「历史极高位」、动量透支 ⇒ 空仓 20 个交易日；<br>
   ③ <b>抄底</b>（零参数）：主选池 <b>全部</b> 标的动横20 都为负 ⇒ 当日换持<b>排名最后一名</b>
-  （不是倒数第二）；同一标的 {bl.LIVE_COMPOSITE.get('weak_cd', 0)} 个交易日内不重复抄底；
+  （不是倒数第二）；{("同一标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 个交易日内不重复抄底；") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}
   池内可用标的少于 {bl.LIVE_COMPOSITE.get('weak_min_pool', 0)} 只时不做（小池子最弱恒为同一只，会连买暴跌品）。<br>
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
   <span class="dimtxt">三条规则互不替代；下表另附「仅 P3（不挂 D3）」作参照。</span></div>
