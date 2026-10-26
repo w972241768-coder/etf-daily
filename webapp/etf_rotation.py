@@ -2836,6 +2836,34 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                            f'<i>（{_w}口径）</i></span>')
         _saferow_html = '<div class="saferow">' + "".join(_sr) + "</div>"
 
+    # ---- 抄底影子信号（2026-10-26）：**不改变默认口径**，只在全池转负时给参照 ----
+    # 研究结论：主选池 9 只动横20 全为负 → 买「排名最后一名」，主窗 11.0196→13.6360
+    # （+2.62），最大回撤不变（−15.12%），分年度 7/8 年跑赢、无一年为负，且零阈值参数。
+    # ⚠️ 但它不降低回撤、且属反直觉操作，故只作提示，不写进「今日应持」。
+    _all_neg = bool(ranked) and all(r.momentum[window] < 0 for r in ranked)
+    _weak_html = ""
+    if _all_neg and len(ranked) >= 2:
+        _wr = ranked[-1]
+        _wv = _wr.momentum[window]
+        _n_neg = sum(1 for r in ranked if r.momentum[window] < 0)
+        if _wr.code == final_code:
+            _wtxt = (f'当前持有<b>{html.escape(_wr.code)} {html.escape(_wr.name)}</b>'
+                     f'（正是最弱那只），与抄底信号方向一致 → 无需额外动作')
+            _wcls = "ok"
+        else:
+            _wtxt = (f'历史规律指向买最弱：<b>{html.escape(_wr.code)} '
+                     f'{html.escape(_wr.name)}</b>（动横{window} {_wv:+.2f}%，'
+                     f'排名 {len(ranked)}/{len(ranked)}）'
+                     f'，与上方默认口径的 {html.escape(str(final_code))} 不同')
+            _wcls = "diff"
+        _weak_html = f"""<div class="weaksig {_wcls}">
+<div class="wkh">🔍 抄底影子信号 · 全池转负 <span class="sphs">（参照，不改默认口径）</span></div>
+<div class="wkb">主选池 <b>{_n_neg}/{len(ranked)}</b> 只动横{window} 为负（最高 {head1.momentum[window]:+.2f}%，最弱 {_wv:+.2f}%）。{_wtxt}。</div>
+<div class="wkf">依据：2019-2026 主选池回测，此规则净值 <b>11.0196 → 13.6360</b>（+2.62）、
+最大回撤 <b>不变 −15.12%</b>、分年度 <b>7/8 年跑赢且无一年为负</b>、无阈值参数。
+<span class="dimtxt">⚠️ 属「增收益」而非「降回撤」，且为反直觉操作；是否执行由你决定。</span></div>
+</div>"""
+
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2974,6 +3002,18 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .cbdet .tblwrap{{margin-top:7px}}
   .cbsh{{font-size:12px;font-weight:600;color:#202020;margin-bottom:5px}}
   .cbsh span{{font-weight:400;color:#6c717f;font-size:11px}}
+  /* 抄底影子信号（2026-10-26）：仅在「主选池动横20 全为负」当天出现，独立于默认口径 */
+  .weaksig{{margin:9px 0 0;border:1px solid #dbe6fb;border-left:3px solid #6d8bd8;
+    border-radius:9px;padding:8px 11px;background:#f7faff;font-size:11.5px;
+    line-height:1.68;color:#3b4a63;white-space:normal}}
+  .weaksig.diff{{border-left-color:#d4380d;background:#fff8f6}}
+  .weaksig.ok{{border-left-color:#2e9e5b;background:#f5fbf7}}
+  .wkh{{font-weight:700;color:#2c4fb8;margin-bottom:3px}}
+  .weaksig.diff .wkh{{color:#b3351a}}
+  .weaksig.ok .wkh{{color:#1f7a48}}
+  .wkb b{{color:#111}}
+  .wkf{{margin-top:4px;color:#6c717f;font-size:11px}}
+  .wkf b{{color:#42474f}}
   table.cbst{{font-size:11.5px;margin:0;width:100%}}
   table.cbst th,table.cbst td{{padding:3px 5px}}
   table.cbst tr.hi td{{background:#fdf2f7}}
@@ -3236,6 +3276,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 {('<div class="note" style="margin-bottom:8px">' + guide_note + '</div>') if guide_note else ''}
 <table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead>
 <tbody>{''.join(guide_rows)}</tbody></table>
+{_weak_html}
 </section>
 
 <div class="lead">以下为主选池结论（第 ① ~ ⑤ 节），备选观察池在报告末尾第 ⑥ 节、与主选池完全独立。
