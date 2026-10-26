@@ -128,7 +128,10 @@
     border-radius:8px;padding:7px 10px;margin:0 0 8px}
   .cbsum.diff{border-left-color:#d4380d;background:#fff8f6}
   .cbsum.warn{border-left-color:#d4a017;background:#fffdf6}
-  .cbpill{font-size:12.5px;line-height:1.62;color:#202020;white-space:normal}
+  /* 胶囊放大（2026-10-26 用户要求「第一时间看到」）：12.5px → 15px，结论加粗 */
+  .cbpill{font-size:15px;line-height:1.58;color:#202020;white-space:normal;font-weight:500}
+  .cbpill b{font-weight:800}
+  .cbsum.diff .cbpill{font-size:15px}
   .cbdet{display:inline}
   .cbdet>summary{cursor:pointer;color:#3d57e5;font-size:11.5px;font-weight:600;
     list-style:none;display:inline-block;margin-left:8px}
@@ -197,6 +200,13 @@
   .fdetb{flex:0 0 100%;margin-top:3px;padding:5px 8px;background:#f7f9fb;
     border:1px solid #e6eaf0;border-radius:7px;color:#4b5563;font-size:11.5px;
     line-height:1.6;white-space:normal}
+  /* 数据徽章嵌进蓝色 hero 后的反白配色（2026-10-26） */
+  .hero .fdot{margin:7px 0 0;color:rgba(255,255,255,.9);font-size:11.5px}
+  .hero .fdot b{color:#fff}
+  .hero .fdot .fdot-i{background:#7fe3a9;box-shadow:0 0 0 3px rgba(127,227,169,.22)}
+  .hero .fdet>summary{color:#fff;text-decoration:underline;text-underline-offset:2px}
+  .hero .fdetb{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);
+    color:#fff}
   .foot{margin-top:24px;padding-top:14px;border-top:1px solid #dfe3e8;
     color:var(--mut);font-size:11.5px;line-height:1.8}
   .lead{margin:14px 0 0;color:#5b6472;font-size:13px}
@@ -210,6 +220,20 @@
   .lgdb{margin-top:5px;padding:6px 9px;background:#f9fafc;border:1px dashed #dfe4ea;
     border-radius:7px;line-height:1.72;font-size:12px;color:#5b6472;
     white-space:normal}
+  /* 「我的实盘跟踪」区块（2026-10-26）：放在 ③ 之后，不挤占首屏 */
+  .minesec{margin:26px 0 0;background:#fbfcfe;border:1px solid #e2e5ea;
+    border-left:3px solid #3d57e5;border-radius:10px;padding:12px 14px}
+  .mhd{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-bottom:9px}
+  .mh2{font-size:15px;margin:0;color:#202020;font-weight:700}
+  .mtip{font-size:11.5px;color:#6c717f}
+  .mrow{display:flex;flex-wrap:wrap;gap:8px 0}
+  .mcell{flex:1 1 30%;min-width:104px;padding:6px 10px 6px 0;
+    display:flex;flex-direction:column;gap:2px}
+  .mcell .mk{font-size:11px;color:#6c717f}
+  .mcell b{font-size:16px;font-weight:800;color:#202020;font-variant-numeric:tabular-nums}
+  .msub{margin-top:8px;padding-top:8px;border-top:1px dashed #e2e5ea;
+    font-size:12px;color:#42474f;line-height:1.7}
+  .mnote{margin-top:6px;font-size:11px;color:#8b93a1;line-height:1.6}
   /* ===== 今日操作（2026-10-25 重排：置顶 + 独占整宽）=====
      旧版是「左 42% 放 4 列操作表 | 右放排名表+年度卡」，4 列被挤在 42% 里文字
      严重折行、整页显乱。现在操作表拿到整宽（表格 auto 布局，依据列自然变宽，
@@ -277,7 +301,7 @@
   .ytdh{font-size:15px;font-weight:600;color:#202020;margin:0 0 8px;
     padding-left:9px;border-left:3px solid #3d57e5;
     display:flex;align-items:baseline;gap:2px;flex-wrap:wrap}
-  /* 年度表现 = SVG 分组竖柱（每年三根：现用策略 / D3 / D3+P3） */
+  /* 年度表现 = SVG 分组竖柱（每年三根：基础轮动 / D3 / D3+P3） */
   .ytdbody{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center}
   .ytdbody svg{display:block;width:100%;height:auto}
   @media (min-width:761px){
@@ -399,9 +423,10 @@
 <div class="hero">
 <h1>ETF 动横阶梯轮动报告</h1>
 <div class="sub"><b>动横20</b> · 粘性带 <b>1.0pp</b> · 主选 <b>9+1</b> 只
- ｜ 生成 2026-10-26 22:42</div>
-</div>
+ ｜ 生成 2026-10-27 00:09</div>
 <div class="fdot"><span class="fdot-i"></span>数据正常 · 截至 <b>2026-10-26</b><details class="fdet"><summary>来源</summary><div class="fdetb">✓ <b>在线前复权数据</b>　数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b>　｜　数据截至 <b>2026-10-26</b>（已收盘/非交易时段）　｜　成功 25/25 只。分红与拆分已按前复权还原，无除权假跳空。</div></details></div>
+</div>
+
 
 <section class="gsec">
 <div class="ghead">
@@ -413,8 +438,8 @@
 <details class="cbdet" open><summary>回测对比 · 规则</summary>
 <div class="tblwrap"><table class="cbst"><thead><tr>
 <th>方案</th><th>今日应持</th><th class="num">净值</th><th class="num">最大回撤</th><th class="num">Calmar</th>
-</tr></thead><tbody><tr class="hi"><td><b>D3+P3+抄底</b></td><td class="hold">科创半导体ETF华夏</td><td class="num" style="font-weight:700">8.4166</td><td class="num">-19.68%</td><td class="num">1.88</td></tr><tr><td>现用策略</td><td class="hold">纳指ETF</td><td class="num">4.5923</td><td class="num">-23.38%</td><td class="num">1.08</td></tr><tr><td>D3 单笔止损</td><td class="hold">纳指ETF</td><td class="num">6.1229</td><td class="num">-22.90%</td><td class="num">1.34</td></tr></tbody></table></div>
-<div class="cbsn">默认口径与现用策略<b>不一致</b>：现用策略持 <b>纳指ETF</b>、D3+P3 持 <b>科创半导体ETF华夏</b> → <b>按 D3+P3 执行：调整为 科创半导体ETF华夏</b>（该组合净值/回撤均最优，见 ② 卡片）。
+</tr></thead><tbody><tr class="hi"><td><b>D3+P3+抄底</b></td><td class="hold">科创半导体ETF华夏</td><td class="num" style="font-weight:700">8.4166</td><td class="num">-19.68%</td><td class="num">1.88</td></tr></tbody></table></div>
+<div class="cbsn">默认口径与基础轮动<b>不一致</b>：基础轮动持 <b>纳指ETF</b>、D3+P3 持 <b>科创半导体ETF华夏</b> → <b>按 D3+P3 执行：调整为 科创半导体ETF华夏</b>（该组合净值/回撤均最优，见 ② 卡片）。
 <span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；
 抄底＝主选池动横20 全为负时换持末位（池内少于 5 只不做）。
 三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
@@ -460,11 +485,11 @@
 <div class="ytdchart">
 <div class="ytdh">年度表现<span class="sphs">（近 6 年 · 三柱对比）</span></div>
 <div class="ytdbody">
-<svg viewBox="0 0 300 224" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="年度表现分组柱状图"><text x="7.0" y="12" font-size="8.6" fill="#5b6472"><tspan fill="#c2185b" font-weight="700">■</tspan><tspan dx="2" fill="#5b6472">D3+P3+抄底（默认）</tspan><tspan dx="9">&#8203;</tspan><tspan fill="#3d57e5" font-weight="700">■</tspan><tspan dx="2" fill="#5b6472">现用策略</tspan><tspan dx="9">&#8203;</tspan><tspan fill="#e8890c" font-weight="700">■</tspan><tspan dx="2" fill="#5b6472">D3 止损</tspan></text><line x1="7.0" y1="158.7" x2="293.0" y2="158.7" stroke="#c9cfd8" stroke-width="1"/><rect x="7.0" y="133.4" width="11.0" height="25.3" fill="#c2185b" rx="1.5" opacity="0.82"><title>2021 D3+P3+抄底（默认）: +17.9% · 最大回撤 -10.3%</title></rect><rect x="21.6" y="158.7" width="11.0" height="12.2" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2021 现用策略: -8.6% · 最大回撤 -18.0%</title></rect><rect x="36.2" y="158.7" width="11.0" height="7.3" fill="#e8890c" rx="1.5" opacity="0.82"><title>2021 D3 止损: -5.1% · 最大回撤 -18.0%</title></rect><text x="12.5" y="130.4" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+17.9</text><text x="27.1" y="180.4" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">-8.6</text><text x="41.7" y="173.5" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">-5.1</text><text x="27.1" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2021</text><line x1="51.7" y1="26.0" x2="51.7" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="56.2" y="113.1" width="11.0" height="45.6" fill="#c2185b" rx="1.5" opacity="0.82"><title>2022 D3+P3+抄底（默认）: +32.2% · 最大回撤 -11.6%</title></rect><rect x="70.8" y="129.8" width="11.0" height="28.9" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2022 现用策略: +20.4% · 最大回撤 -14.8%</title></rect><rect x="85.3" y="133.0" width="11.0" height="25.7" fill="#e8890c" rx="1.5" opacity="0.82"><title>2022 D3 止损: +18.1% · 最大回撤 -13.9%</title></rect><text x="61.7" y="110.1" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+32.2</text><text x="76.2" y="122.8" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+20.4</text><text x="90.8" y="130.0" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+18.1</text><text x="76.2" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2022</text><line x1="100.8" y1="26.0" x2="100.8" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="105.3" y="123.6" width="11.0" height="35.1" fill="#c2185b" rx="1.5" opacity="0.82"><title>2023 D3+P3+抄底（默认）: +24.8% · 最大回撤 -9.7%</title></rect><rect x="119.9" y="123.3" width="11.0" height="35.4" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2023 现用策略: +25.0% · 最大回撤 -10.3%</title></rect><rect x="134.5" y="125.2" width="11.0" height="33.5" fill="#e8890c" rx="1.5" opacity="0.82"><title>2023 D3 止损: +23.7% · 最大回撤 -10.7%</title></rect><text x="110.8" y="120.6" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+24.8</text><text x="125.4" y="112.3" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+25.0</text><text x="140.0" y="122.2" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+23.7</text><text x="125.4" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2023</text><line x1="150.0" y1="26.0" x2="150.0" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="154.5" y="106.8" width="11.0" height="51.9" fill="#c2185b" rx="1.5" opacity="0.82"><title>2024 D3+P3+抄底（默认）: +36.6% · 最大回撤 -14.8%</title></rect><rect x="169.1" y="128.5" width="11.0" height="30.2" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2024 现用策略: +21.3% · 最大回撤 -19.1%</title></rect><rect x="183.7" y="108.7" width="11.0" height="50.0" fill="#e8890c" rx="1.5" opacity="0.82"><title>2024 D3 止损: +35.3% · 最大回撤 -14.8%</title></rect><text x="160.0" y="103.8" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+36.6</text><text x="174.6" y="125.5" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+21.3</text><text x="189.2" y="105.7" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+35.3</text><text x="174.6" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2024</text><line x1="199.2" y1="26.0" x2="199.2" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="203.7" y="54.9" width="11.0" height="103.8" fill="#c2185b" rx="1.5" opacity="0.82"><title>2025 D3+P3+抄底（默认）: +73.3% · 最大回撤 -7.1%</title></rect><rect x="218.3" y="92.0" width="11.0" height="66.7" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2025 现用策略: +47.1% · 最大回撤 -23.4%</title></rect><rect x="232.8" y="72.9" width="11.0" height="85.8" fill="#e8890c" rx="1.5" opacity="0.82"><title>2025 D3 止损: +60.6% · 最大回撤 -16.1%</title></rect><text x="209.2" y="51.9" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+73.3</text><text x="223.8" y="89.0" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+47.1</text><text x="238.3" y="69.9" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+60.6</text><text x="223.8" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2025</text><line x1="248.3" y1="26.0" x2="248.3" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="252.8" y="132.7" width="11.0" height="26.0" fill="#c2185b" rx="1.5" opacity="0.82"><title>2026 D3+P3+抄底（默认）: +18.4% · 最大回撤 -19.7%</title></rect><rect x="267.4" y="118.5" width="11.0" height="40.1" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2026 现用策略: +28.3% · 最大回撤 -21.5%</title></rect><rect x="282.0" y="112.9" width="11.0" height="45.8" fill="#e8890c" rx="1.5" opacity="0.82"><title>2026 D3 止损: +32.3% · 最大回撤 -19.1%</title></rect><text x="258.3" y="129.7" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+18.4</text><text x="272.9" y="101.5" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+28.3</text><text x="287.5" y="109.9" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+32.3</text><text x="272.9" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2026</text><text x="293.0" y="24.0" font-size="6.4" text-anchor="end" fill="#b6bdc6">91%</text><text x="293.0" y="189.0" font-size="6.4" text-anchor="end" fill="#b6bdc6">-14%</text></svg>
+<svg viewBox="0 0 300 224" width="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="年度表现分组柱状图"><text x="7.0" y="12" font-size="8.6" fill="#5b6472"><tspan fill="#c2185b" font-weight="700">■</tspan><tspan dx="2" fill="#5b6472">D3+P3+抄底（默认）</tspan><tspan dx="9">&#8203;</tspan><tspan fill="#3d57e5" font-weight="700">■</tspan><tspan dx="2" fill="#5b6472">基础轮动</tspan><tspan dx="9">&#8203;</tspan><tspan fill="#e8890c" font-weight="700">■</tspan><tspan dx="2" fill="#5b6472">D3 止损</tspan></text><line x1="7.0" y1="158.7" x2="293.0" y2="158.7" stroke="#c9cfd8" stroke-width="1"/><rect x="7.0" y="133.4" width="11.0" height="25.3" fill="#c2185b" rx="1.5" opacity="0.82"><title>2021 D3+P3+抄底（默认）: +17.9% · 最大回撤 -10.3%</title></rect><rect x="21.6" y="158.7" width="11.0" height="12.2" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2021 基础轮动: -8.6% · 最大回撤 -18.0%</title></rect><rect x="36.2" y="158.7" width="11.0" height="7.3" fill="#e8890c" rx="1.5" opacity="0.82"><title>2021 D3 止损: -5.1% · 最大回撤 -18.0%</title></rect><text x="12.5" y="130.4" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+17.9</text><text x="27.1" y="180.4" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">-8.6</text><text x="41.7" y="173.5" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">-5.1</text><text x="27.1" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2021</text><line x1="51.7" y1="26.0" x2="51.7" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="56.2" y="113.1" width="11.0" height="45.6" fill="#c2185b" rx="1.5" opacity="0.82"><title>2022 D3+P3+抄底（默认）: +32.2% · 最大回撤 -11.6%</title></rect><rect x="70.8" y="129.8" width="11.0" height="28.9" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2022 基础轮动: +20.4% · 最大回撤 -14.8%</title></rect><rect x="85.3" y="133.0" width="11.0" height="25.7" fill="#e8890c" rx="1.5" opacity="0.82"><title>2022 D3 止损: +18.1% · 最大回撤 -13.9%</title></rect><text x="61.7" y="110.1" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+32.2</text><text x="76.2" y="122.8" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+20.4</text><text x="90.8" y="130.0" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+18.1</text><text x="76.2" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2022</text><line x1="100.8" y1="26.0" x2="100.8" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="105.3" y="123.6" width="11.0" height="35.1" fill="#c2185b" rx="1.5" opacity="0.82"><title>2023 D3+P3+抄底（默认）: +24.8% · 最大回撤 -9.7%</title></rect><rect x="119.9" y="123.3" width="11.0" height="35.4" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2023 基础轮动: +25.0% · 最大回撤 -10.3%</title></rect><rect x="134.5" y="125.2" width="11.0" height="33.5" fill="#e8890c" rx="1.5" opacity="0.82"><title>2023 D3 止损: +23.7% · 最大回撤 -10.7%</title></rect><text x="110.8" y="120.6" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+24.8</text><text x="125.4" y="112.3" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+25.0</text><text x="140.0" y="122.2" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+23.7</text><text x="125.4" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2023</text><line x1="150.0" y1="26.0" x2="150.0" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="154.5" y="106.8" width="11.0" height="51.9" fill="#c2185b" rx="1.5" opacity="0.82"><title>2024 D3+P3+抄底（默认）: +36.6% · 最大回撤 -14.8%</title></rect><rect x="169.1" y="128.5" width="11.0" height="30.2" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2024 基础轮动: +21.3% · 最大回撤 -19.1%</title></rect><rect x="183.7" y="108.7" width="11.0" height="50.0" fill="#e8890c" rx="1.5" opacity="0.82"><title>2024 D3 止损: +35.3% · 最大回撤 -14.8%</title></rect><text x="160.0" y="103.8" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+36.6</text><text x="174.6" y="125.5" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+21.3</text><text x="189.2" y="105.7" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+35.3</text><text x="174.6" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2024</text><line x1="199.2" y1="26.0" x2="199.2" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="203.7" y="54.9" width="11.0" height="103.8" fill="#c2185b" rx="1.5" opacity="0.82"><title>2025 D3+P3+抄底（默认）: +73.3% · 最大回撤 -7.1%</title></rect><rect x="218.3" y="92.0" width="11.0" height="66.7" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2025 基础轮动: +47.1% · 最大回撤 -23.4%</title></rect><rect x="232.8" y="72.9" width="11.0" height="85.8" fill="#e8890c" rx="1.5" opacity="0.82"><title>2025 D3 止损: +60.6% · 最大回撤 -16.1%</title></rect><text x="209.2" y="51.9" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+73.3</text><text x="223.8" y="89.0" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+47.1</text><text x="238.3" y="69.9" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+60.6</text><text x="223.8" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2025</text><line x1="248.3" y1="26.0" x2="248.3" y2="182.0" stroke="#eceef2" stroke-width="1" stroke-dasharray="2 2"/><rect x="252.8" y="132.7" width="11.0" height="26.0" fill="#c2185b" rx="1.5" opacity="0.82"><title>2026 D3+P3+抄底（默认）: +18.4% · 最大回撤 -19.7%</title></rect><rect x="267.4" y="118.5" width="11.0" height="40.1" fill="#3d57e5" rx="1.5" opacity="1.0"><title>2026 基础轮动: +28.3% · 最大回撤 -21.5%</title></rect><rect x="282.0" y="112.9" width="11.0" height="45.8" fill="#e8890c" rx="1.5" opacity="0.82"><title>2026 D3 止损: +32.3% · 最大回撤 -19.1%</title></rect><text x="258.3" y="129.7" font-size="6.4" text-anchor="middle" fill="#c2185b" font-weight="600">+18.4</text><text x="272.9" y="101.5" font-size="6.4" text-anchor="middle" fill="#3d57e5" font-weight="600">+28.3</text><text x="287.5" y="109.9" font-size="6.4" text-anchor="middle" fill="#e8890c" font-weight="600">+32.3</text><text x="272.9" y="196.0" font-size="8.6" text-anchor="middle" fill="#5b6472">2026</text><text x="293.0" y="24.0" font-size="6.4" text-anchor="end" fill="#b6bdc6">91%</text><text x="293.0" y="189.0" font-size="6.4" text-anchor="end" fill="#b6bdc6">-14%</text></svg>
 </div>
 <div class="ytdfoot">每年收益（含换仓成本，单位 %）· <b>柱子颜色区分策略</b>：<span
 style="color:#c2185b;font-weight:700">D3+P3+抄底（默认口径）</span> / <span
-style="color:#3d57e5;font-weight:700">现用策略</span> / <span
+style="color:#3d57e5;font-weight:700">基础轮动</span> / <span
 style="color:#e8890c;font-weight:700">D3 单笔止损</span>（后两者<b>仅作参照</b>）·
 柱体<b>向上=盈利、向下=亏损</b>；柱上数字沿用 <span style="color:#d4380d">红涨</span>
 <span style="color:#0f9d58">绿跌</span> · 同一刻度 · 悬停看当年最大回撤 · 前复权长历史回测
@@ -537,7 +562,7 @@ table.d3tbl.sm{font-size:11.5px}
 <div class="d3card p3">
   <div class="d3hd">
     <span class="d3tag">D3 + P3 + 抄底 · 默认口径</span>
-    <span class="d3off">当前<b>默认执行组合</b> —— 今日操作与年度主柱均按此给出；现用策略与仅 P3 列于同一表内作参照</span>
+    <span class="d3off">当前<b>默认执行组合</b> —— 今日操作与年度主柱均按此给出；下表按本口径回测（含换仓成本）</span>
   </div>
   <details class="d3rd"><summary>规则定义（D3 / P3 / 抄底）</summary>
   <div class="d3rule">主口径 = <b>三条独立规则</b>（各判各的、独立计时，
@@ -549,42 +574,19 @@ table.d3tbl.sm{font-size:11.5px}
   （不是倒数第二）；
   池内可用标的少于 5 只时不做（小池子最弱恒为同一只，会连买暴跌品）。<br>
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
-  <span class="dimtxt">三条规则互不替代；下表另附「仅 P3（不挂 D3）」作参照。</span></div>
+  <span class="dimtxt">三条规则互不替代；下表即为现行口径在该窗口的历史表现。</span></div>
   </details>
-  <div class="d3state"><span class="d3badge on">持仓不同</span>D3+P3 持 <b>科创半导体ETF华夏</b> ／ 现用策略持 <b>纳指ETF</b></div>
+  <div class="d3state"><span class="d3badge on">持仓不同</span>D3+P3 持 <b>科创半导体ETF华夏</b> ／ 基础轮动持 <b>纳指ETF</b></div>
   <div class="tblwrap"><table class="d3tbl"><thead><tr>
     <th>同一窗口（2019-12-31 → 2026-10-26）</th>
     <th class="num">净值</th><th class="num">区间收益</th>
     <th class="num">最大回撤</th><th class="num">夏普</th><th class="num">Calmar</th></tr></thead><tbody>
-    <tr><td>现用策略（日报当前方案）</td>
-      <td class="num">4.5923</td>
-      <td class="num" style="color:#d4380d">+359.23%</td>
-      <td class="num" style="color:#42474f">-23.38%</td>
-      <td class="num">1.02</td>
-      <td class="num">1.08</td></tr>
-    <tr class="hi"><td><b>D3+P3 止盈（现行组合）</b></td>
+    <tr class="hi"><td><b>D3+P3+抄底（现行口径）</b></td>
       <td class="num">8.4166</td>
       <td class="num" style="color:#d4380d">+741.66%</td>
       <td class="num" style="color:#42474f">-19.68%</td>
       <td class="num">1.66</td>
       <td class="num">1.88</td></tr>
-    <tr><td class="dimtxt">差（D3+P3 − 现用策略）</td>
-      <td class="num dimtxt">+3.8243</td>
-      <td class="num" style="color:#3d57e5;font-weight:700">+382.43pp</td>
-      <td class="num" style="color:#3d57e5;font-weight:700">+3.70pp</td>
-      <td class="num dimtxt">—</td><td class="num dimtxt">—</td></tr>
-    <tr><td class="dimtxt">参照：D3 单笔止损（上一张卡）</td>
-      <td class="num dimtxt">6.1229</td>
-      <td class="num dimtxt" style="color:#d4380d">+512.29%</td>
-      <td class="num dimtxt">-22.90%</td>
-      <td class="num dimtxt">1.28</td>
-      <td class="num dimtxt">1.34</td></tr>
-    <tr><td class="dimtxt">参照：仅 P3（不挂 D3）</td>
-      <td class="num dimtxt">6.0938</td>
-      <td class="num dimtxt" style="color:#d4380d">+509.38%</td>
-      <td class="num dimtxt">-21.94%</td>
-      <td class="num dimtxt">1.37</td>
-      <td class="num dimtxt">1.40</td></tr>
   </tbody></table></div>
   <div class="d3meta">
     <span>P3 触发 <b>9</b> 次</span>
@@ -612,105 +614,12 @@ table.d3tbl.sm{font-size:11.5px}
   <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 0.2%，
   只多打开「亏≥3% 空仓 5 日」+「头名 ROC60 进 95 分位空仓 20 日」两条。回测口径，非实盘成交。<br>
   信号实测：ROC60 触发后头名未来 20 日中位 <b>−4.11%</b>、胜率仅 <b>37%</b>（动量透支）。
-  单边万一口径（主窗）：现用 7.0855/−21.57% → D3 9.4301/−20.07% → <b>D3+P3 11.0196/−15.12%</b>；
-  <b>仅 P3</b> 9.0529/−18.19%（少收益、但回撤也不如叠加）⇒ 两条一起用才最优。
-  想启用时照上面「若按 D3+P3 执行」那句做，<b>不需要改代码</b>。</div>
+  <span class="dimtxt">口径已内置于引擎（etf_backtest_long.LIVE_COMPOSITE），
+  改规则只改那一处。</span></div>
 </div>
 
-<style>
-.d3card{margin:12px 0 0;background:#fbfcff;border:1px dashed #c3d0f0;border-radius:12px;
-  padding:13px 15px;font-size:12.5px;color:#333a4d}
-.d3hd{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:7px}
-.d3tag{background:#e8edfb;border:1px solid #c8d4f5;color:#2c4fb8;border-radius:6px;
-  padding:1px 8px;font-size:11.5px;font-weight:700;white-space:nowrap}
-.d3off{color:#6c717f;font-size:12px}
-.d3rule{line-height:1.75;color:#3a4560;margin-bottom:8px}
-/* 规则定义折叠（2026-10-26）：同一套 D3/P3 定义在页首 details 已写过，卡片里收起来 */
-.d3rd{margin:0 0 7px}
-.d3rd>summary{cursor:pointer;color:#3d57e5;font-size:11.5px;font-weight:600;
-  list-style:none;display:inline-block}
-.d3rd>summary::-webkit-details-marker{display:none}
-.d3rd>summary::before{content:"▸ "}
-.d3rd[open]>summary::before{content:"▾ "}
-.d3rd .d3rule{margin:6px 0 0;padding:6px 9px;background:#f7f9fd;border-radius:7px;
-  border:1px dashed #dbe3f5}
-.d3state{background:#fff;border:1px solid #e2e5ea;border-radius:8px;padding:7px 11px;
-  margin-bottom:9px;line-height:1.7}
-.d3badge{display:inline-block;border-radius:5px;padding:0 7px;font-size:11px;
-  font-weight:700;margin-right:7px;border:1px solid}
-.d3badge.on{background:#fff3e8;border-color:#f3cfc6;color:#b3351a}
-.d3badge.off{background:#eef7f1;border-color:#cfe8dc;color:#1a7a4a}
-table.d3tbl{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e5ea;
-  border-radius:9px;overflow:hidden;font-size:12px}
-table.d3tbl th,table.d3tbl td{padding:5px 9px;border-bottom:1px solid #eef0f3;
-  text-align:left;white-space:nowrap}
-table.d3tbl th{background:#f4f6fa;font-weight:600;color:#42474f;font-size:11.5px}
-table.d3tbl tbody tr:last-child td{border-bottom:none}
-table.d3tbl tr.hi td{background:#eef2fd}
-table.d3tbl.sm{font-size:11.5px}
-.d3card .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-.d3card .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-  font-size:11.5px;white-space:nowrap}
-.d3card .dimtxt{color:#98a1ad;font-size:11.5px}
-.d3meta{display:flex;flex-wrap:wrap;gap:4px 18px;color:#5b6470;font-size:11.8px;margin:8px 0 0}
-.d3meta b{color:#202020}
-.d3last{margin-top:9px}
-.d3last .cap{color:#6c717f;font-size:11.8px;margin-bottom:5px;white-space:normal}
-.d3sw{background:#fff;border-left:3px solid #3d57e5;border-radius:6px;padding:7px 11px;
-  margin-top:9px;line-height:1.7}
-.d3foot{color:#98a1ad;font-size:11.3px;margin-top:8px;line-height:1.6}
-.d3card.p3{background:#fffafc;border-color:#f0c7d6}
-.d3card.p3 .d3tag{background:#fceef4;border-color:#f2c8d9;color:#c2185b}
-.d3card.p3 .d3sw{border-left-color:#c2185b}
-</style>
-<div class="d3card">
-  <div class="d3hd">
-    <span class="d3tag">D3 单笔止损 · 参照</span>
-    <span class="d3off">当前<b>参照组合</b> —— 非默认口径，仅用于对比 D3 单独生效的效果</span>
-  </div>
-  <details class="d3rd"><summary>规则定义（D3）</summary>
-  <div class="d3rule">规则：轮动期内，任一笔在<b>换出时</b>相对建仓价亏损 ≥3%，
-  就不立刻买入新头名，改为<b>空仓 5 个交易日</b>，之后按当日排名第 1 名恢复。
-  只改「卖出后多久回来」，<b>不改卖出条件、不改选股</b>。</div>
-  </details>
-  <div class="d3state"><span class="d3badge off">与现方案一致</span>今日两者都持 <b>纳指ETF</b>，<b>无需任何动作</b></div>
-  <div class="tblwrap"><table class="d3tbl"><thead><tr>
-    <th>同一窗口（2019-12-31 → 2026-10-26）</th>
-    <th class="num">净值</th><th class="num">区间收益</th>
-    <th class="num">最大回撤</th><th class="num">夏普</th></tr></thead><tbody>
-    <tr><td>现方案（正在用）</td>
-      <td class="num">4.5923</td>
-      <td class="num" style="color:#d4380d">+359.23%</td>
-      <td class="num" style="color:#42474f">-23.38%</td>
-      <td class="num">1.02</td></tr>
-    <tr class="hi"><td><b>D3 单笔止损（若切换）</b></td>
-      <td class="num">6.1229</td>
-      <td class="num" style="color:#d4380d">+512.29%</td>
-      <td class="num" style="color:#42474f">-22.90%</td>
-      <td class="num">1.28</td></tr>
-    <tr><td class="dimtxt">差（D3 − 现方案）</td>
-      <td class="num dimtxt">+1.5306</td>
-      <td class="num" style="color:#3d57e5;font-weight:700">+153.06pp</td>
-      <td class="num" style="color:#3d57e5;font-weight:700">+0.48pp</td>
-      <td class="num dimtxt">—</td></tr>
-  </tbody></table></div>
-  <div class="d3meta">
-    <span>累计触发 <b>21</b> 次</span>
-    <span>累计空仓 <b>105</b> 个交易日（占 6.4%）</span>
-    <span>换仓 <b>221</b> 笔</span>
-  </div>
-  <div class="d3last">
-    <div class="cap">最近 3 次冷却事件</div>
-    <div class="tblwrap"><table class="d3tbl sm"><thead><tr><th>触发日</th><th>被换出标的</th>
-      <th class="num">该笔亏损</th><th class="num">空仓</th><th>回场日</th></tr></thead>
-      <tbody><tr><td class="mono">2026-09-02</td><td>科创半导体ETF华夏</td><td class="num" style="color:#0f9d58">-5.96%</td><td class="num">5 日</td><td class="mono">2026-09-09</td></tr><tr><td class="mono">2026-08-24</td><td>中证2000ETF</td><td class="num" style="color:#0f9d58">-4.59%</td><td class="num">5 日</td><td class="mono">2026-08-31</td></tr><tr><td class="mono">2025-11-17</td><td>纳指ETF</td><td class="num" style="color:#0f9d58">-3.29%</td><td class="num">5 日</td><td class="mono">2025-11-24</td></tr></tbody></table></div>
-  </div>
-  <div class="d3sw">若按 D3 执行：今天<b>不用操作</b>。区别只在某笔亏损 ≥3% 换出时，多空仓 5 个交易日再回来。</div>
-  <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 0.2%，
-  只是把「亏损 ≥3% 就空仓 5 日」这一条打开。回测口径，非实盘成交。<br>
-  想启用时：照上面「若按 D3 执行」那一句做即可，<b>不需要改代码</b>；不启用就忽略本卡。</div>
-</div>
-
+<!-- 2026-10-26 用户要求：正文不再单列「D3 单笔止损 · 参照」卡片（现在没人只看这一条）。
+     recent["d3"] 仍照常计算并保留在净值曲线里，只是不单独成卡。 -->
 
 
 <style>
@@ -836,6 +745,8 @@ table.d3tbl.sm{font-size:11.5px}
 <div class="sub" style="margin-top:8px">★ = 该列为头名（已含粘性带判定）。数值单位为 <b>%</b>（省略百分号），
 保留 1 位小数。底色深浅表示幅度，<span style="color:#d4380d">红</span>为涨、
 <span style="color:#0f9d58">绿</span>为跌。阶梯值为「价格冻结」推演，非预测。</div>
+
+
 
 <h2>④ 逐列头名与换仓日 · 主选池</h2>
 <div class="tblwrap"><table><thead><tr><th>第几日</th><th>列</th><th>头名</th><th>名称</th><th>动横值</th>
@@ -1036,7 +947,7 @@ table.d3tbl.sm{font-size:11.5px}
 <div id="rfFab"><button id="rfBtn" onclick="rfToggle()">🔄 刷新日报</button></div>
 <div id="rfPanel">
   <h4>一键刷新（触发云端重算）</h4>
-  <div id="rfGen">本页生成于：2026-10-26 22:42</div>
+  <div id="rfGen">本页生成于：2026-10-27 00:09</div>
   <p>首次使用粘贴一次 <b>GitHub Token</b>（仅需 repo 权限）。<b>仅存你本机浏览器</b>，不进仓库、不发给任何第三方，只发往 api.github.com。</p>
   <input id="rfToken" type="password" placeholder="ghp_... 或 github_pat_..." />
   <button onclick="rfSaveRun()">保存并刷新</button>

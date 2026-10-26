@@ -129,7 +129,9 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
                         enter_dev: float = 12.0, enter_lead: float = 15.0,
                         exit_dev: float = 9.0, exit_lead: float = 10.0,
                         min_def_days: int = 5, value_engine: bool = True,
-                        bench: str = BENCH_CODE, live_df=None) -> Dict:
+                        bench: str = BENCH_CODE, live_df=None,
+                        mine_since: Optional[str] = None,
+                        mine_capital: Optional[float] = None) -> Dict:
     """复算最近 N 次建议换仓的盈亏。
 
     pool / defensive / 规则参数由调用方（etf_rotation）传入，保证与当日报告同源。
@@ -322,6 +324,45 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
         except Exception as e:                 # noqa: BLE001
             p3 = dict(error=f"{type(e).__name__}: {e}")
 
+    # ---- 「我的实盘跟踪」（2026-10-26 用户需求）----
+    # 从用户正式启用日（my_since.json 的 since）起，按**当前生产口径**（D3+P3+抄底）
+    # 理论复算。没配置就不显示。⚠️ 是「若每次严格按信号以收盘价成交」的理论值，
+    # 不含滑点与手动干预，与真实成交可能有差。
+    mine = None
+    if mine_since:
+        try:
+            _si = max(0, int(dates_ext.searchsorted(pd.Timestamp(mine_since), side="left")))
+            if end_i_ext - _si >= 2:
+                _kwm = dict(buy=cost / 2.0, sell=cost / 2.0, W=W, MA=MA,
+                            value_engine=value_engine, sticky=sticky,
+                            enter_dev=enter_dev, enter_lead=enter_lead,
+                            exit_dev=exit_dev, exit_lead=exit_lead,
+                            min_def_days=min_def_days)
+                _kwm.update(dict(bl.LIVE_COMPOSITE))
+                _rm = bl.backtest(panel_ext, dates_ext, _si, end_i_ext,
+                                  pool, defensive, **_kwm)
+                _nv = _rm["navs"]
+                _sm = bl.stats(_nv)
+                _cur = "CASH"
+                for _t in _rm["trades"]:
+                    if _t["date"] <= asof:
+                        _cur = _t["to"]
+                mine = dict(
+                    since=str(dates_ext[_si].date()), asof=asof,
+                    days_td=len(_nv), final=float(_nv.iloc[-1]),
+                    total=_sm["total"] * 100, ann=_sm["ann"] * 100,
+                    mdd=_sm["mdd"] * 100, sharpe=_sm["sharpe"],
+                    calmar=_sm["calmar"], trades_n=len(_rm["trades"]),
+                    weak_n=len(_rm.get("weak_events") or []),
+                    hold=_cur,
+                    hold_name=("持币" if _cur == "CASH" else bl.NAMES.get(_cur, _cur)),
+                    capital=mine_capital,
+                )
+            else:
+                mine = dict(error=f"起始日 {mine_since} 距最新交易日不足 3 个交易日")
+        except Exception as e:                    # noqa: BLE001
+            mine = dict(error=f"{type(e).__name__}: {e}")
+
     return dict(
         rows=rows,
         cum=dict(start=d_first, end=asof, ret=cum_ret, bench=cum_bench,
@@ -334,7 +375,7 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
         asof=asof, data_end=data_end, hist_end=hist_end,
         ext_note=ext_note, extended=bool((hist_end is not None)
                                         and (panel.index.max() > hist_end)),
-        since=since, d3=d3, p3=p3,
+        since=since, d3=d3, p3=p3, mine=mine,
         adj_csv=path,
         n=n, pool_size=len(pool), defensive=defensive, cost=cost,
         have_bench=have_bench, base=BASE_DATE,

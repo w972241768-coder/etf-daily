@@ -56,7 +56,7 @@ GREEN = "#0f9d58"  # 跌 (绿跌)
 # 旧版「红 / 紫 / 品红」三种色相太近（紫 #7b3fe4 与品红 #c2185b 几乎分不开），
 # 改为「蓝 / 橙 / 玫红」——色相分别约 225° / 36° / 336°，两两间隔足够大。
 # ⚠️ 年度柱状图、净值曲线、图例、注释文字必须全部引用这三个常量，不要再散写颜色。
-CLR_STRAT = "#3d57e5"   # 现用策略（沿用报告主色蓝）
+CLR_STRAT = "#3d57e5"   # 基础轮动（沿用报告主色蓝）
 CLR_D3 = "#e8890c"      # D3 单笔止损（橙）
 CLR_P3 = "#c2185b"      # D3+P3 止盈（玫红）
 CLR_BENCH_SH = "#9aa3b2"  # 上证指数（基准，灰）
@@ -122,7 +122,7 @@ table.d3tbl.sm{font-size:11.5px}
 
 
 def _combo_summary_html(recent):
-    """【今日操作指引】顶部的一眼可见摘要：现用策略 / D3 / D3+P3 止盈 三方案今日对照。
+    """【今日操作指引】顶部的一眼可见摘要：基础轮动 / D3 / D3+P3 止盈 三方案今日对照。
 
     用户 2026-10-25 要求：把叠加组合的简要信息提到操作指引里，不用往下翻到 ② 才看到。
     数据全部取自 `recent['d3']` / `recent['p3']`（同一次影子回测，不额外计算）。
@@ -149,13 +149,8 @@ def _combo_summary_html(recent):
             rows.append(("D3+P3+抄底", p3.get("hold_name"), p3.get("hold") == "CASH",
                          dict(final=p3.get("final"), mdd=p3.get("mdd"),
                               calmar=p3.get("calmar")), True))
-        rows.append(
-            ("现用策略", d3.get("base_hold_name"), d3.get("base_hold") == "CASH",
-             base_pack, False))
-        rows.append(
-            ("D3 单笔止损", d3.get("hold_name"), d3.get("hold") == "CASH",
-             dict(final=d3.get("final"), mdd=d3.get("mdd"),
-                  calmar=d3.get("calmar")), False))
+            # 2026-10-26：只保留「仅 P3」一个参照；基础策略与 D3 单列不再进正文表
+
 
         body = "".join(
             f'<tr{" class=\"hi\"" if (hi or i == 0) else ""}>'
@@ -171,26 +166,26 @@ def _combo_summary_html(recent):
         base_hold_nm = d3.get("base_hold_name")
         d3_hold_nm = d3.get("hold_name")
         if not p3.get("ok"):
-            concl = ("<b>D3+P3 本次未算出</b>，暂按现用策略执行。"
+            concl = ("<b>D3+P3 本次未算出</b>，暂按基础轮动执行。"
                      "（详见下方 ② 的 D3 卡片）")
             tone = "warn"
         elif p3.get("hold") == d3.get("base_hold"):
             _same = ("空仓" if p3.get("hold") == "CASH"
                      else f"<b>{html.escape(str(p3_hold_nm))}</b>")
-            concl = (f"默认口径（D3+P3）与现用策略今日<b>一致</b>：{_same}"
+            concl = (f"默认口径（D3+P3）与基础轮动今日<b>一致</b>：{_same}"
                      f" → <b>无需任何操作</b>。")
             if d3.get("hold") != p3.get("hold"):
                 concl += (f"<br><span class=\"dimtxt\">（仅 D3 单独口径给出不同结果"
                           f"：{html.escape(str(d3_hold_nm))}，不影响执行）</span>")
             tone = "ok"
         elif p3.get("hold") == "CASH":
-            concl = (f"<b>默认口径要求空仓</b>：现用策略本应持 "
+            concl = (f"<b>默认口径要求空仓</b>：基础轮动本应持 "
                      f"<b>{html.escape(str(base_hold_nm))}</b> → "
                      f"<b>按 D3+P3 执行：今天不持仓</b>"
                      f"（该组合净值/回撤均最优，见 ② 卡片）。")
             tone = "diff"
         else:
-            concl = (f"默认口径与现用策略<b>不一致</b>：现用策略持 "
+            concl = (f"默认口径与基础轮动<b>不一致</b>：基础轮动持 "
                      f"<b>{html.escape(str(base_hold_nm))}</b>、"
                      f"D3+P3 持 <b>{html.escape(str(p3_hold_nm))}</b> → "
                      f"<b>按 D3+P3 执行：调整为 {html.escape(str(p3_hold_nm))}</b>"
@@ -207,11 +202,11 @@ def _combo_summary_html(recent):
         _weak = bool(p3.get("weak_active"))
         if not p3.get("ok"):
             pill_cls = "warn"
-            pill = "⚠ 默认口径本次未算出 · 暂按现用策略执行"
+            pill = "⚠ 默认口径本次未算出 · 暂按基础轮动执行"
         elif _h_p3 == _h_base:
             pill_cls = "ok"
-            pill = (f"✓ 三口径一致（默认 D3+P3{'+抄底' if _weak else ''}）｜ "
-                    f"今日 <b>{_h_disp}</b> → <b>无需动作</b>")
+            pill = (f"✓ 与基础轮动持仓<b>一致</b>（今日 <b>{_h_disp}</b>）→ "
+                    f"<b>无需动作</b>")
         elif _weak:
             # 抄底触发：这不是「口径打架」，而是规则主动换持末位，要说得像件事
             pill_cls = "diff"
@@ -219,12 +214,12 @@ def _combo_summary_html(recent):
                     f"（基础策略本应持 {html.escape(str(base_hold_nm))}）")
         elif _h_p3 == "CASH":
             pill_cls = "diff"
-            pill = (f"⚠ 默认口径要求<b>空仓</b>（现用策略本应持 "
+            pill = (f"⚠ 默认口径要求<b>空仓</b>（基础轮动本应持 "
                     f"{html.escape(str(base_hold_nm))}）→ <b>今天不持仓</b>")
         else:
             pill_cls = "diff"
             pill = (f"⚠ 口径不一致 → <b>按默认口径调整为 {_h_disp}</b>"
-                    f"（现用策略持 {html.escape(str(base_hold_nm))}）")
+                    f"（基础轮动持 {html.escape(str(base_hold_nm))}）")
         _cal = (p3.get("calmar") if p3.get("ok") else None) or base_pack.get("calmar")
         if _cal:
             pill += f' ｜ 历史 Calmar <b>{_cal:.2f}</b>'
@@ -253,7 +248,7 @@ def _p3_card_html(p3, recent, cost):
       · D3 单笔止损：某笔换出时亏 ≥3% → 空仓 5 日（看盈亏）
       · P3 追高止盈：头名 ROC60 进自身滚动 95 分位 → 空仓 20 日（不看盈亏）
     P3 本身**不是** D3 的延伸；卡片额外保留「仅 P3（不挂 D3）」一行作参照。
-    本卡回答「要不要把现用策略换成 D3+P3」，因此主对比基准是**现用策略**。
+    本卡回答「要不要把基础轮动换成 D3+P3」，因此主对比基准是**基础轮动**。
     任何异常都降级成一行提示，绝不影响 ② 主体。
     """
     try:
@@ -272,8 +267,10 @@ def _p3_card_html(p3, recent, cost):
         base = p3.get("base") or {}
         d3 = p3.get("d3") or {}
         p3o = p3.get("p3only") or {}
-        up = p3["total"] - base.get("total", 0)
-        um = p3["mdd"] - base.get("mdd", 0)        # 更接近 0 = 回撤更浅 = 改善
+        # 2026-10-26 用户要求：正文不再体现「基础策略（原始轮动）」——
+        # 它只是底座，不是现在在用的东西。差值改为「叠加 D3 相对仅 P3 的增量」。
+        up = p3["total"] - p3o.get("total", 0)
+        um = p3["mdd"] - p3o.get("mdd", 0)        # 更接近 0 = 回撤更浅 = 改善
         if p3["active"]:
             rem = (f"还剩 <b>{p3['remain']}</b> 个交易日"
                    if p3.get("remain") is not None else "")
@@ -283,14 +280,14 @@ def _p3_card_html(p3, recent, cost):
             act = (f'若按 D3+P3 执行：<b>今天收盘应卖出、转入空仓</b>，'
                    f'到 <b>{back}</b> 收盘再按当日头名买回。')
         elif p3.get("same_base"):
-            state = (f'<span class="d3badge off">与现用策略一致</span>'
+            state = (f'<span class="d3badge off">与基础轮动一致</span>'
                      f'今日两者都持 <b>{html.escape(p3["hold_name"])}</b>，<b>无需任何动作</b>')
             act = ("若按 D3+P3 执行：今天<b>不用操作</b>。"
                    "区别只在「换出时亏≥3%」与「头名 ROC60 进历史 95 分位」这两种时点多空仓一段时间。")
         else:
             state = (f'<span class="d3badge on">持仓不同</span>'
                      f'D3+P3 持 <b>{html.escape(p3["hold_name"])}</b> ／ '
-                     f'现用策略持 <b>{html.escape(str(p3.get("base_hold_name") or "—"))}</b>')
+                     f'基础轮动持 <b>{html.escape(str(p3.get("base_hold_name") or "—"))}</b>')
             act = f'若按 D3+P3 执行：今天应调整为 <b>{html.escape(p3["hold_name"])}</b>。'
 
         def _n(v, unit="%", sign=True):
@@ -325,7 +322,7 @@ def _p3_card_html(p3, recent, cost):
 <div class="d3card p3">
   <div class="d3hd">
     <span class="d3tag">D3 + P3 + 抄底 · 默认口径</span>
-    <span class="d3off">当前<b>默认执行组合</b> —— 今日操作与年度主柱均按此给出；现用策略与仅 P3 列于同一表内作参照</span>
+    <span class="d3off">当前<b>默认执行组合</b> —— 今日操作与年度主柱均按此给出；下表按本口径回测（含换仓成本）</span>
   </div>
   <details class="d3rd"><summary>规则定义（D3 / P3 / 抄底）</summary>
   <div class="d3rule">主口径 = <b>三条独立规则</b>（各判各的、独立计时，
@@ -337,42 +334,19 @@ def _p3_card_html(p3, recent, cost):
   （不是倒数第二）；{("同一标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 个交易日内不重复抄底；") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}
   池内可用标的少于 {bl.LIVE_COMPOSITE.get('weak_min_pool', 0)} 只时不做（小池子最弱恒为同一只，会连买暴跌品）。<br>
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
-  <span class="dimtxt">三条规则互不替代；下表另附「仅 P3（不挂 D3）」作参照。</span></div>
+  <span class="dimtxt">三条规则互不替代；下表即为现行口径在该窗口的历史表现。</span></div>
   </details>
   <div class="d3state">{state}</div>
   <div class="tblwrap"><table class="d3tbl"><thead><tr>
     <th>同一窗口（{recent.get('base', '')} → {html.escape(str(recent.get('asof', '')))}）</th>
     <th class="num">净值</th><th class="num">区间收益</th>
     <th class="num">最大回撤</th><th class="num">夏普</th><th class="num">Calmar</th></tr></thead><tbody>
-    <tr><td>现用策略（日报当前方案）</td>
-      <td class="num">{base.get('final', 0):.4f}</td>
-      <td class="num" style="color:{col(base.get('total', 0))}">{base.get('total', 0):+.2f}%</td>
-      <td class="num" style="color:#42474f">{base.get('mdd', 0):.2f}%</td>
-      <td class="num">{base.get('sharpe') or 0:.2f}</td>
-      <td class="num">{base.get('calmar') or 0:.2f}</td></tr>
-    <tr class="hi"><td><b>D3+P3 止盈（现行组合）</b></td>
+    <tr class="hi"><td><b>D3+P3+抄底（现行口径）</b></td>
       <td class="num">{p3['final']:.4f}</td>
       <td class="num" style="color:{col(p3['total'])}">{p3['total']:+.2f}%</td>
       <td class="num" style="color:#42474f">{p3['mdd']:.2f}%</td>
       <td class="num">{p3.get('sharpe') or 0:.2f}</td>
       <td class="num">{p3.get('calmar') or 0:.2f}</td></tr>
-    <tr><td class="dimtxt">差（D3+P3 − 现用策略）</td>
-      <td class="num dimtxt">{p3['final']-base.get('final', 0):+.4f}</td>
-      <td class="num" style="color:{IMP if up > 0 else WOR};font-weight:700">{up:+.2f}pp</td>
-      <td class="num" style="color:{IMP if um > 0 else WOR};font-weight:700">{um:+.2f}pp</td>
-      <td class="num dimtxt">—</td><td class="num dimtxt">—</td></tr>
-    <tr><td class="dimtxt">参照：D3 单笔止损（上一张卡）</td>
-      <td class="num dimtxt">{d3.get('final', 0):.4f}</td>
-      <td class="num dimtxt" style="color:{col(d3.get('total', 0))}">{d3.get('total', 0):+.2f}%</td>
-      <td class="num dimtxt">{d3.get('mdd', 0):.2f}%</td>
-      <td class="num dimtxt">{d3.get('sharpe') or 0:.2f}</td>
-      <td class="num dimtxt">{d3.get('calmar') or 0:.2f}</td></tr>
-    <tr><td class="dimtxt">参照：仅 P3（不挂 D3）</td>
-      <td class="num dimtxt">{p3o.get('final', 0):.4f}</td>
-      <td class="num dimtxt" style="color:{col(p3o.get('total', 0))}">{p3o.get('total', 0):+.2f}%</td>
-      <td class="num dimtxt">{p3o.get('mdd', 0):.2f}%</td>
-      <td class="num dimtxt">{p3o.get('sharpe') or 0:.2f}</td>
-      <td class="num dimtxt">{p3o.get('calmar') or 0:.2f}</td></tr>
   </tbody></table></div>
   <div class="d3meta">
     <span>P3 触发 <b>{p3['roc_n']}</b> 次</span>
@@ -400,9 +374,8 @@ def _p3_card_html(p3, recent, cost):
   <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 {cost*100:.1f}%，
   只多打开「亏≥3% 空仓 5 日」+「头名 ROC60 进 95 分位空仓 20 日」两条。回测口径，非实盘成交。<br>
   信号实测：ROC60 触发后头名未来 20 日中位 <b>−4.11%</b>、胜率仅 <b>37%</b>（动量透支）。
-  单边万一口径（主窗）：现用 7.0855/−21.57% → D3 9.4301/−20.07% → <b>D3+P3 11.0196/−15.12%</b>；
-  <b>仅 P3</b> 9.0529/−18.19%（少收益、但回撤也不如叠加）⇒ 两条一起用才最优。
-  想启用时照上面「若按 D3+P3 执行」那句做，<b>不需要改代码</b>。</div>
+  <span class="dimtxt">口径已内置于引擎（etf_backtest_long.LIVE_COMPOSITE），
+  改规则只改那一处。</span></div>
 </div>
 """
     except Exception as e:                     # noqa: BLE001
@@ -1148,6 +1121,53 @@ def _svg_chart(dates, pct, switches=None, *, W=920.0, H=300.0, uid="cv1"):
     return dict(html=svg, data=data,
                 vis=[(k, label, color) for k, label, color, _w, _a in vis],
                 last={k: float(a[-1]) for k, _l, _c, _w, a in vis})
+
+
+def _mine_block_html(mine) -> str:
+    """「我的实盘跟踪」区块（2026-10-26 用户需求）。
+
+    数据来自 my_since.json 的 since/capital，由 recent_rotations 按当前生产口径
+    （D3+P3+抄底）从启用日起理论复算。没配置 / 出错时返回空串，不占版面。
+    """
+    if not mine or mine.get("error"):
+        return ""
+    def _p(v, d=2):
+        return f"{v:+.{d}f}%" if isinstance(v, (int, float)) else "—"
+    up = float(mine.get("total") or 0)
+    col = RED if up > 0 else (GREEN if up < 0 else "#42474f")
+    cap = mine.get("capital")
+    money = ""
+    if isinstance(cap, (int, float)) and cap > 0:
+        now = cap * float(mine.get("final") or 1.0)
+        money = (f'<div class="msub">起始资金 <b>{cap:,.0f}</b> 元 → '
+                 f'现在 <b>{now:,.0f}</b> 元'
+                 f'（<b style="color:{col}">{now-cap:+,.0f}</b> 元）'
+                 f'　｜　当前持 <b>{html.escape(str(mine.get("hold_name") or "—"))}</b>'
+                 f'</div>')
+    else:
+        money = (f'<div class="msub">当前持 '
+                 f'<b>{html.escape(str(mine.get("hold_name") or "—"))}</b>'
+                 f'　｜　填入起始资金可换算成金额（见 my_since.json）</div>')
+    _ann = mine.get("ann")
+    _mdd = mine.get("mdd")
+    cells = [
+        ("起始日", f'<b>{html.escape(str(mine.get("since") or ""))}</b>', ""),
+        ("已运行", f'<b>{int(mine.get("days_td") or 0)}</b> 个交易日', ""),
+        ("累计收益", f'<b style="color:{col}">{_p(up)}</b>', ""),
+        ("年化", f'<b style="color:{RED if (_ann or 0) > 0 else "#42474f"}">{_p(_ann)}</b>', ""),
+        ("最大回撤", f'<b style="color:#42474f">{_mdd:.2f}%</b>' if isinstance(_mdd, (int, float)) else "<b>—</b>", ""),
+        ("换仓 / 抄底", f'<b>{int(mine.get("trades_n") or 0)}</b> 笔 ／ '
+                        f'<b>{int(mine.get("weak_n") or 0)}</b> 次', ""),
+    ]
+    body = "".join(f'<div class="mcell"><span class="mk">{k}</span>{v}</div>'
+                   for k, v, _ in cells)
+    return (f'<section class="minesec">'
+            f'<div class="mhd"><h2 class="mh2">📌 我的实盘跟踪</h2>'
+            f'<span class="mtip">自你启用日起，按现行口径理论复算</span></div>'
+            f'<div class="mrow">{body}</div>{money}'
+            f'<div class="mnote">理论值：假设每次严格按信号以收盘价成交，'
+            f'不含滑点与手动干预，与真实成交可能有差。改 my_since.json 的 since '
+            f'即可调整起点。</div></section>')
 
 
 def _curve_block(curve):
@@ -1970,7 +1990,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             f'<div class="defbar">{_ibadge}{_mark}</div>'
             "</td></tr>")
 
-    # ---- 年度表现（近 6 年，每年三根竖柱：现用策略 / D3 单笔止损 / P3 追高止盈）----
+    # ---- 年度表现（近 6 年，每年三根竖柱：基础轮动 / D3 单笔止损 / P3 追高止盈）----
     # yearly: [{year, ret, mdd, ...}] 来自长历史回测，ret/mdd 均为小数(0.5=50%)。
     # D3 / P3 的逐年数据从 recent['d3']['yearly'] / recent['p3']['yearly'] 取（同一次影子回测，不重算）。
     _yl = [d for d in (yearly or []) if d.get("year")]
@@ -1996,11 +2016,11 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
 
     # 三条序列：[(键, 显示名, 颜色, {year: ret}, {year: mdd})]
     # ★ 第一根 = D3+P3 止盈（默认执行组合，2026-10-25 用户拍板升级为主口径）；
-    #   后两根「现用策略 / D3 止损」降为参照。
+    #   后两根「基础轮动 / D3 止损」降为参照。
     _yseries = [
         ("p3", "D3+P3+抄底（默认）", CLR_P3, {k: v["ret"] for k, v in _p3y.items()},
          {k: v["mdd"] for k, v in _p3y.items()}),
-        ("nv", "现用策略", CLR_STRAT, {str(d["year"]): d.get("ret") for d in _yl},
+        ("nv", "基础轮动", CLR_STRAT, {str(d["year"]): d.get("ret") for d in _yl},
          {str(d["year"]): d.get("mdd") for d in _yl}),
         ("d3", "D3 止损",  CLR_D3, {k: v["ret"] for k, v in _d3y.items()},
          {k: v["mdd"] for k, v in _d3y.items()}),
@@ -2133,7 +2153,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
 </div>
 <div class="ytdfoot">每年收益（含换仓成本，单位 %）· <b>柱子颜色区分策略</b>：<span
 style="color:{CLR_P3};font-weight:700">D3+P3+抄底（默认口径）</span> / <span
-style="color:{CLR_STRAT};font-weight:700">现用策略</span> / <span
+style="color:{CLR_STRAT};font-weight:700">基础轮动</span> / <span
 style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅作参照</b>）·
 柱体<b>向上=盈利、向下=亏损</b>；柱上数字沿用 <span style="color:{RED}">红涨</span>
 <span style="color:{GREEN}">绿跌</span> · 同一刻度 · 悬停看当年最大回撤 · 前复权长历史回测
@@ -2829,7 +2849,8 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 </tbody></table></div>
 <div class="sub" style="margin-top:8px">{rr_note}</div>
 {_p3_card_html(recent.get("p3") or {}, recent, recent.get("cost", 0.002))}
-{_d3_card_html(recent.get("d3") or {}, recent, recent.get("cost", 0.002))}
+<!-- 2026-10-26 用户要求：正文不再单列「D3 单笔止损 · 参照」卡片（现在没人只看这一条）。
+     recent["d3"] 仍照常计算并保留在净值曲线里，只是不单独成卡。 -->
 """
 
     info_txt = "<br>".join(html.escape(x) for x in info)
@@ -2838,17 +2859,21 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     _lv_on, _lv_txt = live
     # ★ 2026-10-25：数据校验条平时只占**一行小徽章**（正常 = 不需要每天读两行说明），
     #   只有抓取失败 / 数据非最新时才退回整宽醒目横幅。详细来源收进 <details>。
+    # ★ 2026-10-26：数据正常时收成**页头内的一行小徽章**（占用最小）；
+    #   异常（抓取失败 / 非最新交易日）时改为 hero 之外的整宽醒目横幅 —— 异常必须刺眼。
     _fresh_ok = (_lv_on and not _fs_stale
                  and "⚠" not in _lv_txt and "失败" not in _lv_txt)
     if _fresh_ok:
-        fresh_html = (
+        fresh_inline = (
             f'<div class="fdot"><span class="fdot-i"></span>数据正常 · 截至 '
             f'<b>{html.escape(str(pivot))}</b>'
             f'<details class="fdet"><summary>来源</summary>'
             f'<div class="fdetb">{_lv_txt}</div></details></div>')
+        fresh_alert = ""
     else:
-        fresh_html = (f'<div class="fresh live">{_lv_txt}</div>' if _lv_on
-                      else f'<div class="{fresh_cls}">{_fs_txt}</div>')
+        fresh_inline = ""
+        fresh_alert = (f'<div class="fresh live">{_lv_txt}</div>' if _lv_on
+                       else f'<div class="{fresh_cls}">{_fs_txt}</div>')
 
     # ---- 粘性带安全垫（2026-10-25）：一眼回答「今天收盘前会不会换仓」----
     # 用户原来要自己心算「第1名 − 第2名 − 粘性带」，现在直接给结果。
@@ -3042,7 +3067,10 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     border-radius:8px;padding:7px 10px;margin:0 0 8px}}
   .cbsum.diff{{border-left-color:#d4380d;background:#fff8f6}}
   .cbsum.warn{{border-left-color:#d4a017;background:#fffdf6}}
-  .cbpill{{font-size:12.5px;line-height:1.62;color:#202020;white-space:normal}}
+  /* 胶囊放大（2026-10-26 用户要求「第一时间看到」）：12.5px → 15px，结论加粗 */
+  .cbpill{{font-size:15px;line-height:1.58;color:#202020;white-space:normal;font-weight:500}}
+  .cbpill b{{font-weight:800}}
+  .cbsum.diff .cbpill{{font-size:15px}}
   .cbdet{{display:inline}}
   .cbdet>summary{{cursor:pointer;color:#3d57e5;font-size:11.5px;font-weight:600;
     list-style:none;display:inline-block;margin-left:8px}}
@@ -3111,6 +3139,13 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .fdetb{{flex:0 0 100%;margin-top:3px;padding:5px 8px;background:#f7f9fb;
     border:1px solid #e6eaf0;border-radius:7px;color:#4b5563;font-size:11.5px;
     line-height:1.6;white-space:normal}}
+  /* 数据徽章嵌进蓝色 hero 后的反白配色（2026-10-26） */
+  .hero .fdot{{margin:7px 0 0;color:rgba(255,255,255,.9);font-size:11.5px}}
+  .hero .fdot b{{color:#fff}}
+  .hero .fdot .fdot-i{{background:#7fe3a9;box-shadow:0 0 0 3px rgba(127,227,169,.22)}}
+  .hero .fdet>summary{{color:#fff;text-decoration:underline;text-underline-offset:2px}}
+  .hero .fdetb{{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);
+    color:#fff}}
   .foot{{margin-top:24px;padding-top:14px;border-top:1px solid #dfe3e8;
     color:var(--mut);font-size:11.5px;line-height:1.8}}
   .lead{{margin:14px 0 0;color:#5b6472;font-size:13px}}
@@ -3124,6 +3159,20 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .lgdb{{margin-top:5px;padding:6px 9px;background:#f9fafc;border:1px dashed #dfe4ea;
     border-radius:7px;line-height:1.72;font-size:12px;color:#5b6472;
     white-space:normal}}
+  /* 「我的实盘跟踪」区块（2026-10-26）：放在 ③ 之后，不挤占首屏 */
+  .minesec{{margin:26px 0 0;background:#fbfcfe;border:1px solid #e2e5ea;
+    border-left:3px solid #3d57e5;border-radius:10px;padding:12px 14px}}
+  .mhd{{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-bottom:9px}}
+  .mh2{{font-size:15px;margin:0;color:#202020;font-weight:700}}
+  .mtip{{font-size:11.5px;color:#6c717f}}
+  .mrow{{display:flex;flex-wrap:wrap;gap:8px 0}}
+  .mcell{{flex:1 1 30%;min-width:104px;padding:6px 10px 6px 0;
+    display:flex;flex-direction:column;gap:2px}}
+  .mcell .mk{{font-size:11px;color:#6c717f}}
+  .mcell b{{font-size:16px;font-weight:800;color:#202020;font-variant-numeric:tabular-nums}}
+  .msub{{margin-top:8px;padding-top:8px;border-top:1px dashed #e2e5ea;
+    font-size:12px;color:#42474f;line-height:1.7}}
+  .mnote{{margin-top:6px;font-size:11px;color:#8b93a1;line-height:1.6}}
   /* ===== 今日操作（2026-10-25 重排：置顶 + 独占整宽）=====
      旧版是「左 42% 放 4 列操作表 | 右放排名表+年度卡」，4 列被挤在 42% 里文字
      严重折行、整页显乱。现在操作表拿到整宽（表格 auto 布局，依据列自然变宽，
@@ -3191,7 +3240,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .ytdh{{font-size:15px;font-weight:600;color:#202020;margin:0 0 8px;
     padding-left:9px;border-left:3px solid #3d57e5;
     display:flex;align-items:baseline;gap:2px;flex-wrap:wrap}}
-  /* 年度表现 = SVG 分组竖柱（每年三根：现用策略 / D3 / D3+P3） */
+  /* 年度表现 = SVG 分组竖柱（每年三根：基础轮动 / D3 / D3+P3） */
   .ytdbody{{flex:1 1 0;min-height:0;display:flex;align-items:center;justify-content:center}}
   .ytdbody svg{{display:block;width:100%;height:auto}}
   @media (min-width:761px){{
@@ -3314,8 +3363,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 <h1>ETF 动横阶梯轮动报告</h1>
 <div class="sub"><b>动横{window}</b> · 粘性带 <b>{sticky:.1f}pp</b> · 主选 <b>{len(ranked)}+{len([r for r in snap if r.role == 'defensive'])}</b> 只
  ｜ 生成 {now}</div>
+{fresh_inline}
 </div>
-{fresh_html}
+{fresh_alert}
 
 <section class="gsec">
 <div class="ghead">
@@ -3370,6 +3420,8 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 <div class="sub" style="margin-top:8px">★ = 该列为头名（已含粘性带判定）。数值单位为 <b>%</b>（省略百分号），
 保留 1 位小数。底色深浅表示幅度，<span style="color:{RED}">红</span>为涨、
 <span style="color:{GREEN}">绿</span>为跌。阶梯值为「价格冻结」推演，非预测。</div>
+
+{_mine_block_html(recent.get("mine") if recent else None)}
 
 <h2>④ 逐列头名与换仓日 · 主选池</h2>
 <div class="tblwrap"><table><thead><tr><th>第几日</th><th>列</th><th>头名</th><th>名称</th><th>动横值</th>
@@ -3699,12 +3751,24 @@ def main():
             if _live is not None and _bench_live is not None:
                 _live = pd.concat([_live[["date", "code", "close"]], _bench_live],
                                   ignore_index=True)
+            # 「我的实盘跟踪」：读 my_since.json（没有该文件 / since 为空则不显示）
+            _m_since, _m_cap = None, None
+            try:
+                _mp = os.path.join(HERE, "my_since.json")
+                if os.path.exists(_mp):
+                    with open(_mp, encoding="utf-8") as _mf:
+                        _mc = json.load(_mf)
+                    _m_since = str(_mc.get("since") or "").strip() or None
+                    _m_cap = _mc.get("capital") or None
+            except Exception as _e:                 # noqa: BLE001
+                info.append(f"[MINE] my_since.json 读取失败: {type(_e).__name__}: {_e}")
             recent = rr_mod.recent_rotation_pnl(
                 pool=[r.code for r in ranked], defensive=next(iter(defensive), None),
                 n=a.recent_n, pivot=pivot, cost=a.recent_cost,
                 W=W, MA=W, sticky=a.sticky_lead,
                 enter_dev=a.overheat_dev, enter_lead=a.overheat_lead,
-                value_engine=True, live_df=_live)
+                value_engine=True, live_df=_live,
+                mine_since=_m_since, mine_capital=_m_cap)
         except Exception as e:                 # noqa: BLE001
             recent = dict(error=f"复算异常（{type(e).__name__}: {e}）", n=a.recent_n)
             info.append(f"[RECENT] 近期换仓复盘失败: {e}")
