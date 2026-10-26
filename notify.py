@@ -80,7 +80,8 @@ def diff_events(old, new):
 
     # ① 执行口径持仓变化（最高优先级）
     if old.get("hold_default") != new.get("hold_default"):
-        ev.append(("持仓变更",
+        _t = "抄底换仓" if new.get("weak_active") else "持仓变更"
+        ev.append((_t,
                    [f"{_fmt_hold(old.get('hold_default'), old.get('hold_default_name'))}"
                     f" → {_fmt_hold(new.get('hold_default'), new.get('hold_default_name'))}"]))
 

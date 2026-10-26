@@ -37,6 +37,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import roc_ladder as core  # noqa: E402  (动横/乖离/粘性带 唯一事实来源)
+import etf_backtest_long as bl  # noqa: E402  (LIVE_COMPOSITE = 默认口径唯一事实源)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # 池子 / 输出目录: 同时兼容「工作区根目录」与「skill/scripts」两种摆放
@@ -145,7 +146,7 @@ def _combo_summary_html(recent):
 
         rows = []
         if p3.get("ok"):
-            rows.append(("D3+P3 止盈", p3.get("hold_name"), p3.get("hold") == "CASH",
+            rows.append(("D3+P3+抄底", p3.get("hold_name"), p3.get("hold") == "CASH",
                          dict(final=p3.get("final"), mdd=p3.get("mdd"),
                               calmar=p3.get("calmar")), True))
         rows.append(
@@ -203,20 +204,26 @@ def _combo_summary_html(recent):
         _h_p3, _h_base = p3.get("hold"), d3.get("base_hold")
         _h_disp = ("空仓持币" if _h_p3 == "CASH"
                    else html.escape(f"{_h_p3 or ''} {p3_hold_nm or ''}".strip()))
+        _weak = bool(p3.get("weak_active"))
         if not p3.get("ok"):
             pill_cls = "warn"
-            pill = "⚠ D3+P3 本次未算出 · 暂按现用策略执行"
+            pill = "⚠ 默认口径本次未算出 · 暂按现用策略执行"
         elif _h_p3 == _h_base:
             pill_cls = "ok"
-            pill = (f"✓ 三口径一致（默认 D3+P3）｜ 今日 <b>{_h_disp}</b>"
-                    f" → <b>无需动作</b>")
+            pill = (f"✓ 三口径一致（默认 D3+P3{'+抄底' if _weak else ''}）｜ "
+                    f"今日 <b>{_h_disp}</b> → <b>无需动作</b>")
+        elif _weak:
+            # 抄底触发：这不是「口径打架」，而是规则主动换持末位，要说得像件事
+            pill_cls = "diff"
+            pill = (f"🎯 <b>抄底触发</b>（主选池动横20 全部为负）→ <b>换持末位 {_h_disp}</b>"
+                    f"（基础策略本应持 {html.escape(str(base_hold_nm))}）")
         elif _h_p3 == "CASH":
             pill_cls = "diff"
             pill = (f"⚠ 默认口径要求<b>空仓</b>（现用策略本应持 "
                     f"{html.escape(str(base_hold_nm))}）→ <b>今天不持仓</b>")
         else:
             pill_cls = "diff"
-            pill = (f"⚠ 口径不一致 → <b>按 D3+P3 调整为 {_h_disp}</b>"
+            pill = (f"⚠ 口径不一致 → <b>按默认口径调整为 {_h_disp}</b>"
                     f"（现用策略持 {html.escape(str(base_hold_nm))}）")
         _cal = (p3.get("calmar") if p3.get("ok") else None) or base_pack.get("calmar")
         if _cal:
@@ -230,8 +237,9 @@ def _combo_summary_html(recent):
 <th>方案</th><th>今日应持</th><th class="num">净值</th><th class="num">最大回撤</th><th class="num">Calmar</th>
 </tr></thead><tbody>{body}</tbody></table></div>
 <div class="cbsn">{concl}
-<span class="dimtxt">　<b>默认口径＝第一行 D3+P3</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；
-两者独立判定、叠加使用。详细规则与触发明细见下方 ② 的两张卡片。</span></div>
+<span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；
+抄底＝主选池动横20 全为负时换持末位（同标的 {bl.LIVE_COMPOSITE.get("weak_cd", 0)} 日内不重复、池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做）。
+三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
 </div>"""
     except Exception:                          # noqa: BLE001
@@ -316,17 +324,20 @@ def _p3_card_html(p3, recent, cost):
         return f"""<style>{_D3_CSS}</style>
 <div class="d3card p3">
   <div class="d3hd">
-    <span class="d3tag">D3+P3 止盈 · 默认口径</span>
+    <span class="d3tag">D3 + P3 + 抄底 · 默认口径</span>
     <span class="d3off">当前<b>默认执行组合</b> —— 今日操作与年度主柱均按此给出；现用策略与仅 P3 列于同一表内作参照</span>
   </div>
-  <details class="d3rd"><summary>规则定义（D3 / P3）</summary>
-  <div class="d3rule">主口径 = <b>D3 + P3 两条独立规则叠加</b>（各判各的、独立计时，
-  目标持仓优先级 D3 &gt; P3）：<br>
+  <details class="d3rd"><summary>规则定义（D3 / P3 / 抄底）</summary>
+  <div class="d3rule">主口径 = <b>三条独立规则</b>（各判各的、独立计时，
+  目标持仓优先级 D3 &gt; P3 &gt; 抄底）：<br>
   ① <b>D3 单笔止损</b>（看盈亏）：某笔在换出时相对建仓价亏损 ≥3% ⇒ 空仓 5 个交易日；<br>
   ② <b>P3 追高止盈</b>（不看盈亏）：<b>头名的 60 日动量（ROC60）冲进它自身历史的 95 分位</b>
-  ——即已涨到「历史极高位」、动量透支 ⇒ 空仓 20 个交易日。<br>
+  ——即已涨到「历史极高位」、动量透支 ⇒ 空仓 20 个交易日；<br>
+  ③ <b>抄底</b>（零参数）：主选池 <b>全部</b> 标的动横20 都为负 ⇒ 当日换持<b>排名最后一名</b>
+  （不是倒数第二）；同一标的 {bl.LIVE_COMPOSITE.get('weak_cd', 0)} 个交易日内不重复抄底；
+  池内可用标的少于 {bl.LIVE_COMPOSITE.get('weak_min_pool', 0)} 只时不做（小池子最弱恒为同一只，会连买暴跌品）。<br>
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
-  <span class="dimtxt">P3 不是 D3 的延伸，两者完全独立；下表另附「仅 P3（不挂 D3）」作参照。</span></div>
+  <span class="dimtxt">三条规则互不替代；下表另附「仅 P3（不挂 D3）」作参照。</span></div>
   </details>
   <div class="d3state">{state}</div>
   <div class="tblwrap"><table class="d3tbl"><thead><tr>
@@ -854,13 +865,13 @@ ZOOM_DAYS = 62            # 「近 2 个月」放大窗口（自然日）
 CURVE_SERIES = [
     ("nv",  "策略净值（规则复算）",  CLR_STRAT, 2.4),
     ("d3",  "D3 单笔止损（若切换）", CLR_D3, 1.9),
-    ("p3",  "D3+P3 止盈（若切换）", CLR_P3, 1.9),
+    ("p3",  "D3+P3+抄底（默认口径）", CLR_P3, 1.9),
     ("sh",  "上证指数",              CLR_BENCH_SH, 1.4),
     ("ndx", "纳斯达克综合指数",      CLR_BENCH_NDX, 1.4),
 ]
 CURVE_LEGEND = ("nv", "d3", "p3", "sh", "ndx")          # 图例/光标顺序
 # 末端标注用短名（全名在图例里，末端太长会压住折线）
-CURVE_SHORT = {"nv": "策略", "d3": "D3", "p3": "D3+P3", "sh": "上证", "ndx": "纳指"}
+CURVE_SHORT = {"nv": "策略", "d3": "D3", "p3": "主口径", "sh": "上证", "ndx": "纳指"}
 CURVE_Z = {"sh": 0, "ndx": 1, "nv": 2, "d3": 3, "p3": 4}   # 绘制叠放顺序（数值大者画在上层）
 
 _CV_CSS = """
@@ -1987,7 +1998,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     # ★ 第一根 = D3+P3 止盈（默认执行组合，2026-10-25 用户拍板升级为主口径）；
     #   后两根「现用策略 / D3 止损」降为参照。
     _yseries = [
-        ("p3", "D3+P3（默认）", CLR_P3, {k: v["ret"] for k, v in _p3y.items()},
+        ("p3", "D3+P3+抄底（默认）", CLR_P3, {k: v["ret"] for k, v in _p3y.items()},
          {k: v["mdd"] for k, v in _p3y.items()}),
         ("nv", "现用策略", CLR_STRAT, {str(d["year"]): d.get("ret") for d in _yl},
          {str(d["year"]): d.get("mdd") for d in _yl}),
@@ -2121,7 +2132,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
 {ytd_svg}
 </div>
 <div class="ytdfoot">每年收益（含换仓成本，单位 %）· <b>柱子颜色区分策略</b>：<span
-style="color:{CLR_P3};font-weight:700">D3+P3（默认口径）</span> / <span
+style="color:{CLR_P3};font-weight:700">D3+P3+抄底（默认口径）</span> / <span
 style="color:{CLR_STRAT};font-weight:700">现用策略</span> / <span
 style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅作参照</b>）·
 柱体<b>向上=盈利、向下=亏损</b>；柱上数字沿用 <span style="color:{RED}">红涨</span>
@@ -2220,6 +2231,28 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             final_note = ("头名未过热，按「粘性带后有效头名」持仓"
                           if not (t0["held"] or t0["tied"]) else
                           f"今日领先 {t0['lead']:+.2f}pp &lt; {sticky:.1f}pp，视为平手 → 保留原持仓")
+    # ---- 主口径覆盖（2026-10-26 接入抄底后必须补）----
+    # 上面的 final_code 只由「当日阶梯 + 粘性带 + 过热」决定，**不知道** D3/P3 冷却
+    # 与抄底规则；而生产默认口径 = LIVE_COMPOSITE（D3+P3+抄底）。
+    # 不对齐会出现「顶部胶囊说 588170、下方操作表说 513100」的自相矛盾。
+    # 故以 recent["p3"]（同一次回测算出的真实持仓）为准覆盖。
+    _p3v = ((recent or {}).get("p3") or {})
+    _weak_active = bool(_p3v.get("weak_active"))
+    if _p3v.get("ok") and _p3v.get("hold") and _p3v["hold"] != final_code:
+        _ph, _ph_nm = _p3v["hold"], (_p3v.get("hold_name") or "")
+        _base_disp = f"{final_code} {html.escape(final_nm)}"
+        if _ph == "CASH":
+            final_note = (f"主口径 D3+P3 处于空仓冷却期 → <b>今日空仓</b>"
+                          f"（基础策略本应持 {_base_disp}）")
+        elif _weak_active:
+            final_note = (f"主选池动横20 <b>全部为负</b> → 抄底排名末位 "
+                          f"<b>{_ph} {html.escape(_ph_nm)}</b>"
+                          f"（基础策略本应持 {_base_disp}）")
+        else:
+            final_note = (f"主口径调整为 <b>{_ph} {html.escape(_ph_nm)}</b>"
+                          f"（基础策略本应持 {_base_disp}）")
+        final_code, final_nm = _ph, _ph_nm
+
     _g1 = "✓" if head1.dev < 9.0 else "✗"
     _g2 = "✓" if lead < 10.0 else "✗"
 
@@ -2349,13 +2382,28 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             + (f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>' if _tnote else "")
             + "</td></tr>")
 
+    # 首行的「动作」不能再写死「无需动作」：抄底换持 / 主口径空仓都会真的产生交易。
+    # 以「主口径持仓 vs 当前真实持仓」判定是否换仓。
+    _need_switch = bool(_prev_held and final_code != _prev_held)
+    _held_disp = (_prev_held if _prev_held else "—")
+    if _need_switch:
+        _act_txt = (f"<b class='good'>买入 {final_code}</b>"
+                    if final_code != "CASH" else "<b class='warn'>卖出清仓</b>")
+        _tag = ("<span class='tag weakb'>抄底买入</span>" if _weak_active
+                else "<span class='tag rot'>今日建议持仓</span>")
+        _why_txt = (f"当前持 {_held_disp} → 主口径换持 {final_code}"
+                    + ("（抄底规则）" if _weak_active else "") + "，换仓成本约双边 0.2%")
+    else:
+        _act_txt = "<b>无需动作</b>"
+        _tag = "<span class='tag rot'>今日建议持仓</span>"
+        _why_txt = ("防守期内" if overheated else "正常轮动（未触发过热熔断）") + \
+                   "，当前持仓已与今日建议一致，不产生交易与成本"
+
     guide_rows = [
         f"<tr><td class='mono'>{final_code}</td>"
-        f"<td class='nm2'>{html.escape(final_nm)} "
-        f"<span class='tag rot'>今日建议持仓</span></td>"
-        f"<td><b>无需动作</b></td>"
-        f"<td class='rs'>{'防守期内' if overheated else '正常轮动（未触发过热熔断）'}，"
-        f"当前持仓已与今日建议一致，不产生交易与成本</td></tr>",
+        f"<td class='nm2'>{html.escape(final_nm)} {_tag}</td>"
+        f"<td>{_act_txt}</td>"
+        f"<td class='rs'>{_why_txt}</td></tr>",
     ]
     # ---- 防守位行：只有真进入防守期（过热熔断）才给出"应该持有/应该持币"的强指令 ----
     if overheated:
@@ -2906,6 +2954,8 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .tag.tie{{background:#f2f4f7;color:#5b6472;border:1px solid #e0e4ea}}
   .tag.def{{background:#f2f4f7;color:#5b6472;border:1px solid #e0e4ea}}
   .tag.rot{{background:#eef1fe;color:#3d57e5;border:1px solid #cdd8fb}}
+  /* 抄底买入标记（2026-10-26）：与常规轮动区分，一眼看出这笔是「全池转弱→买末位」 */
+  .tag.weakb{{background:#fff4e8;color:#b45309;border:1px solid #fcd9a8}}
   .tag.defhot{{background:#fff1e8;color:{RED};border:1px solid #ffcbb0;margin-top:3px}}
   .tag.defcash{{background:#f2f4f7;color:#5b6472;border:1px solid #e0e4ea;margin-top:3px}}
   tr.defhot td{{background:#fff8f3}}
@@ -3810,6 +3860,9 @@ def main():
             p3_active=bool(_p3.get("active")),
             p3_remain=_p3.get("remain"),
             p3_back=_p3.get("back"),
+            # 抄底模块：weak_active=今日持仓由抄底产生；weak_n=窗口内触发总次数
+            weak_active=bool(_p3.get("weak_active")),
+            weak_n=_p3.get("weak_n"),
             nav_default=_p3.get("final"),
             calmar_default=_p3.get("calmar"),
             # 防守位（512040）MA200 偏离与买线（%，买线 = (VE_BUY−1)×100 = −3.0）

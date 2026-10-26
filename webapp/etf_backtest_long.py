@@ -76,6 +76,16 @@ LIVE_COMPOSITE = dict(
     roc_days=20,             #      空仓 20 个交易日
     roc_n=60,
     roc_min_periods=250,
+    # ---- 抄底模块（2026-10-26 用户拍板接入）----
+    # 触发：主选池**全部**动横20 为负（零参数，不用选阈值）
+    # 动作：当日换持**排名最后一名**（不是倒数第二 —— 实测买倒数第二为负）
+    # 冷却：同一标的 weak_cd 日内不重复抄底（用户 2026-10-26 指定 20 日）
+    # 池子：可用标的 < weak_min_pool 时不做（小池子「最弱」恒为同一只，会连买暴跌品）
+    weak_mode="allneg",
+    weak_rank=1,
+    weak_delay=0,
+    weak_cd=20,
+    weak_min_pool=5,
 )
 
 
@@ -233,7 +243,11 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              roc_q: Optional[float] = None, roc_days: int = 20,
              roc_n: int = 60, roc_min_periods: int = 250,
              gate_mask: Optional[pd.Series] = None,
-             sig_list: Optional[list] = None) -> dict:
+             sig_list: Optional[list] = None,
+             weak_mode: Optional[str] = None, weak_rank: int = 1,
+             weak_delay: int = 0, weak_cd: int = 0, weak_min_pool: int = 0,
+             pos_frac: Optional[float] = None,
+             add_drop: float = 0.01) -> dict:
     """策略B 状态机 (ROT / DEF)。value_engine=True 时防守期叠加价值引擎择时,
     不满足条件则持币 CASH —— 这会打破策略B「始终满仓」的设计, 属设计变更非缺陷。
 
@@ -268,6 +282,10 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     ve_hold = (value_engine_hold(panel, defensive, dates)
                if value_engine else None)
     entry_px: Optional[float] = None     # 当前持仓的建仓价（收盘口径）
+    pos_w = 1.0                          # 当前实际投入比例（仅 pos_frac 开启时可能 <1）
+    pending_weak: Optional[str] = None    # 抄底模型的「次日买入」待执行标的
+    weak_events: List[dict] = []          # 抄底触发明细（研究用）
+    weak_cd_map: dict = {}                # 标的 -> 上次抄底日索引（冷却用）
     cool_until = -1                      # 冷却到期日（含），仅 loss_cool 开启时用
     cools: List[dict] = []               # 冷却事件明细
     cool_days_n = 0
@@ -386,6 +404,49 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 target = "CASH"
                 if not note_cool:
                     note_cool = f" | P3 空仓中(至 {dates[roc_until].date()})"
+            # ---- 抄底模型（可选·研究用）：池内转弱 → 换持最弱 / 次日买入 ----
+            # weak_mode = "allneg"（全池动横20 均为负）或 数值字符串（最弱者 ≤ 该阈值，如 "-30"）
+            # weak_rank = 1 买最后一名 / 2 买倒数第二名（模拟博主选股）
+            # weak_delay = 0 当日换持 / 1 当日清仓、次日再买（博主原话「今天清仓、明天抄底」）
+            if weak_mode is not None:
+                _rk = sig["rank"]
+                _weak = _rk[-weak_rank] if len(_rk) >= weak_rank else None
+                # 保险①：池内可用标的太少时不做抄底（小池子最弱永远是同一只，会连买暴跌品）
+                # 保险②：同一标的抄底后 weak_cd 个交易日内不再抄它
+                _cd_ok = (_weak is not None
+                          and weak_cd_map.get(_weak, -10 ** 6) + weak_cd <= i)
+                _pool_ok = len(_rk) >= max(1, weak_min_pool)
+                if pending_weak is not None:
+                    if target != "CASH":
+                        target = pending_weak
+                        note_cool = ((note_cool + " | 抄底次日买入") if note_cool
+                                     else " | 抄底次日买入")
+                    pending_weak = None
+                else:
+                    _trig = False
+                    if weak_mode == "allneg":
+                        _trig = all(v < 0 for v in sig["m"].values())
+                    else:
+                        try:
+                            _trig = min(sig["m"].values()) <= float(weak_mode)
+                        except (TypeError, ValueError):
+                            _trig = False
+                    if _trig and _weak and target != "CASH" and _cd_ok and _pool_ok:
+                        weak_events.append(dict(
+                            date=str(dates[i].date()), code=_weak,
+                            name=NAMES.get(_weak, _weak),
+                            m=round(float(sig["m"][_weak]), 2)))
+                        weak_cd_map[_weak] = i
+                        if weak_delay == 0:
+                            target = _weak
+                            note_cool = ((note_cool + f" | 抄底{_weak}") if note_cool
+                                         else f" | 抄底{_weak}")
+                        else:
+                            target = "CASH"
+                            pending_weak = _weak
+                            note_cool = ((note_cool + f" | 池内转弱→空仓,次日买{_weak}")
+                                         if note_cool else
+                                         f" | 池内转弱→空仓,次日买{_weak}")
             # ---- 广度闸门（可选）：池内动横20 全为负 -> 强制空仓，恢复才回场 ----
             if gate_mask is not None and bool(gate_mask.iloc[i]):
                 gate_days_n += 1
@@ -420,12 +481,22 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             entry_px = (float(panel[target].iloc[i])
                         if (target in panel.columns
                             and not pd.isna(panel[target].iloc[i])) else None)
+            # 新建仓时设定投入比例：pos_frac=None ⇒ 满仓（与旧版逐位一致）
+            pos_w = (pos_frac if (pos_frac is not None and target != "CASH")
+                     else 1.0)
         ret = 0.0
         if target in panel.columns:
             p0, p1 = panel[target].iloc[i], panel[target].iloc[i + 1]
             if not pd.isna(p0) and not pd.isna(p1) and p0 != 0:
                 ret = p1 / p0 - 1.0
-        nav *= (1.0 + ret)
+        # 半仓补仓（可选·研究用）：持仓期收盘跌破建仓价 add_drop ⇒ 次日补满
+        # 与博主的「再低于首次买入价 1% 以上，次日午盘再买半仓」同构。
+        if (pos_frac is not None and 0.0 < pos_w < 1.0
+                and held != "CASH" and held in panel.columns and entry_px):
+            _apx = panel[held].iloc[i]
+            if not pd.isna(_apx) and _apx / entry_px - 1.0 <= -add_drop:
+                pos_w = 1.0
+        nav *= (1.0 + pos_w * ret)
         held = target
         prev_eff = eff_head
         avail_log.append((dates[i + 1], len(sig["rank"])))
@@ -440,6 +511,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 cash_days=int(sum(1 for _d, t in held_log if t == "CASH")),
                 cools=cools, cool_n=cool_days_n,
                 roc_cools=roc_cools, roc_n=roc_days_n,
+                weak_events=weak_events,
                 gate_days=gate_days_n, gate_trig=gate_trig_n)
 
 

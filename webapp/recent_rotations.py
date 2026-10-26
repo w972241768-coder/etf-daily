@@ -451,11 +451,17 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
               exit_dev=exit_dev, exit_lead=exit_lead, min_def_days=min_def_days,
               buy=cost / 2.0, sell=cost / 2.0, W=W, MA=MA,
               value_engine=value_engine)
-    # 主口径：D3 + P3 叠加
+    # 主口径：D3 + P3 叠加 + 抄底模块（抄底参数同样来自 LIVE_COMPOSITE，唯一事实源）
     r = bl.backtest(panel, dates, start_i, end_i, pool, defensive,
                     loss_cool=D3_THR, loss_days=D3_DAYS,
                     roc_q=P3_Q, roc_days=P3_DAYS, roc_n=P3_N,
-                    roc_min_periods=P3_MINP, **kw)
+                    roc_min_periods=P3_MINP,
+                    weak_mode=bl.LIVE_COMPOSITE.get("weak_mode"),
+                    weak_rank=bl.LIVE_COMPOSITE.get("weak_rank", 1),
+                    weak_delay=bl.LIVE_COMPOSITE.get("weak_delay", 0),
+                    weak_cd=bl.LIVE_COMPOSITE.get("weak_cd", 0),
+                    weak_min_pool=bl.LIVE_COMPOSITE.get("weak_min_pool", 0),
+                    **kw)
     navs = r["navs"]
     st = bl.stats(navs)
     # 参照：仅 P3（不挂 D3）
@@ -478,6 +484,16 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     hold = _hold_at(r["trades"], asof)
     base_hold = _hold_at(base_trades, asof) if base_trades is not None else None
     p3_hold = _hold_at(ri["trades"], asof)
+    # ---- 抄底模块（2026-10-26 接入）：当前持仓是否由抄底产生 + 最近几次触发 ----
+    _we = r.get("weak_events") or []
+    _lt = None
+    for _x in r["trades"]:
+        if _x["date"] <= asof:
+            _lt = _x
+        else:
+            break
+    weak_active = bool(_lt and "抄底" in str(_lt.get("reason") or ""))
+    weak_last = _we[-1] if _we else None
     rc = r.get("roc_cools") or []
     rci = ri.get("roc_cools") or []
     last = rc[-1] if rc else None
@@ -513,6 +529,11 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         p3_hold_name=_hname(p3_hold),
         same_base=(hold == base_hold), active=bool(active),
         remain=remain, back=back,
+        # 抄底模块：weak_active=今天这笔持仓是否由抄底规则产生；
+        # weak_last=最近一次抄底（date/code/name/m）；weak_n=窗口内总触发次数
+        weak_active=weak_active, weak_last=weak_last, weak_n=len(_we),
+        weak_cd=bl.LIVE_COMPOSITE.get("weak_cd", 0),
+        weak_min_pool=bl.LIVE_COMPOSITE.get("weak_min_pool", 0),
         last=[dict(date=c["date"],
                    head=c.get("head"), head_name=c.get("head_name"),
                    roc=c.get("roc"), pct=c.get("pct"), m20=c.get("m20"),

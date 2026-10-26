@@ -29,7 +29,7 @@ import time
 import requests
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "tdx_adj_long_2019_2026.csv")
+OUT = os.environ.get("ADJ_OUT") or os.path.join(HERE, "tdx_adj_long_2019_2026.csv")
 
 # code -> (显示名, 腾讯市场前缀)
 #   sh = 5xxxxx(沪ETF) / 000xxx(上证指数) ; sz = 1xxxxx(深ETF) / 399xxx
@@ -73,12 +73,23 @@ URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 HEAD = {"User-Agent": "Mozilla/5.0", "Referer": "https://gu.qq.com/"}
 
 # 分段: 每段 2 年, 段间重叠约 1 年 (腾讯单次上限 ~730 根)
-SEGMENTS = [
-    ("2018-12-01", "2020-12-31"),
-    ("2020-01-01", "2022-12-31"),
-    ("2022-01-01", "2024-12-31"),
-    ("2024-01-01", "2026-12-31"),
-]
+# ★ 2026-10-26：起点改为可由环境变量 ADJ_BEG 覆盖（默认 2018-12-01，行为不变），
+#   输出路径由 ADJ_OUT 覆盖。用于「延长回测到 2014 年」这类历史检验，
+#   避免动到生产用的那份 CSV。
+_ADJ_BEG = os.environ.get("ADJ_BEG", "2018-12-01")
+
+
+def _mk_segments(beg: str, end_year: int = 2026):
+    out, y0 = [], int(beg[:4])
+    y = y0
+    while y <= end_year - 2:
+        b = beg if y == y0 else f"{y}-01-01"
+        out.append((b, f"{y + 2}-12-31"))
+        y += 2
+    return out
+
+
+SEGMENTS = _mk_segments(_ADJ_BEG)
 
 
 def _seg_rows(mkt: str, code: str, beg: str, end: str, tries: int = 4):
