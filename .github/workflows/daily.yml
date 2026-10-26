@@ -1,21 +1,65 @@
 name: ETF 轮动日报 · 每日生成
 
 # 免费额度：公开仓库 Actions 分钟数不计量；GitHub Pages 静态托管免费。
-# 触发时间 UTC 04:30 = 北京 12:30 = 南非 06:30（周一至周五）。
-# 南非时间早上 6:30 跑完，用户 7:00 起床即可直接看结果、无需等待。
-# 对应北京午后；新浪日线为收盘数据，盘中由 hq.sinajs.cn 快照补末根——
-# 交易日此时为当日盘中价，周末/非交易日为上一交易日收盘。
+#
+# ⚠️ GitHub 的 schedule 是「尽力而为」调度：高负载时会延后十几分钟，也可能整次丢弃
+#    （2026-10-26 实测：04:30 UTC 那次首跑被直接跳过，仓库里 12 次运行全是手动）。
+#    因此设双时段冗余，两次都在南非 07:00 之前完成：
+#      主时段 UTC 04:20 = 北京 12:20 = 南非 06:20
+#      备援   UTC 04:50 = 北京 12:50 = 南非 06:50
+#    备援仅在「主时段没成功」时才真正执行（见 jobs.gate 判重），正常情况下每天只提交一次。
+# 交易日此时为当日盘中价（新浪快照补末根）；周末/非交易日为上一交易日收盘。
 
 on:
   schedule:
-    - cron: "30 4 * * 1-5"
-  workflow_dispatch:          # 也可在 Actions 页手动点一次立刻跑
+    - cron: "20 4 * * 1-5"      # 主时段（南非 06:20）
+    - cron: "50 4 * * 1-5"      # 备援（南非 06:50）——主时段被跳过时兜底
+  workflow_dispatch:            # 也可在 Actions 页手动点一次立刻跑
+
+# 同一时间只允许一个实例，避免两次运行同时 push 到 main 造成冲突
+concurrency:
+  group: etf-daily-report
+  cancel-in-progress: false
 
 permissions:
   contents: write             # 需要写权限才能把生成的 HTML 提交回仓库
 
 jobs:
+  # 判重闸门：只在「备援时段」且「当天已有日报提交」时把后续构建跳过。
+  # 主时段 / 手动触发一律放行；主时段跑挂（无提交）时备援会正常接上，等于自动重试。
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      skip: ${{ steps.chk.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50        # 需要历史才能查到 docs/state.json 上次提交时间
+      - id: chk
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          if [ "$SCHEDULE" != "50 4 * * 1-5" ]; then
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+            echo "非备援时段（$SCHEDULE），直接执行"
+            exit 0
+          fi
+          # 以北京时间为「当天」口径（主/备援都在北京同日 12:2x~12:5x）
+          today_start=$(TZ=Asia/Shanghai date -d 'today 00:00' +%s)
+          last=$(git log -1 --format=%ct -- docs/state.json 2>/dev/null || echo 0)
+          echo "state.json 上次提交时间戳=$last　今日零点=$today_start"
+          if [ "$last" -ge "$today_start" ]; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "::notice::主时段今日已成功生成日报，备援跳过"
+          else
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+            echo "今日尚无日报，备援接上执行"
+          fi
+
   build:
+    needs: gate
+    if: needs.gate.outputs.skip != '1'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
