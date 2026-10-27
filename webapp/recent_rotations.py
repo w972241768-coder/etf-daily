@@ -589,6 +589,48 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         return dict(final=float(nv.iloc[-1]), total=s["total"] * 100,
                     mdd=s["mdd"] * 100, sharpe=s["sharpe"], calmar=s["calmar"])
 
+    # ---- 近 5 年「策略体检」（2026-10-27 用户需求）----
+    # 五个指标：近5年最大回撤 / 当前回撤 / 近5年最大波段涨幅 / 当前波段涨幅 /
+    #           最近一笔持仓收益在近5年所有持仓段中的百分位
+    _nv = navs.copy()
+    try:
+        _nv.index = pd.to_datetime(_nv.index)
+    except Exception:                          # noqa: BLE001
+        pass
+    _d5 = _nv[_nv.index >= pd.Timestamp("2021-10-25")]
+    if len(_d5) < 20:
+        _d5 = _nv
+    _peak = _d5.cummax()
+    _mdd5 = float((_d5 / _peak - 1.0).min()) * 100            # 近5年最大回撤
+    _dd_now = (float(_d5.iloc[-1]) / float(_peak.iloc[-1]) - 1.0) * 100   # 当前回撤
+    _runmin = _d5.cummin()
+    _runup = (_d5 / _runmin - 1.0) * 100
+    _runup_max5 = float(_runup.max())                          # 近5年最大波段涨幅
+    _runup_now = float(_runup.iloc[-1])                        # 当前波段涨幅（距最近低点）
+    # 每笔持仓段收益（用换仓时点的净值差近似，含成本）
+    _seg = []
+    for _k in range(len(r["trades"]) - 1):
+        _a, _b = float(r["trades"][_k]["nav"]), float(r["trades"][_k + 1]["nav"])
+        if _a:
+            _seg.append((_b / _a - 1.0) * 100)
+    # 「当前持仓阶段」= 最后一笔非 CASH 换仓至今（若已清仓，则等于该笔已实现收益）
+    _seg_nav = None
+    for _t in reversed(r["trades"]):
+        if _t.get("to") and _t["to"] != "CASH":
+            _seg_nav = float(_t["nav"])
+            break
+    _hold_ret = ((float(navs.iloc[-1]) / _seg_nav - 1.0) * 100
+                 if _seg_nav else None)
+    if _hold_ret is not None:
+        _seg.append(_hold_ret)
+    _hold_pct = None
+    if _seg and _hold_ret is not None:
+        _hold_pct = sum(1 for _x in _seg if _x < _hold_ret) / len(_seg) * 100
+    metrics = dict(mdd5=_mdd5, dd_now=_dd_now, runup_max5=_runup_max5,
+                   runup_now=_runup_now, hold_ret=_hold_ret,
+                   hold_pct=_hold_pct, seg_n=len(_seg),
+                   since=str(_d5.index[0].date()), days=len(_d5))
+
     def _hname(h):
         return "持币" if h == "CASH" else bl.NAMES.get(h, h)
 
@@ -621,6 +663,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                    held_m20=c.get("held_m20"),
                    until=c["until"], days=c["days"]) for c in rc[-3:]][::-1],
         # 三列对比：现用策略 / D3+P3（主口径） / 参照 D3 / 参照 仅P3
+        metrics=metrics,
         base=_pack(sb, base_navs), d3=_pack(sd, d3_navs),
         p3only=dict(_pack(si, ri["navs"]), roc_n=len(rci),
                     trades_n=len(ri["trades"]),

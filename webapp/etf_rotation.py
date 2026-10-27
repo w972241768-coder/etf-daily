@@ -1138,6 +1138,59 @@ def _svg_chart(dates, pct, switches=None, *, W=920.0, H=300.0, uid="cv1"):
                 last={k: float(a[-1]) for k, _l, _c, _w, a in vis})
 
 
+def _health_html(m) -> str:
+    """近 5 年「策略体检」横条（2026-10-27 用户需求）。
+
+    五个指标：近5年最大回撤 / 当前回撤 / 近5年最大波段涨幅 / 当前波段涨幅 /
+    当前持仓阶段收益及其在近5年所有持仓段中的百分位。
+    数据由 recent_rotations 的 metrics 提供（同一份主口径回测）。
+    """
+    if not m:
+        return ""
+    def _pc(v, d=2):
+        return f"{v:+.{d}f}%" if isinstance(v, (int, float)) else "—"
+    mdd5 = m.get("mdd5")
+    dd_now = m.get("dd_now")
+    ru_max = m.get("runup_max5")
+    ru_now = m.get("runup_now")
+    hr = m.get("hold_ret")
+    hp = m.get("hold_pct")
+    hcol = (RED if (hr or 0) > 0 else (GREEN if (hr or 0) < 0 else "#42474f"))
+    cells = [
+        ("近 5 年最大回撤", f'<b style="color:#42474f">'
+                            f'{mdd5:.2f}%</b>' if isinstance(mdd5, (int, float)) else "<b>—</b>", ""),
+        ("当前回撤（距最高点）", ((f'<b style="color:#42474f">{dd_now:.2f}%</b>'
+                                  + (f'<i><b style="color:{RED}">正在近 5 年最低点</b></i>'
+                                     if isinstance(mdd5, (int, float))
+                                     and abs(dd_now - mdd5) < 0.05 else ""))
+                                 if isinstance(dd_now, (int, float)) else "<b>—</b>"), ""),
+        ("近 5 年最大波段涨幅", f'<b style="color:{RED}">{_pc(ru_max, 1)}</b>'
+                              if isinstance(ru_max, (int, float)) else "<b>—</b>", ""),
+        ("当前波段涨幅（距最近低点）", f'<b style="color:{RED if (ru_now or 0) > 0 else "#42474f"}">'
+                                    f'{_pc(ru_now, 1)}</b>' if isinstance(ru_now, (int, float)) else "<b>—</b>", ""),
+    ]
+    pct_txt = ""
+    if isinstance(hp, (int, float)):
+        _n = int(m.get("seg_n") or 0)
+        if hp <= 5:
+            pct_txt = (f'<i><b style="color:{GREEN}">近 5 年最差区间</b>'
+                       f'（第 {hp:.0f} 百分位 / 共 {_n} 段）</i>')
+        elif hp >= 95:
+            pct_txt = (f'<i><b style="color:{RED}">近 5 年最佳区间</b>'
+                       f'（第 {hp:.0f} 百分位 / 共 {_n} 段）</i>')
+        else:
+            pct_txt = (f'<i>第 <b>{hp:.0f}</b> 百分位（共 {_n} 段持仓，越高越好）</i>')
+    cells.append(("当前持仓阶段收益",
+                  f'<b style="color:{hcol}">{_pc(hr)}</b>{pct_txt}', ""))
+    body = "".join(f'<div class="hc"><span class="hk">{k}</span>{v}</div>'
+                   for k, v, _ in cells)
+    return (f'<section class="hsec">'
+            f'<div class="hhd"><h2 class="hh2">📊 近 5 年策略体检</h2>'
+            f'<span class="htip">{html.escape(str(m.get("since") or ""))} 起 · '
+            f'现行口径 · {int(m.get("days") or 0)} 个交易日</span></div>'
+            f'<div class="hrow">{body}</div></section>')
+
+
 def _mine_block_html(mine) -> str:
     """「我的实盘跟踪」区块（2026-10-26 用户需求）。
 
@@ -2878,6 +2931,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 </tbody></table></div>
 <div class="sub" style="margin-top:8px">{rr_note}</div>
 {_p3_card_html(recent.get("p3") or {}, recent, recent.get("cost", 0.002))}
+{_health_html((recent.get("p3") or {}).get("metrics"))}
 <!-- 2026-10-26 用户要求：正文不再单列「D3 单笔止损 · 参照」卡片（现在没人只看这一条）。
      recent["d3"] 仍照常计算并保留在净值曲线里，只是不单独成卡。 -->
 """
@@ -3188,6 +3242,19 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .lgdb{{margin-top:5px;padding:6px 9px;background:#f9fafc;border:1px dashed #dfe4ea;
     border-radius:7px;line-height:1.72;font-size:12px;color:#5b6472;
     white-space:normal}}
+  /* 近 5 年策略体检横条（2026-10-27）：跟在 D3+P3 卡片后面 */
+  .hsec{{margin:12px 0 0;background:#fbfcfe;border:1px solid #e2e5ea;border-radius:10px;
+    padding:11px 13px}}
+  .hhd{{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;margin-bottom:8px}}
+  .hh2{{font-size:14px;margin:0;color:#202020;font-weight:700}}
+  .htip{{font-size:11px;color:#6c717f}}
+  .hrow{{display:flex;flex-wrap:wrap;gap:9px 0}}
+  .hc{{flex:1 1 19%;min-width:132px;padding:4px 10px 4px 0;display:flex;
+    flex-direction:column;gap:2px}}
+  .hc .hk{{font-size:11px;color:#6c717f}}
+  .hc b{{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}}
+  .hc i{{font-style:normal;font-size:10.5px;color:#8b93a1;line-height:1.5}}
+  @media(max-width:600px){{.hc{{flex:1 1 46%}}}}
   /* 「我的实盘跟踪」区块（2026-10-26）：放在 ③ 之后，不挤占首屏 */
   .minesec{{margin:26px 0 0;background:#fbfcfe;border:1px solid #e2e5ea;
     border-left:3px solid #3d57e5;border-radius:10px;padding:12px 14px}}
