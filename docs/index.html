@@ -436,7 +436,7 @@
 <div class="hero">
 <h1>ETF 动横阶梯轮动报告</h1>
 <div class="sub"><b>动横20</b> · 粘性带 <b>1.0pp</b> · 主选 <b>9+1</b> 只
- ｜ 生成 2026-10-27 23:35</div>
+ ｜ 生成 2026-10-28 00:39</div>
 <div class="fdot"><span class="fdot-i"></span>数据正常 · 截至 <b>2026-10-27</b><details class="fdet"><summary>来源</summary><div class="fdetb">✓ <b>在线前复权数据</b>　数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b>　｜　数据截至 <b>2026-10-27</b>（已收盘/非交易时段）　｜　成功 25/25 只。分红与拆分已按前复权还原，无除权假跳空。</div></details></div>
 </div>
 
@@ -586,6 +586,13 @@ table.d3tbl.sm{font-size:11.5px}
   ③ <b>抄底</b>（零参数）：主选池 <b>全部</b> 标的动横20 都为负 ⇒ 当日换持<b>排名最后一名</b>
   （不是倒数第二）；
   池内可用标的少于 5 只时不做（小池子最弱恒为同一只，会连买暴跌品）。<br>
+  <b>抄底持仓何时卖出</b>（每天收盘按顺序判断，2026-10-27 实测 32 段持仓）：
+  ① 池内<b>不再全负</b>（有标的动横20 ≥ 0）→ 次日换回<b>当日第 1 名</b>
+  —— 这是主要出口，<b>20/32 次（62%）</b>；<br>
+  ② 仍全负但<b>末位换人</b>（别的标的跌得更惨）→ 换到<b>新的末位</b>，<b>12/32 次（38%）</b>；<br>
+  ③ 仍全负且<b>末位没变</b>（还是手里这只）→ <b>继续持有</b>，但受 D3 约束：<b>亏 ≥3% 即止损空仓 5 日</b>。<br>
+  <span class="dimtxt">实测持有期：中位 <b>1 个交易日</b>、均值 1.6 天、最长 5 天；该笔收益中位 <b>+0.93%</b>、胜率 <b>78%</b>。
+  ⇒ 抄底是「隔夜短打」，不是「长拿等反弹」；没有「涨多少才卖」的规则，也不需要。</span><br>
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
   <span class="dimtxt">三条规则互不替代；下表即为现行口径在该窗口的历史表现。</span></div>
   </details>
@@ -961,7 +968,7 @@ table.d3tbl.sm{font-size:11.5px}
 <div id="rfFab"><button id="rfBtn" onclick="rfToggle()">🔄 刷新日报</button></div>
 <div id="rfPanel">
   <h4>一键刷新（触发云端重算）</h4>
-  <div id="rfGen">本页生成于：2026-10-27 23:35</div>
+  <div id="rfGen">本页生成于：2026-10-28 00:39</div>
   <p>首次使用粘贴一次 <b>GitHub Token</b>（仅需 repo 权限）。<b>仅存你本机浏览器</b>，不进仓库、不发给任何第三方，只发往 api.github.com。</p>
   <input id="rfToken" type="password" placeholder="ghp_... 或 github_pat_..." />
   <button onclick="rfSaveRun()">保存并刷新</button>
