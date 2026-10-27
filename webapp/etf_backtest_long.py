@@ -385,6 +385,12 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                     note_cool = f" | 冷却中(至 {dates[cool_until].date()})"
                 elif (_chk != held and held != "CASH" and entry_px
                       and held in panel.columns):
+                    # ⚠️ 2026-10-27 已实测并删除「抄底持仓豁免/放宽 D3」：
+                    #   豁免 D3（一直持有到最后一名换人）长窗 15.2553（-1.84）、
+                    #   主窗 11.5336（-1.39）、近5年 5.3954（-0.65），全面变差；
+                    #   放宽到 5%/8%/12% 三者结果**完全相同**（都是 15.2553）——
+                    #   说明抄底标的亏起来是连续跳空，5~12% 之间没有任何缓冲带，
+                    #   「再等等」不存在任何阈值上的救赎。⇒ D3 的 3% 必须照管抄底持仓。
                     _px = panel[held].iloc[i]
                     if not pd.isna(_px) and _px / entry_px - 1.0 <= -loss_cool:
                         _cr = float(_px) / entry_px - 1.0
