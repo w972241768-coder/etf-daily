@@ -532,7 +532,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         # ★ 虚拟行检测：panel_ext 末尾补了一根「锚定日+1 自然日」的同价假K线
         #   （见 recent_rotation_pnl 的 pad），D3/P3 的 until 若被 min() 截到这根
         #   假K线上，显示出来的回场日就是假的（如 10-28）。此时改用文字近似。
-        _pad_date = str(dates_ext[-1].date())
+        _pad_date = str(dates[-1].date())
         _cl = r.get("cools") or []
         if _cl and str(_cl[-1].get("until") or "") >= str(asof):
             cash_src = "D3"
