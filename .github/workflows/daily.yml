@@ -8,8 +8,10 @@ name: ETF 轮动日报 · 每日生成
 #      时段一  UTC 04:20 = 北京 12:20 = 南非 06:20
 #      时段二  UTC 04:50 = 北京 12:50 = 南非 06:50
 #      时段三  UTC 07:45 = 北京 15:45 = 南非 09:45（收盘后，用收盘数据）
-#    三个时段都走 jobs.gate 判重：只有当天首次运行才会真正提交，
-#    其他时段发现已生成日报就跳过——正常情况下每天只提交一次。
+#    三个时段都走 jobs.gate 分档判重（2026-10-27 修订）：
+#      时段一/二（盘中版）：北京时间当天已有任意日报提交 → 跳过；
+#      时段三（收盘版）：今天 15:00 收盘后已有日报提交 → 跳过；
+#        若当天只有盘中版（或尚无日报）则放行重跑 → 保证每天必有一份收盘版。
 # 交易日：时段一/时段二为盘中价（新浪快照补末根）；时段三为收盘数据。
 # 周末/非交易日：均为上一交易日收盘。
 
@@ -29,11 +31,11 @@ permissions:
   contents: write             # 需要写权限才能把生成的 HTML 提交回仓库
 
 jobs:
-# 判重闸门：所有 schedule 触发都先检查「北京时间当天是否已有日报提交」，
-# 已有则 skip=1（跳过构建），无则放行。
-# 效果：每天只真正执行一次 build——
-#   时段一跑挂（无提交）→ 时段二/三依次兜底；
-#   任一时段成功提交 → 其余时段自动跳过。
+# 判重闸门（分档）：所有 schedule 触发都先查 docs/state.json 上次提交时间。
+#   时段一/二（盘中版）：北京时间当天已有任意日报提交 → skip=1（跳过构建）。
+#   时段三（收盘版）：只认「今天 15:00 收盘后已有提交」才算重；
+#     当天只有盘中版或尚无日报 → 放行，用收盘数据重跑。
+# 效果：盘中版每天最多一次；收盘版每天必有一次（哪怕白天手动跑过）。
 # 手动触发一律放行（skip=0）。
   gate:
     runs-on: ubuntu-latest
@@ -53,15 +55,29 @@ jobs:
             echo "手动触发，直接执行"
             exit 0
           fi
-          today_start=$(TZ=Asia/Shanghai date -d 'today 00:00' +%s)
           last=$(git log -1 --format=%ct -- docs/state.json 2>/dev/null || echo 0)
-          echo "state.json 上次提交时间戳=$last　今日零点=$today_start"
-          if [ "$last" -ge "$today_start" ]; then
-            echo "skip=1" >> "$GITHUB_OUTPUT"
-            echo "::notice::北京时间当天已有日报提交（上次 $last），跳过本次：$SCHEDULE"
+          if [ "$SCHEDULE" = "45 7 * * 1-5" ]; then
+            # 时段三（收盘版）：门槛 = 今天 15:00（北京时间收盘）
+            threshold=$(TZ=Asia/Shanghai date -d 'today 15:00' +%s)
+            echo "时段三收盘版判重：state.json 上次提交=$last　今日收盘=$threshold"
+            if [ "$last" -ge "$threshold" ]; then
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              echo "::notice::今日已有收盘版日报，跳过时段三"
+            else
+              echo "skip=0" >> "$GITHUB_OUTPUT"
+              echo "今日尚无收盘版（仅盘中版或无日报），生成收盘版：$SCHEDULE"
+            fi
           else
-            echo "skip=0" >> "$GITHUB_OUTPUT"
-            echo "今日尚无日报，执行本次：$SCHEDULE"
+            # 时段一/二（盘中版）：当天已有任意日报就跳过
+            today_start=$(TZ=Asia/Shanghai date -d 'today 00:00' +%s)
+            echo "盘中版判重：state.json 上次提交=$last　今日零点=$today_start"
+            if [ "$last" -ge "$today_start" ]; then
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              echo "::notice::北京时间当天已有日报提交（上次 $last），跳过本次：$SCHEDULE"
+            else
+              echo "skip=0" >> "$GITHUB_OUTPUT"
+              echo "今日尚无日报，执行本次：$SCHEDULE"
+            fi
           fi
 
   build:
