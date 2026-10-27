@@ -248,6 +248,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              sig_list: Optional[list] = None,
              weak_mode: Optional[str] = None, weak_rank: int = 1,
              weak_delay: int = 0, weak_cd: int = 0, weak_min_pool: int = 0,
+             weak_first_d3: bool = False,
              pos_frac: Optional[float] = None,
              add_drop: float = 0.01) -> dict:
     """策略B 状态机 (ROT / DEF)。value_engine=True 时防守期叠加价值引擎择时,
@@ -357,11 +358,32 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
         note_cool = ""
         if state == "ROT":
             target = eff_head
+            # ★ weak_first_d3：先算「抄底今天会买什么」，再判 D3 的「是否真的换出」。
+            #   否则 D3 会按「头名接管」的假设判定换出，而抄底本来会让它继续持有
+            #   （2026-10-27：全池仍负、末位还是 588170，D3 却按头名 513100 触发了止损）。
+            _wt = None
+            if weak_first_d3 and weak_mode is not None and sig["rank"]:
+                _wrk = sig["rank"]
+                _ww = _wrk[-weak_rank] if len(_wrk) >= weak_rank else None
+                _wp_ok = len(_wrk) >= max(1, weak_min_pool)
+                _wcd_ok = (_ww is not None
+                           and weak_cd_map.get(_ww, -10 ** 6) + weak_cd <= i)
+                _wtrig = False
+                if weak_mode == "allneg":
+                    _wtrig = all(v < 0 for v in sig["m"].values())
+                else:
+                    try:
+                        _wtrig = min(sig["m"].values()) <= float(weak_mode)
+                    except (TypeError, ValueError):
+                        _wtrig = False
+                if _wtrig and _ww and _wp_ok and _wcd_ok:
+                    _wt = _ww
             if loss_cool is not None:
+                _chk = _wt if _wt else target
                 if i < cool_until:                       # 冷却中 -> 继续空仓
                     target = "CASH"
                     note_cool = f" | 冷却中(至 {dates[cool_until].date()})"
-                elif (target != held and held != "CASH" and entry_px
+                elif (_chk != held and held != "CASH" and entry_px
                       and held in panel.columns):
                     _px = panel[held].iloc[i]
                     if not pd.isna(_px) and _px / entry_px - 1.0 <= -loss_cool:
@@ -449,6 +471,12 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                             note_cool = ((note_cool + f" | 池内转弱→空仓,次日买{_weak}")
                                          if note_cool else
                                          f" | 池内转弱→空仓,次日买{_weak}")
+            # ⚠️ 2026-10-27 已实测并删除「抄底持仓的独立止损/止盈」：
+            #   · 独立止损 8%/10%/12%/15% ⇒ 净值与基线**完全一致**（换仓笔数也一样），
+            #     因为 D3 的 3% 换出检查已经先一步拦下，更宽的止损永远轮不到触发；
+            #   · 独立止盈 10%/15%/20%/30% ⇒ 同样完全一致，抄底持仓持有期太短，从未涨到；
+            #   · 只有 5% 止损微正（+0.17），属噪声量级。
+            #   ⇒ 抄底不需要自己的止盈止损，退出交给 D3 即可（见下方 weak_first_d3 注释）。
             # ---- 广度闸门（可选）：池内动横20 全为负 -> 强制空仓，恢复才回场 ----
             if gate_mask is not None and bool(gate_mask.iloc[i]):
                 gate_days_n += 1
