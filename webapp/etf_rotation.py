@@ -275,10 +275,25 @@ def _p3_card_html(p3, recent, cost):
             rem = (f"还剩 <b>{p3['remain']}</b> 个交易日"
                    if p3.get("remain") is not None else "")
             back = html.escape(str(p3.get("back") or "\u2014"))
-            state = (f'<span class="d3badge on">空仓中</span>'
-                     f'D3+P3 组合此刻要求<b>空仓</b>，{rem}，约 <b>{back}</b> 收盘回场')
-            act = (f'若按 D3+P3 执行：<b>今天收盘应卖出、转入空仓</b>，'
-                   f'到 <b>{back}</b> 收盘再按当日头名买回。')
+            _csr = p3.get("cash_src")
+            _cun = (p3.get("cash_until") or p3.get("cash_note") or "")
+            if _csr == "D3":
+                state = (f'<span class="d3badge on">空仓中 · D3 单笔止损触发</span>'
+                         f'{html.escape(str(p3.get("cash_reason") or ""))} → '
+                         f'<b>空仓 5 个交易日</b>，{_cun} 收盘回场')
+                act = ('今天收盘卖出清仓；回场日以每日报告更新'
+                       '（按当日排名第 1 名买回）。')
+            elif _csr == "P3":
+                state = (f'<span class="d3badge on">空仓中 · P3 追高止盈触发</span>'
+                         f'{html.escape(str(p3.get("cash_reason") or ""))} → '
+                         f'<b>空仓 20 个交易日</b>，{_cun} 收盘回场')
+                act = ('今天收盘卖出清仓；回场日以每日报告更新'
+                       '（按当日排名第 1 名买回）。')
+            else:
+                state = (f'<span class="d3badge on">空仓中</span>'
+                         f'D3+P3 组合此刻要求<b>空仓</b>，{rem}，约 <b>{back}</b> 收盘回场')
+                act = (f'若按 D3+P3 执行：<b>今天收盘应卖出、转入空仓</b>，'
+                       f'到 <b>{back}</b> 收盘再按当日头名买回。')
         elif p3.get("same_base"):
             state = (f'<span class="d3badge off">与基础轮动一致</span>'
                      f'今日两者都持 <b>{html.escape(p3["hold_name"])}</b>，<b>无需任何动作</b>')
@@ -2404,15 +2419,29 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 
     # 首行的「动作」不能再写死「无需动作」：抄底换持 / 主口径空仓都会真的产生交易。
     # 以「主口径持仓 vs 当前真实持仓」判定是否换仓。
-    _need_switch = bool(_prev_held and final_code != _prev_held)
-    _held_disp = (_prev_held if _prev_held else "—")
+    # ★ 2026-10-27：「当前持 X」必须用**主口径**的昨日持仓（prev_hold）——
+    #   主口径昨天可能刚抄底换过仓（如 588170），与基础轮动的持仓（513100）不同；
+    #   用基础轮动的持仓会显示成「当前持 513100」，与实盘不符。
+    _real_prev = ((_p3v.get("prev_hold") if _p3v.get("ok") else None)
+                  or _prev_held)
+    _need_switch = bool(_real_prev and final_code != _real_prev)
+    _held_disp = _real_prev or "—"
+    _held_disp_nm = ((_p3v.get("prev_hold_name") if _p3v.get("ok") else None)
+                     or nm_by_code.get(_held_disp, _held_disp))
     if _need_switch:
         _act_txt = (f"<b class='good'>买入 {final_code}</b>"
                     if final_code != "CASH" else "<b class='warn'>卖出清仓</b>")
         _tag = ("<span class='tag weakb'>抄底买入</span>" if _weak_active
                 else "<span class='tag rot'>今日建议持仓</span>")
-        _why_txt = (f"当前持 {_held_disp} → 主口径换持 {final_code}"
+        _why_txt = (f"当前持 {_held_disp} {html.escape(str(_held_disp_nm or ''))}"
+                    f" → 主口径换持 {final_code}"
                     + ("（抄底规则）" if _weak_active else "") + "，换仓成本约双边 0.2%")
+        if live[0] and "盘中" in str(live[1] or ""):
+            # ★ 2026-10-27：盘中实时价会产生「盘中看似触发、收盘可能收回」的换仓指令
+            #   （今天 D3 空仓就是 13:38 盘中价触发的，14:10 价格回升后指令消失），
+            #   必须显式警示，不能只靠页头小字。已收盘时（live_txt 无「盘中」）不显示。
+            _why_txt += ("<br><b style='color:#b45309'>⚠ 当前为盘中实时价，"
+                         "换仓判定以收盘为准 —— 收盘前该指令可能消失，勿提前操作</b>")
     else:
         _act_txt = "<b>无需动作</b>"
         _tag = "<span class='tag rot'>今日建议持仓</span>"

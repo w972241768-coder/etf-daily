@@ -525,6 +525,40 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     hold = _hold_at(r["trades"], asof)
     base_hold = _hold_at(base_trades, asof) if base_trades is not None else None
     p3_hold = _hold_at(ri["trades"], asof)
+    # ---- 空仓原因判定（2026-10-27 修复）：hold==CASH 时区分是 D3 还是 P3 ----
+    # 之前 d3state 一律显示 P3 的回场日，D3 触发的空仓会被错标成 P3（用户今天撞上）。
+    cash_src = cash_reason = cash_until = cash_ret = cash_note = None
+    if hold == "CASH":
+        # ★ 虚拟行检测：panel_ext 末尾补了一根「锚定日+1 自然日」的同价假K线
+        #   （见 recent_rotation_pnl 的 pad），D3/P3 的 until 若被 min() 截到这根
+        #   假K线上，显示出来的回场日就是假的（如 10-28）。此时改用文字近似。
+        _pad_date = str(dates_ext[-1].date())
+        _cl = r.get("cools") or []
+        if _cl and str(_cl[-1].get("until") or "") >= str(asof):
+            cash_src = "D3"
+            cash_reason = (f"{_cl[-1].get('name','')}（{_cl[-1].get('code','')}）"
+                           f"换出时亏 {_cl[-1].get('ret',0):+.2f}% ≥ 3%")
+            cash_ret = _cl[-1].get("ret")
+            if str(_cl[-1].get("until") or "") == _pad_date:
+                cash_note = f"约 {D3_DAYS} 个交易日后（以每日报告更新为准）"
+            else:
+                cash_until = _cl[-1].get("until")
+        else:
+            _rc = r.get("roc_cools") or []
+            if _rc and str(_rc[-1].get("until") or "") >= str(asof):
+                cash_src = "P3"
+                cash_reason = "头名 ROC60 进自身历史 95 分位（动量透支）"
+                if str(_rc[-1].get("until") or "") == _pad_date:
+                    cash_note = f"约 {P3_DAYS} 个交易日后（以每日报告更新为准）"
+                else:
+                    cash_until = _rc[-1].get("until")
+    # 昨日持仓（= 今天开盘时手里实际有的）：
+    # 主口径可能昨天刚抄底换过仓，与基础轮动的持仓不同，
+    # 操作表「当前持 X」必须用它，否则会显示成基础轮动的持仓。
+    prev_hold = None
+    _pv = [t for t in r["trades"] if str(t.get("date") or "") < str(asof)]
+    if _pv:
+        prev_hold = _pv[-1].get("to")
     # ---- 抄底模块（2026-10-26 接入）：当前持仓是否由抄底产生 + 最近几次触发 ----
     _we = r.get("weak_events") or []
     _lt = None
@@ -575,6 +609,11 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         weak_active=weak_active, weak_last=weak_last, weak_n=len(_we),
         weak_cd=bl.LIVE_COMPOSITE.get("weak_cd", 0),
         weak_min_pool=bl.LIVE_COMPOSITE.get("weak_min_pool", 0),
+        cash_src=cash_src, cash_reason=cash_reason,
+        cash_until=cash_until, cash_ret=cash_ret, cash_note=cash_note,
+        prev_hold=prev_hold,
+        prev_hold_name=("持币" if prev_hold == "CASH"
+                        else (bl.NAMES.get(prev_hold, prev_hold) if prev_hold else None)),
         last=[dict(date=c["date"],
                    head=c.get("head"), head_name=c.get("head_name"),
                    roc=c.get("roc"), pct=c.get("pct"), m20=c.get("m20"),
