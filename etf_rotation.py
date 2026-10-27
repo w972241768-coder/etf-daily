@@ -1139,36 +1139,36 @@ def _svg_chart(dates, pct, switches=None, *, W=920.0, H=300.0, uid="cv1"):
 
 
 def _health_html(m) -> str:
-    """近 5 年「策略体检」横条（2026-10-27 用户需求）。
+    """近 5 年「策略体检」横条（2026-10-27 用户需求，10-27 晚按「单段波段」重写）。
 
-    五个指标：近5年最大回撤 / 当前回撤 / 近5年最大波段涨幅 / 当前波段涨幅 /
-    当前持仓阶段收益及其在近5年所有持仓段中的百分位。
-    数据由 recent_rotations 的 metrics 提供（同一份主口径回测）。
+    用户明确要求：看的是**单段波段**（波谷→波峰 / 波峰→波谷），
+    不是「从起点或最近低点的累计涨幅」。故改用 ZigZag（5% 阈值）识别波段：
+      · 近5年最大波段涨幅 = max(各上涨段 谷→峰)
+      · 近5年最大波段回撤 = min(各下跌段 峰→谷)
+      · 当前波段 = 现在所处那一段的方向与幅度（起点日期一并给出）
+    另保留「当前持仓段收益 + 其在所有持仓段中的百分位」。
     """
     if not m:
         return ""
-    def _pc(v, d=2):
+    def _pc(v, d=1):
         return f"{v:+.{d}f}%" if isinstance(v, (int, float)) else "—"
-    mdd5 = m.get("mdd5")
-    dd_now = m.get("dd_now")
-    ru_max = m.get("runup_max5")
-    ru_now = m.get("runup_now")
+    up = m.get("seg_max_up")
+    dn = m.get("seg_max_dn")
+    cdd = m.get("cur_dd") or 0.0
+    cup = m.get("cur_up") or 0.0
     hr = m.get("hold_ret")
     hp = m.get("hold_pct")
+    # 当前波段：谁非零就是谁（两者互斥）
+    if cdd < -0.05:
+        cur_v = f'<b style="color:{GREEN}">↓ 下跌中 {_pc(cdd)}</b>'
+        cur_n = f'<i>自 {html.escape(str(m.get("peak_date") or ""))} 的峰起</i>'
+    elif cup > 0.05:
+        cur_v = f'<b style="color:{RED}">↑ 上涨中 {_pc(cup)}</b>'
+        cur_n = f'<i>自 {html.escape(str(m.get("trough_date") or ""))} 的谷起</i>'
+    else:
+        cur_v = '<b style="color:#42474f">刚触新低/新高</b>'
+        cur_n = ""
     hcol = (RED if (hr or 0) > 0 else (GREEN if (hr or 0) < 0 else "#42474f"))
-    cells = [
-        ("近 5 年最大回撤", f'<b style="color:#42474f">'
-                            f'{mdd5:.2f}%</b>' if isinstance(mdd5, (int, float)) else "<b>—</b>", ""),
-        ("当前回撤（距最高点）", ((f'<b style="color:#42474f">{dd_now:.2f}%</b>'
-                                  + (f'<i><b style="color:{RED}">正在近 5 年最低点</b></i>'
-                                     if isinstance(mdd5, (int, float))
-                                     and abs(dd_now - mdd5) < 0.05 else ""))
-                                 if isinstance(dd_now, (int, float)) else "<b>—</b>"), ""),
-        ("近 5 年最大波段涨幅", f'<b style="color:{RED}">{_pc(ru_max, 1)}</b>'
-                              if isinstance(ru_max, (int, float)) else "<b>—</b>", ""),
-        ("当前波段涨幅（距最近低点）", f'<b style="color:{RED if (ru_now or 0) > 0 else "#42474f"}">'
-                                    f'{_pc(ru_now, 1)}</b>' if isinstance(ru_now, (int, float)) else "<b>—</b>", ""),
-    ]
     pct_txt = ""
     if isinstance(hp, (int, float)):
         _n = int(m.get("seg_n") or 0)
@@ -1179,15 +1179,23 @@ def _health_html(m) -> str:
             pct_txt = (f'<i><b style="color:{RED}">近 5 年最佳区间</b>'
                        f'（第 {hp:.0f} 百分位 / 共 {_n} 段）</i>')
         else:
-            pct_txt = (f'<i>第 <b>{hp:.0f}</b> 百分位（共 {_n} 段持仓，越高越好）</i>')
-    cells.append(("当前持仓阶段收益",
-                  f'<b style="color:{hcol}">{_pc(hr)}</b>{pct_txt}', ""))
+            pct_txt = f'<i>第 <b>{hp:.0f}</b> 百分位（共 {_n} 段，越高越好）</i>'
+    cells = [
+        ("近 5 年最大波段涨幅",
+         f'<b style="color:{RED}">{_pc(up)}</b><i>单段 谷→峰</i>'),
+        ("近 5 年最大波段回撤",
+         f'<b style="color:{GREEN}">{_pc(dn)}</b><i>单段 峰→谷</i>'),
+        ("当前波段", cur_v + cur_n),
+        ("当前持仓段收益",
+         f'<b style="color:{hcol}">{_pc(hr, 2)}</b>{pct_txt}'),
+    ]
     body = "".join(f'<div class="hc"><span class="hk">{k}</span>{v}</div>'
-                   for k, v, _ in cells)
+                   for k, v in cells)
     return (f'<section class="hsec">'
             f'<div class="hhd"><h2 class="hh2">📊 近 5 年策略体检</h2>'
             f'<span class="htip">{html.escape(str(m.get("since") or ""))} 起 · '
-            f'现行口径 · {int(m.get("days") or 0)} 个交易日</span></div>'
+            f'波段按 5% 阈值切分（{int(m.get("piv_n") or 0)} 个拐点：'
+            f'{int(m.get("up_n") or 0)} 涨 / {int(m.get("dn_n") or 0)} 跌）</span></div>'
             f'<div class="hrow">{body}</div></section>')
 
 

@@ -601,12 +601,52 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     if len(_d5) < 20:
         _d5 = _nv
     _peak = _d5.cummax()
-    _mdd5 = float((_d5 / _peak - 1.0).min()) * 100            # 近5年最大回撤
-    _dd_now = (float(_d5.iloc[-1]) / float(_peak.iloc[-1]) - 1.0) * 100   # 当前回撤
-    _runmin = _d5.cummin()
-    _runup = (_d5 / _runmin - 1.0) * 100
-    _runup_max5 = float(_runup.max())                          # 近5年最大波段涨幅
-    _runup_now = float(_runup.iloc[-1])                        # 当前波段涨幅（距最近低点）
+    _mdd5 = float((_d5 / _peak - 1.0).min()) * 100            # 标准最大回撤（跨段，保留作参照）
+    _dd_now = (float(_d5.iloc[-1]) / float(_peak.iloc[-1]) - 1.0) * 100
+
+    # ★ 2026-10-27 用户纠正：要的是「单段」波段（波谷→波峰 / 波峰→波谷），
+    #   不是「从起点/最近低点的累计涨幅」。改用 ZigZag（5% 阈值）识别波段：
+    #   净值从高点回撤 ≥5% 确认一个峰；从低点反弹 ≥5% 确认一个谷。
+    def _zigzag(vals, thr=0.05):
+        piv = []
+        trend, hi_i, lo_i = 0, 0, 0
+        hi_v = lo_v = float(vals[0])
+        for _i in range(len(vals)):
+            _v = float(vals[_i])
+            if trend >= 0:
+                if _v > hi_v:
+                    hi_i, hi_v = _i, _v
+                if _v <= hi_v * (1 - thr):
+                    piv.append((hi_i, hi_v, "H"))
+                    trend, lo_i, lo_v = -1, _i, _v
+            if trend <= 0:
+                if _v < lo_v:
+                    lo_i, lo_v = _i, _v
+                if _v >= lo_v * (1 + thr):
+                    piv.append((lo_i, lo_v, "L"))
+                    trend, hi_i, hi_v = 1, _i, _v
+        piv.append((hi_i, hi_v, "H") if trend >= 0 else (lo_i, lo_v, "L"))
+        return piv
+
+    _piv = _zigzag(_d5.values, 0.05)
+    _ups, _downs = [], []
+    for _k in range(1, len(_piv)):
+        _a, _b = _piv[_k - 1], _piv[_k]
+        if _a[2] == "L" and _b[2] == "H":
+            _ups.append((_b[1] / _a[1] - 1.0) * 100)      # 单段上涨（谷→峰）
+        elif _a[2] == "H" and _b[2] == "L":
+            _downs.append((_b[1] / _a[1] - 1.0) * 100)    # 单段下跌（峰→谷）
+    _hs = [p for p in _piv if p[2] == "H"]
+    _ls = [p for p in _piv if p[2] == "L"]
+    _lh = _hs[-1] if _hs else None
+    _ll = _ls[-1] if _ls else None
+    _now5 = float(_d5.iloc[-1])
+    _cur_dd = ((_now5 / _lh[1] - 1.0) * 100) if (_lh and _now5 < _lh[1]) else 0.0
+    _cur_up = ((_now5 / _ll[1] - 1.0) * 100) if (_ll and _now5 > _ll[1]) else 0.0
+    _seg_max_up = max(_ups) if _ups else None
+    _seg_max_dn = min(_downs) if _downs else None
+    _peak_date = str(_d5.index[_lh[0]].date()) if _lh else None
+    _trough_date = str(_d5.index[_ll[0]].date()) if _ll else None
     # 每笔持仓段收益（用换仓时点的净值差近似，含成本）
     _seg = []
     for _k in range(len(r["trades"]) - 1):
@@ -626,9 +666,12 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     _hold_pct = None
     if _seg and _hold_ret is not None:
         _hold_pct = sum(1 for _x in _seg if _x < _hold_ret) / len(_seg) * 100
-    metrics = dict(mdd5=_mdd5, dd_now=_dd_now, runup_max5=_runup_max5,
-                   runup_now=_runup_now, hold_ret=_hold_ret,
-                   hold_pct=_hold_pct, seg_n=len(_seg),
+    metrics = dict(mdd5=_mdd5, dd_now=_dd_now,
+                   seg_max_up=_seg_max_up, seg_max_dn=_seg_max_dn,
+                   cur_dd=_cur_dd, cur_up=_cur_up,
+                   peak_date=_peak_date, trough_date=_trough_date,
+                   piv_n=len(_piv), up_n=len(_ups), dn_n=len(_downs),
+                   hold_ret=_hold_ret, hold_pct=_hold_pct, seg_n=len(_seg),
                    since=str(_d5.index[0].date()), days=len(_d5))
 
     def _hname(h):
