@@ -320,7 +320,7 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
                             exit_dev=exit_dev, exit_lead=exit_lead,
                             min_def_days=min_def_days, cost=cost, W=W, MA=MA,
                             value_engine=value_engine, asof=asof, base_navs=navs,
-                            base_trades=trades, d3_navs=d3["navs"])
+                            base_trades=trades, d3_navs=d3["navs"], n_rows=n)
         except Exception as e:                 # noqa: BLE001
             p3 = dict(error=f"{type(e).__name__}: {e}")
 
@@ -477,7 +477,8 @@ def _d3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
 
 def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_dev,
                enter_lead, exit_dev, exit_lead, min_def_days, cost, W, MA,
-               value_engine, asof, base_navs, base_trades, d3_navs) -> Dict:
+               value_engine, asof, base_navs, base_trades, d3_navs,
+               n_rows: int = 3) -> Dict:
     """「D3 + P3 止盈」叠加组合的影子回测（2026-10-25 用户拍板的现行组合）。
 
     主口径 = 两条**互相独立**的规则叠加（目标持仓优先级 D3 > P3）：
@@ -552,6 +553,76 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                     cash_note = f"约 {P3_DAYS} 个交易日后（以每日报告更新为准）"
                 else:
                     cash_until = _rc[-1].get("until")
+    # ---- 空仓已持续几个交易日（2026-10-28 用户需求：空仓期要显示已空仓几天）----
+    cash_days = None
+    if hold == "CASH":
+        for _t in reversed(r["trades"]):
+            if _t.get("to") == "CASH":
+                try:
+                    _i0 = int(dates.searchsorted(pd.Timestamp(_t["date"]), side="left"))
+                    _i1 = int(dates.searchsorted(pd.Timestamp(asof), side="left"))
+                    cash_days = max(0, _i1 - _i0)
+                except Exception:                      # noqa: BLE001
+                    cash_days = None
+                break
+
+    # ---- 主口径的「近 N 次换仓复盘」（2026-10-28 用户需求）----
+    # 原来这张表用的是**基础策略**的换仓，所以抄底买入（10-23）和 D3 止损空仓（10-27）
+    # 都看不到，用户以为它「不更新」。改成按主口径（D3+P3+抄底）复算，口径与本页一致。
+    def _bench_ret(d0, d1):
+        """同期上证收益。d1 超出数据末行时（如盘中/今日）退回最近可用日，避免整段缺失。"""
+        if BENCH_CODE not in panel.columns:
+            return None
+        try:
+            _s = panel[BENCH_CODE]
+            _i0 = int(panel.index.searchsorted(pd.Timestamp(d0), side="left"))
+            _i1 = int(panel.index.searchsorted(pd.Timestamp(d1), side="left"))
+            _i0 = min(_i0, len(_s) - 1)
+            _i1 = min(_i1, len(_s) - 1)
+            if _i1 <= _i0:
+                return None
+            a, b = float(_s.iloc[_i0]), float(_s.iloc[_i1])
+            if not a or pd.isna(a) or pd.isna(b):
+                return None
+            return b / a - 1.0
+        except Exception:                              # noqa: BLE001
+            return None
+
+    _sel = (r["trades"] or [])[-max(1, n_rows):]
+    p3_rows = []
+    for _k, _t in enumerate(_sel):
+        _d0 = _t["date"]
+        if _k < len(_sel) - 1:
+            _d1 = _sel[_k + 1]["date"]
+            _nav_end = float(_sel[_k + 1]["nav"])
+        else:
+            _d1 = asof
+            _nav_end = float(navs.iloc[-1])
+        _nav_start = float(_t["nav"])
+        _same = (_d1 == _d0)
+        if _same:
+            _ret = _br = _al = None
+        else:
+            _ret = (_nav_end / _nav_start - 1.0) if _nav_start > 0 else None
+            _br = _bench_ret(_d0, _d1)
+            _al = (_ret - _br) if (_ret is not None and _br is not None) else None
+        _days = 0
+        if not _same:
+            try:
+                _i0 = int(dates.searchsorted(pd.Timestamp(_d0), side="left"))
+                _i1 = int(dates.searchsorted(pd.Timestamp(_d1), side="left"))
+                _days = max(0, _i1 - _i0)
+            except Exception:                          # noqa: BLE001
+                _days = 0
+        p3_rows.append(dict(
+            idx=_k + 1, date=_d0, end_date=_d1, days=_days,
+            frm=_t.get("frm"), to=_t.get("to"),
+            frm_name=_t.get("frm_name") or _t.get("frm"),
+            to_name=_t.get("to_name") or _t.get("to"),
+            ret=_ret, bench=_br, alpha=_al,
+            reason=_t.get("reason") or "",
+            open=(_k == len(_sel) - 1)))
+
     # 昨日持仓（= 今天开盘时手里实际有的）：
     # 主口径可能昨天刚抄底换过仓，与基础轮动的持仓不同，
     # 操作表「当前持 X」必须用它，否则会显示成基础轮动的持仓。
@@ -694,6 +765,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         weak_active=weak_active, weak_last=weak_last, weak_n=len(_we),
         weak_cd=bl.LIVE_COMPOSITE.get("weak_cd", 0),
         weak_min_pool=bl.LIVE_COMPOSITE.get("weak_min_pool", 0),
+        cash_days=cash_days, rows=p3_rows,
         cash_src=cash_src, cash_reason=cash_reason,
         cash_until=cash_until, cash_ret=cash_ret, cash_note=cash_note,
         prev_hold=prev_hold,

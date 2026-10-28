@@ -2345,7 +2345,11 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
         _ph, _ph_nm = _p3v["hold"], (_p3v.get("hold_name") or "")
         _base_disp = f"{final_code} {html.escape(final_nm)}"
         if _ph == "CASH":
-            final_note = (f"主口径 D3+P3 处于空仓冷却期 → <b>今日空仓</b>"
+            # 2026-10-28 用户需求：空仓期要直观显示「已经空仓几天」
+            _cd = _p3v.get("cash_days")
+            _cd_txt = (f"，<b>已空仓 {int(_cd)} 个交易日</b>"
+                       if isinstance(_cd, (int, float)) and _cd > 0 else "")
+            final_note = (f"主口径 D3+P3 处于空仓冷却期{_cd_txt} → <b>今日空仓</b>"
                           f"（基础策略本应持 {_base_disp}）")
         elif _weak_active:
             final_note = (f"主选池动横20 <b>全部为负</b> → 抄底排名末位 "
@@ -2869,12 +2873,17 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 """
         else:
             _n = recent["n"]
-            for rw in recent["rows"]:
+            # ★ 2026-10-28：改用**主口径**（D3+P3+抄底）的换仓记录 —— 原来用的是基础策略，
+            #   所以抄底买入（10-23 买 588170）和 D3 止损空仓（10-27 → CASH）都看不到，
+            #   用户以为这张表「不更新」。现按主口径复算，与今日操作同一口径。
+            _rows_src = ((recent.get("p3") or {}).get("rows") or recent["rows"])
+            for rw in _rows_src:
                 # 模块返回的是小数（-0.024 = -2.4%），×100 后交给 _fmt 显示
                 _r = None if rw["ret"] is None else rw["ret"] * 100.0
                 _b = None if rw["bench"] is None else rw["bench"] * 100.0
                 _a = None if rw["alpha"] is None else rw["alpha"] * 100.0
-                _tag = ("已平仓" if rw["closed"]
+                _closed = rw.get("closed", not rw.get("open", True))
+                _tag = ("已平仓" if _closed
                         else ('<span class="tag tie">今日刚换仓 · 尚无收益</span>'
                               if rw["end_date"] == rw["date"]
                               else '<span class="tag tie">持仓中 · 未扣卖出成本</span>'))
@@ -2896,11 +2905,30 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                     f'{"-" if _a is None else _fmt(_a, pct=False, nd=2) + "pp"}</td>'
                     f'<td class="rs" style="min-width:150px">{html.escape(rw["reason"])}</td>'
                     "</tr>")
-            _c = recent["cum"]
+            # ★ 2026-10-28：Σ 行必须与**上面这张表**同源（明细已改主口径），
+            #   否则「与上表严格自洽」是假话。这里按 _rows_src 自行连乘。
+            _pr, _pb = 1.0, 1.0
+            _n_r = _n_b = 0
+            for _rw in _rows_src:
+                if _rw.get("ret") is not None:
+                    _pr *= (1.0 + _rw["ret"]); _n_r += 1
+                if _rw.get("bench") is not None:
+                    _pb *= (1.0 + _rw["bench"]); _n_b += 1
+            # 末段若是「今日刚换仓」，同期上证可能无数据（_n_b < _n_r），
+            # 此时用**可算的段**连乘，并在说明里标注，避免整列显示「-」
+            _ok_b = (_n_b > 0 and _n_b == _n_r)
+            _ok_b_part = (_n_b > 0 and _n_b < _n_r)
+            _c = dict(
+                start=(_rows_src[0]["date"] if _rows_src else recent["cum"]["start"]),
+                end=recent["cum"]["end"], trades=len(_rows_src),
+                ret=(_pr - 1.0) if _n_r else None,
+                bench=(_pb - 1.0) if (_ok_b or _ok_b_part) else None,
+                alpha=((_pr - _pb)) if _ok_b else None,
+                bench_partial=_ok_b_part)
             _cr = None if _c["ret"] is None else _c["ret"] * 100.0
             _cb = None if _c["bench"] is None else _c["bench"] * 100.0
             _ca = None if _c["alpha"] is None else _c["alpha"] * 100.0
-            _cum_days = sum((rw.get("days") or 0) for rw in recent["rows"])
+            _cum_days = sum((rw.get("days") or 0) for rw in _rows_src)
             rr_rows.append(
                 '<tr class="def">'
                 f'<td class="num">Σ</td>'
@@ -2913,7 +2941,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                 f'<td class="num" style="color:{_color(_cb)}">{_fmt(_cb)}</td>'
                 f'<td class="num" style="color:{_color(_ca)};font-weight:700">'
                 f'{"-" if _ca is None else _fmt(_ca, pct=False, nd=2) + "pp"}</td>'
-                '<td class="rs" style="min-width:150px">分段 (1+r) 连乘，与上表严格自洽</td>'
+                f'<td class="rs" style="min-width:150px">分段 (1+r) 连乘，与上表严格自洽'
+                f'{"；同期上证仅含已平仓段（末段今日刚换仓，无同期数据）" if _c.get("bench_partial") else ""}'
+                f'</td>'
                 '</tr>')
             _ext_txt = ""
             if recent.get("extended"):
