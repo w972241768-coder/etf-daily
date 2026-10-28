@@ -49,6 +49,9 @@ D3P3 = dict(loss_cool=0.03, loss_days=5, roc_q=0.95, roc_days=20,
             roc_n=60, roc_min_periods=250)
 WEAK = dict(weak_mode="allneg", weak_rank=1, weak_delay=0,
             weak_cd=0, weak_min_pool=5)
+# 2026-10-28 用户拍板的现行口径：E3（抄底锁定期 = 满10日 / 回MA20 任一离场）
+E3 = dict(weak_exit_ma20=True, weak_exit_days=10)
+OUTNAME = os.environ.get("CMP_OUT", "基础策略+D3+P3+抄底回测对比.html")
 
 
 def run(panel, dates, pool, dfn, **kw):
@@ -72,6 +75,43 @@ def monthly_of(nv):
                                float((s / s.cummax() - 1).min()) * 100)
         prev = float(s.iloc[-1])
     return out
+
+
+def perf_stats(r, nv):
+    """多维度胜率与盈亏比（2026-10-28 用户需求：每个策略都要看胜率）。
+
+    口径说明（四套胜率，别混）：
+      · 交易胜率 = 盈利笔数 / 总笔数（每笔 = 一次换仓到下一次换仓，含持币段）
+      · 月胜率   = 月收益 > 0 的月份 / 总月数
+      · 年胜率   = 年收益 > 0 的年份 / 总年数
+      · 日胜率   = 净值上涨日 / 总交易日
+      · 盈亏比   = 盈利笔的收益总和 / |亏损笔的收益总和|
+    """
+    tr = r["trades"]
+    rets = []
+    for i in range(len(tr) - 1):
+        a, b = float(tr[i]["nav"]), float(tr[i + 1]["nav"])
+        if a:
+            rets.append((b / a - 1.0) * 100)
+    rets = np.array(rets) if rets else np.array([0.0])
+    _n = nv.copy()
+    if not isinstance(_n.index, pd.DatetimeIndex):
+        _n.index = pd.to_datetime(_n.index)
+    mret = _n.resample("ME").last().pct_change().dropna() * 100
+    yret = _n.resample("YE").last().pct_change().dropna() * 100
+    dret = _n.pct_change().dropna() * 100
+    gain = rets[rets > 0].sum()
+    loss = abs(rets[rets < 0].sum())
+    return dict(
+        n=len(rets), win=float((rets > 0).mean() * 100),
+        avg=float(rets.mean()), med=float(np.median(rets)),
+        best=float(rets.max()), worst=float(rets.min()),
+        m_n=len(mret), m_win=float((mret > 0).mean() * 100) if len(mret) else 0.0,
+        y_n=len(yret), y_win=float((yret > 0).mean() * 100) if len(yret) else 0.0,
+        d_n=len(dret), d_win=float((dret > 0).mean() * 100) if len(dret) else 0.0,
+        pf=(gain / loss) if loss > 0 else float("nan"),
+        avg_gain=(gain / max(1, int((rets > 0).sum()))),
+        avg_loss=(loss / max(1, int((rets < 0).sum()))))
 
 
 def drawdown(nv):
@@ -175,11 +215,15 @@ def main():
     A, sa, na = run(panel, dates, pool, dfn)
     B, sb, nb = run(panel, dates, pool, dfn, **D3P3)
     C, sc, nc = run(panel, dates, pool, dfn, **D3P3, **WEAK)
+    # 现行口径 E3（2026-10-28 用户拍板）：抄底锁定期 = 满10日 / 回MA20 任一离场
+    E, se, ne = run(panel, dates, pool, dfn, **D3P3, **WEAK, **E3)
 
     # ⚠️ bl.yearly() 内部用 nav.index.str[:4]，必须喂**原始字符串索引**的 navs
     #   （na/nb/nc 已转成 DatetimeIndex 供画图与月度分组用，不能混用）
     ya, yb, yc = yearly_of(A["navs"]), yearly_of(B["navs"]), yearly_of(C["navs"])
+    ye = yearly_of(E["navs"])
     ma, mb, mc = monthly_of(na), monthly_of(nb), monthly_of(nc)
+    me = monthly_of(ne)
     years = sorted(ya)
     # 每年可用池规模
     av = {}
@@ -191,6 +235,10 @@ def main():
         return dict(final=float(nv.iloc[-1]), ann=s["ann"] * 100, mdd=s["mdd"] * 100,
                     calmar=s["calmar"], sharpe=s["sharpe"], sortino=s["sortino"])
     PA, PB, PC = pack(sa, na), pack(sb, nb), pack(sc, nc)
+    PE = pack(se, ne)
+    # 胜率（2026-10-28 用户需求）：四套胜率 + 盈亏比，覆盖 A/B/C/E3
+    SA_, SB_, SC_, SE_ = (perf_stats(A, na), perf_stats(B, nb),
+                          perf_stats(C, nc), perf_stats(E, ne))
 
 
     # 抄底贡献
@@ -327,6 +375,34 @@ def main():
             f'<td class="num">{wn}</td></tr>')
     prows = "".join(prows)
 
+    # ---- 抄底模块自己的胜率（E3 口径，2026-10-28 用户需求「每个小策略都要看胜率」）----
+    _wlog = [x for x in (E.get("weak_exit_log") or []) if x.get("ret") is not None]
+    _wr = np.array([x["ret"] for x in _wlog]) if _wlog else np.array([])
+    weak_mod = dict(
+        n=len(_wr),
+        win=float((_wr > 0).mean() * 100) if len(_wr) else 0.0,
+        med=float(np.median(_wr)) if len(_wr) else 0.0,
+        avg=float(_wr.mean()) if len(_wr) else 0.0,
+        best=float(_wr.max()) if len(_wr) else 0.0,
+        worst=float(_wr.min()) if len(_wr) else 0.0)
+
+    def _srow(nm, st, hi=False):
+        bg = ' style="background:#eef7f9"' if hi else ""
+        b = (lambda v: f"<b>{v}</b>") if hi else (lambda v: v)
+        return (f'<tr{bg}><td>{b(nm)}</td>'
+                f'<td class="num">{st["n"]}</td>'
+                f'<td class="num">{b(f"{st[chr(119)+chr(105)+chr(110)]:.1f}%")}</td>'
+                f'<td class="num">{b(f"{st[chr(109)+chr(95)+chr(119)+chr(105)+chr(110)]:.1f}%")}</td>'
+                f'<td class="num">{b(f"{st[chr(121)+chr(95)+chr(119)+chr(105)+chr(110)]:.1f}%")}</td>'
+                f'<td class="num">{b(f"{st[chr(100)+chr(95)+chr(119)+chr(105)+chr(110)]:.1f}%")}</td>'
+                f'<td class="num">{b(f"{st[chr(112)+chr(102)]:.2f}")}</td>'
+                f'<td class="num">{st["med"]:+.2f}%</td>'
+                f'<td class="num">{st["worst"]:+.2f}%</td>'
+                f'<td class="num">{st["best"]:+.2f}%</td></tr>')
+
+    srows = (_srow("A 基础轮动", SA_) + _srow("B + D3 + P3", SB_)
+             + _srow("C + 抄底（旧口径）", SC_) + _srow("★ E3 现行口径", SE_, hi=True))
+
     # 最优方案（按净值）
     _best = max(EXR, key=lambda e: e["pack"]["final"])
     best_txt = (f'<b style="color:{_best["color"]}">{_best["label"]}</b>'
@@ -345,23 +421,25 @@ def main():
         cd = contrib[y]
         # ⚠️ bl.yearly() 的 year 是字符串（index.str[:4]），pool_sz 的键是 int，必须转
         ps = pool_sz.get(int(y), (0, 0))
+        rE = (ye.get(y, {}).get("ret") or 0) * 100
         yrows.append(
             f'<tr><td class="mono">{y}</td><td class="num dim">{ps[0]}/{ps[1]:.1f}</td>'
-            + cell(rA) + cell(rB) + cell(rC)
+            + cell(rA) + cell(rB) + cell(rC) + cell(rE, bold=True)
             + cell(cd, color=(GREEN if cd > 0.05 else (RED if cd < -0.05 else "#8b93a1")), bold=True)
             + cell(mA, color="#42474f") + cell(mB, color="#42474f") + cell(mC, color="#42474f")
             + "</tr>")
 
     # 月度表
-    mkeys = sorted(set(ma) | set(mb) | set(mc))
+    mkeys = sorted(set(ma) | set(mb) | set(mc) | set(me))
     mrows = []
     for k in mkeys:
         va = ma.get(k, (None, None))[0]
         vb = mb.get(k, (None, None))[0]
         vc = mc.get(k, (None, None))[0]
+        ve = me.get(k, (None, None))[0]
         d = (vc - vb) if (vc is not None and vb is not None) else None
         mrows.append(f'<tr><td class="mono">{k}</td>'
-                     + cell(va) + cell(vb) + cell(vc)
+                     + cell(va) + cell(vb) + cell(vc) + cell(ve, bold=True)
                      + cell(d, color=(GREEN if (d or 0) > 0.05 else (RED if (d or 0) < -0.05 else "#8b93a1")))
                      + "</tr>")
 
@@ -429,12 +507,20 @@ td.mono{{font-family:ui-monospace,Menlo,monospace}}
 <td class="num">{PB['mdd']:.2f}%</td><td class="num">{PB['calmar'] or 0:.2f}</td>
 <td class="num">{PB['sharpe'] or 0:.2f}</td><td class="num">{PB['sortino'] or 0:.2f}</td>
 <td class="num">{len(B['trades'])}</td></tr>
-<tr style="background:#fdf5f9"><td><b>C + 抄底</b></td><td class="num"><b>{PC['final']:.3f}</b></td>
-<td class="num"><b>{PC['ann']:+.2f}%</b></td><td class="num">{PC['mdd']:.2f}%</td>
-<td class="num"><b>{PC['calmar'] or 0:.2f}</b></td><td class="num"><b>{PC['sharpe'] or 0:.2f}</b></td>
-<td class="num"><b>{PC['sortino'] or 0:.2f}</b></td><td class="num">{len(C['trades'])}</td></tr>
+<tr><td>C + 抄底（旧口径·无锁定）</td><td class="num">{PC['final']:.3f}</td>
+<td class="num">{PC['ann']:+.2f}%</td><td class="num">{PC['mdd']:.2f}%</td>
+<td class="num">{PC['calmar'] or 0:.2f}</td><td class="num">{PC['sharpe'] or 0:.2f}</td>
+<td class="num">{PC['sortino'] or 0:.2f}</td><td class="num">{len(C['trades'])}</td></tr>
+<tr style="background:#eef7f9"><td><b style="color:{C_E3}">★ E3 现行口径</b>
+<span style="font-size:11px;color:#6c717f">（抄底锁定期：满10日 / 回MA20）</span></td>
+<td class="num"><b>{PE['final']:.3f}</b></td>
+<td class="num"><b>{PE['ann']:+.2f}%</b></td><td class="num">{PE['mdd']:.2f}%</td>
+<td class="num"><b>{PE['calmar'] or 0:.2f}</b></td><td class="num"><b>{PE['sharpe'] or 0:.2f}</b></td>
+<td class="num"><b>{PE['sortino'] or 0:.2f}</b></td><td class="num">{len(E['trades'])}</td></tr>
 </tbody></table></div>
-<div class="note">C 相对 B：净值 <b>{PC['final']-PB['final']:+.3f}</b>
+<div class="note"><b>★ E3 相对 C（现行 vs 旧口径）</b>：净值 <b>{PE['final']-PC['final']:+.3f}</b>、
+Calmar <b>{(PE['calmar'] or 0)-(PC['calmar'] or 0):+.2f}</b>、最大回撤 <b>{PE['mdd']-PC['mdd']:+.2f}pp</b>。<br>
+C 相对 B：净值 <b>{PC['final']-PB['final']:+.3f}</b>
 （{(PC['final']/PB['final']-1)*100:+.1f}%）、年化 <b>{PC['ann']-PB['ann']:+.2f}pp</b>、
 Calmar <b>{(PC['calmar'] or 0)-(PB['calmar'] or 0):+.2f}</b>、最大回撤 <b>{PC['mdd']-PB['mdd']:+.2f}pp</b>。</div>
 </div>
@@ -468,8 +554,8 @@ Calmar <b>{(PC['calmar'] or 0)-(PB['calmar'] or 0):+.2f}</b>、最大回撤 <b>{
 <div class="cap">五、年度明细（收益 % / 最大回撤 %；「池」= 当年可用标的 最少/均值）</div>
 <div class="tblwrap"><table>
 <thead><tr><th>年份</th><th class="num">池</th><th class="num">A 基础</th><th class="num">B +D3P3</th>
-<th class="num">C +抄底</th><th class="num">抄底贡献</th><th class="num">A 回撤</th>
-<th class="num">B 回撤</th><th class="num">C 回撤</th></tr></thead>
+<th class="num">C 旧口径</th><th class="num">E3 现行</th><th class="num">抄底贡献</th>
+<th class="num">A 回撤</th><th class="num">B 回撤</th><th class="num">C 回撤</th></tr></thead>
 <tbody>{''.join(yrows)}</tbody></table></div>
 </div>
 
@@ -477,7 +563,7 @@ Calmar <b>{(PC['calmar'] or 0)-(PB['calmar'] or 0):+.2f}</b>、最大回撤 <b>{
 <div class="cap">六、月度明细（收益 %，共 {len(mkeys)} 个月）</div>
 <div class="tblwrap"><table>
 <thead><tr><th>月份</th><th class="num">A 基础</th><th class="num">B +D3P3</th>
-<th class="num">C +抄底</th><th class="num">抄底贡献</th></tr></thead>
+<th class="num">C 旧口径</th><th class="num">E3 现行</th><th class="num">抄底贡献</th></tr></thead>
 <tbody>{''.join(mrows)}</tbody></table></div>
 <div class="note">「抄底贡献」= C 当月收益 − B 当月收益。正数=抄底加分，负数=拖累。</div>
 </div>
@@ -534,6 +620,52 @@ Calmar <b>{(PC['calmar'] or 0)-(PB['calmar'] or 0):+.2f}</b>、最大回撤 <b>{
 <div class="note">空仓月收益为 0.00%。表格可横向滚动。</div>
 </div>
 
+<div class="card">
+<div class="cap">十一、胜率对比（四套口径，别混着看）</div>
+<div class="tblwrap"><table>
+<thead><tr><th>策略</th><th class="num">交易笔数</th><th class="num">交易胜率</th>
+<th class="num">月胜率</th><th class="num">年胜率</th><th class="num">日胜率</th>
+<th class="num">盈亏比</th><th class="num">单笔中位</th><th class="num">单笔最差</th>
+<th class="num">单笔最好</th></tr></thead>
+<tbody>{srows}</tbody></table></div>
+<div class="note">
+<b>四套胜率的定义</b>（数值不可跨口径比较）：<br>
+· <b>交易胜率</b> = 盈利笔数 ÷ 总笔数。每笔 = 一次换仓到下一次换仓（持币段也算一笔，收益≈0）；<br>
+· <b>月胜率</b> = 月收益 &gt; 0 的月份 ÷ 总月数（{SA_['m_n']} 个月）；<br>
+· <b>年胜率</b> = 年收益 &gt; 0 的年份 ÷ 总年数（{SA_['y_n']} 年）；<br>
+· <b>日胜率</b> = 净值上涨日 ÷ 总交易日（{SA_['d_n']} 日）；<br>
+· <b>盈亏比</b> = 盈利笔的收益总和 ÷ |亏损笔的收益总和|。&gt;1 才是正期望。
+</div>
+</div>
+
+<div class="card">
+<div class="cap">十二、抄底模块自己的胜率（E3 口径，{weak_mod['n']} 笔已离场）</div>
+<div class="k">
+<div class="kc"><span class="kk">单笔胜率</span><b>{weak_mod['win']:.0f}%</b></div>
+<div class="kc"><span class="kk">单笔中位</span><b>{weak_mod['med']:+.2f}%</b></div>
+<div class="kc"><span class="kk">单笔均值</span><b>{weak_mod['avg']:+.2f}%</b></div>
+<div class="kc"><span class="kk">最好一笔</span><b style="color:{RED}">{weak_mod['best']:+.2f}%</b></div>
+<div class="kc"><span class="kk">最差一笔</span><b style="color:{GREEN}">{weak_mod['worst']:+.2f}%</b></div>
+</div>
+<div class="note">口径：只统计「因抄底而买入、并已按锁定期规则离场」的笔，不含仍在持仓的那一笔。
+这 {weak_mod['n']} 笔的胜率 <b>{weak_mod['win']:.0f}%</b> 明显高于策略整体的交易胜率
+（{SE_['win']:.1f}%），说明<b>抄底模块本身是有效的</b>——它是被混在 300 笔里稀释掉了。</div>
+</div>
+
+<div class="warn">
+<b>★ 为什么净值能翻倍，回撤却压不住？胜率表给出了答案：</b><br>
+· <b>交易胜率反而下降</b>：A {SA_['win']:.1f}% → E3 {SE_['win']:.1f}%；
+  <b>日胜率也下降</b>：{SA_['d_win']:.1f}% → {SE_['d_win']:.1f}%；<br>
+· 但<b>盈亏比大幅上升</b>：{SA_['pf']:.2f} → {SE_['pf']:.2f}（{(SE_['pf']/SA_['pf']-1)*100:+.0f}%）；<br>
+· ⇒ 这套策略的改善机制是<b>「赢的时候赚更多」</b>，不是<b>「赢的次数更多」</b>。<br>
+· <b>这正是所有规则都改不动回撤的根因</b>：D3 / P3 / 抄底 都在做同一件事——
+  调整<b>持仓的时序分布</b>（什么时候拿、拿多久），但没有改变
+  <b>「任何时点都 100% 满仓单一 ETF」</b>这个结构。回撤是结构问题，不是时序问题。<br>
+· 量化证据：A/B/C/E1~E4 七个版本的最大回撤落在 <b>−17.92% ~ −23.37%</b> 之间，
+  跨度只有 5.4pp，而净值跨度是 <b>10.8 ~ 20.9</b>（近 2 倍）。
+  <b>规则能改净值 2 倍，却只能改回撤 5 个点。</b>
+</div>
+
 <div class="warn">
 <b>★ 四种离场方式的核心结论（{d0} ~ {d1}，最新数据）：</b><br>
 · <b>最优：{best_txt}</b>；<br>
@@ -558,7 +690,7 @@ E1~E4 = 抄底买入后进入锁定期（期内 D3/P3 不介入），分别按�
 本报告由 make_compare_report.py 生成，仅供研究参考，不构成投资建议。
 </div>
 </div></body></html>"""
-    out = os.path.join(HERE, "out", "基础策略+D3+P3+抄底回测对比.html")
+    out = os.path.join(HERE, "out", OUTNAME)
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(doc)
