@@ -274,31 +274,44 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
     # 涨跌幅用**标的自前复权收盘价**算（不含换仓成本），与「策略收益」区分开：
     #   策略收益含双边成本、且头名可能在防守期被换成 512040/CASH。
     since = {}
-    for c in panel.columns:
-        last_in = None
-        for t in trades:
-            if t.get("to") == c:
-                last_in = t["date"]
-        if last_in is None:
-            continue
-        # 找 last_in 之后的第一笔「换成别人」的交易
-        last_out = None
-        for t in trades:
-            if t["date"] > last_in and t.get("frm") == c:
-                last_out = t["date"]
-                break
-        end_s = last_out or asof
-        p0, p1 = _px(c, last_in), _px(c, end_s)
-        ret_c = (p1 / p0 - 1.0) if (p0 and p1) else None
-        n_days = 0
-        try:
-            i0 = int(dates.searchsorted(pd.Timestamp(last_in), side="left"))
-            i1 = int(dates.searchsorted(pd.Timestamp(end_s), side="left"))
-            n_days = max(0, i1 - i0)
-        except Exception:                                  # noqa: BLE001
+
+    def _mk_since(trs):
+        """按给定交易序列，算每个标的「最近一次被买入 → 至今 / 换出日」的涨跌。
+
+        ★ 2026-10-29 修复（用户审阅指出）：排名表「切换至今」必须与**主口径**
+          （D3+P3+抄底）一致。原来这里固定用基础轮动的 trades，导致抄底换持后
+          排名表仍显示「513100 持仓 18 日」，而 ② 节已写「10-26 已换出 → 588170」，
+          两处数字直接打架。故改成传参，基础口径与主口径各算一份。
+        """
+        out = {}
+        for c in panel.columns:
+            last_in = None
+            for t in trs:
+                if t.get("to") == c:
+                    last_in = t["date"]
+            if last_in is None:
+                continue
+            # 找 last_in 之后的第一笔「换成别人」的交易
+            last_out = None
+            for t in trs:
+                if t["date"] > last_in and t.get("frm") == c:
+                    last_out = t["date"]
+                    break
+            end_s = last_out or asof
+            p0, p1 = _px(c, last_in), _px(c, end_s)
+            ret_c = (p1 / p0 - 1.0) if (p0 and p1) else None
             n_days = 0
-        since[c] = dict(code=c, start=last_in, end=end_s, days=n_days,
-                        ret=ret_c, holding=(last_out is None))
+            try:
+                i0 = int(dates.searchsorted(pd.Timestamp(last_in), side="left"))
+                i1 = int(dates.searchsorted(pd.Timestamp(end_s), side="left"))
+                n_days = max(0, i1 - i0)
+            except Exception:                              # noqa: BLE001
+                n_days = 0
+            out[c] = dict(code=c, start=last_in, end=end_s, days=n_days,
+                          ret=ret_c, holding=(last_out is None))
+        return out
+
+    since = _mk_since(trades)
 
     # ---------------- D3 单笔止损「影子组合」（仅供切换参考，不参与主策略） ----------------
     try:
@@ -323,6 +336,14 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
                             base_trades=trades, d3_navs=d3["navs"], n_rows=n)
         except Exception as e:                 # noqa: BLE001
             p3 = dict(error=f"{type(e).__name__}: {e}")
+
+    # 主口径（D3+P3+抄底）的「切换至今」——排名表优先用这一份，保证与 ② 节同口径
+    since_live = None
+    if p3 and p3.get("ok") and p3.get("trades"):
+        try:
+            since_live = _mk_since(p3["trades"])
+        except Exception:                      # noqa: BLE001
+            since_live = None
 
     # ---- 「我的实盘跟踪」（2026-10-26 用户需求）----
     # 从用户正式启用日（my_since.json 的 since）起，按**当前生产口径**（D3+P3+抄底）
@@ -375,7 +396,7 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
         asof=asof, data_end=data_end, hist_end=hist_end,
         ext_note=ext_note, extended=bool((hist_end is not None)
                                         and (panel.index.max() > hist_end)),
-        since=since, d3=d3, p3=p3, mine=mine,
+        since=since, since_live=since_live, d3=d3, p3=p3, mine=mine,
         adj_csv=path,
         n=n, pool_size=len(pool), defensive=defensive, cost=cost,
         have_bench=have_bench, base=BASE_DATE,
@@ -812,6 +833,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         weak_cd=bl.LIVE_COMPOSITE.get("weak_cd", 0),
         weak_min_pool=bl.LIVE_COMPOSITE.get("weak_min_pool", 0),
         cash_days=cash_days, rows=p3_rows,
+        trades=r["trades"],          # 供排名表「切换至今」按主口径复算（2026-10-29）
         cash_src=cash_src, cash_reason=cash_reason,
         cash_until=cash_until, cash_ret=cash_ret, cash_note=cash_note,
         weak_state=weak_state,

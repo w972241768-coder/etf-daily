@@ -197,9 +197,11 @@ def _combo_summary_html(recent):
         # 为什么必须提示：切到 E3 后「抄底持仓进锁定期、D3 不再介入」，
         # 10-27 那条「D3 止损→空仓」的指令被撤销，页面会显示「继续持 588170 / 无需动作」，
         # 但用户很可能已经按旧口径清仓了。不提示会让人以为不用买。
+        # ★ 2026-10-29（用户审阅指出）：这条备忘只对「当天按旧口径清仓」的人有意义，
+        #   3 天后就是挡视线的置顶广告 ⇒ 只显示 10-28 ~ 10-30 三天，之后自动消失。
         _migrate_html = ""
         _asof_s = str(recent.get("asof") or "")
-        if "2026-10-28" <= _asof_s <= "2026-11-05":
+        if "2026-10-28" <= _asof_s <= "2026-10-30":
             _migrate_html = (
                 '<div class="migr"><b>⚠ 口径已变更（2026-10-28）</b>：'
                 '抄底持仓改为<b>锁定期</b> —— 期内 D3 / P3 不再介入，'
@@ -283,7 +285,7 @@ def _combo_summary_html(recent):
         _cal = (p3.get("calmar") if p3.get("ok") else None) or base_pack.get("calmar")
         if _cal:
             pill += (f'<span class="pillcal">　历史 Calmar <b>{_cal:.2f}</b></span>')
-        _det_open = "" if pill_cls == "ok" else " open"
+        _det_open = ""      # 2026-10-29：回测对比表一律默认折叠（用户要求），不再按口径自动展开
 
         _wstate_bar = _wstate_html(((recent.get("p3") or {}).get("weak_state")))
         return f"""<div class="cbsum {pill_cls}">
@@ -2051,8 +2053,12 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         return float("nan")
 
     # 「切换至今」：该标的最近一次被系统买入 → 至今（或已换出）的价格涨跌。
-    # 数据来自「② 近期换仓复盘」的同一次长历史回测（recent["since"]），保证两处数字一致。
-    _since = (recent or {}).get("since") or {}
+    # ★ 2026-10-29 修复（用户审阅指出）：必须绑定**主口径 D3+P3+抄底**的交易序列。
+    #   原来用基础轮动（since），抄底换持后仍显示「513100 持仓 18 日」，
+    #   与 ② 节「10-26 已换出 → 588170」直接打架。since_live 由 recent_rotations
+    #   用主口径 trades 复算；缺失时才退回基础口径。
+    _since = ((recent or {}).get("since_live")
+              or (recent or {}).get("since") or {})
     _asof = (recent or {}).get("asof") or pivot
 
     def _since_cell(code):
@@ -2090,25 +2096,36 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
 
     rank_rows = []
     # 「② 近期换仓复盘」同口径复算出的当前真实持仓（用于排名表里标出「你现在拿着哪只」）
+    # ★ 2026-10-29：必须取**主口径**（p3）的最后一笔，否则抄底换持后仍标着基础轮动的 513100。
+    _main_rows = (((recent or {}).get("p3") or {}).get("rows")
+                  or (recent or {}).get("rows") or [])
     _held_row = None
-    if recent and not recent.get("error"):
+    if recent and not recent.get("error") and _main_rows:
         try:
-            _held_row = (recent["rows"][-1] or {}).get("to")
+            _held_row = (_main_rows[-1] or {}).get("to")
         except Exception:                              # noqa: BLE001
             _held_row = None
+    # 抄底锁定期（2026-10-29）：排名表在锁定期内不标「头名」为当前持仓，
+    # 改为高亮真正持有的末位标的，并给横幅换一套「暂不随头名换仓」的措辞。
+    _ws_lock = (((recent or {}).get("p3") or {}).get("weak_state")
+                if (recent and not recent.get("error")) else None)
+    _lock_code = str((_ws_lock or {}).get("code") or "") or None
     for i, r in enumerate(ranked, 1):
         _sc, _scl, _stip, _scl2, _smob = _since_cell(r.code)
         _rcls = []
-        if i == 1:
+        # 锁定期内头名不是持仓 → 不再给 row-top1 蓝边，避免「第 1 行=你在拿的」错觉
+        if i == 1 and not _lock_code:
             _rcls.append("row-top1")
         if _held_row and r.code == _held_row:
             _rcls.append("row-held")
         _tr = ' class="%s"' % " ".join(_rcls) if _rcls else ""
+        _now_tag = ('<span class="tag nowheld">👈<span class="nwt"> 当前持仓</span></span>'
+                    if (_held_row and r.code == _held_row) else "")
         rank_rows.append(
             f'<tr{_tr}>'
             f'<td class="num c-idx">{i}</td>'
             f'<td class="mono c-code">{r.code}</td>'
-            f'<td class="c-nm">{html.escape(r.name)}'
+            f'<td class="c-nm">{html.escape(r.name)}{_now_tag}'
             f'<span class="code-sub">{r.code}</span></td>'
             f'<td class="num c-m20" style="color:{_color(r.momentum[window])};font-weight:600">'
             f'{_fmt(r.momentum[window])}</td>'
@@ -2331,7 +2348,7 @@ style="color:{CLR_STRAT};font-weight:700">基础轮动</span> / <span
 style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅作参照</b>）·
 柱体<b>向上=盈利、向下=亏损</b>；柱上数字沿用 <span style="color:{RED}">红涨</span>
 <span style="color:{GREEN}">绿跌</span> · 同一刻度 · 悬停看当年最大回撤 · 前复权长历史回测
-<br><span class="ytdmdd">各年最大回撤（默认口径 D3+P3）：{_mdd_line}</span></div>
+<br><span class="ytdmdd">各年最大回撤（默认口径 D3+P3+抄底）：{_mdd_line}</span></div>
 </div>"""
 
     # 阶梯表
@@ -2388,9 +2405,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     # 「② 近期换仓复盘」与本报告同规则同口径复算出的「当前应持仓」，
     # 用于粘性带平手时判定"保留谁"——阶梯推演只知窗口内的列链，不知道真实上一持仓。
     _prev_held = None
-    if recent and not recent.get("error"):
+    if recent and not recent.get("error") and _main_rows:
         try:
-            _prev_held = (recent["rows"][-1] or {}).get("to")
+            _prev_held = (_main_rows[-1] or {}).get("to")
         except Exception:                              # noqa: BLE001
             _prev_held = None
     # def_code / def_nm / ve_state / ve_ok / def_now_txt 已在上方（排名表前）算好，此处直接复用。
@@ -2613,6 +2630,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
         f"<td>{_act_txt}</td>"
         f"<td class='rs'>{_why_txt}</td></tr>",
     ]
+    _def_fold = []          # 未过热时收进折叠框的防守位/策略二参考行（2026-10-29）
     # ---- 防守位行：只有真进入防守期（过热熔断）才给出"应该持有/应该持币"的强指令 ----
     if overheated:
         if ve_ok:
@@ -2637,8 +2655,10 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                 f"<td><b class='warn'>维持持币</b></td>"
                 f"<td class='rs'>价值引擎已给出卖出信号，防守期不买防守位 → 持币</td></tr>")
     else:
-        # 正常轮动：防守位只作一行灰色参考，不给动作指令，避免误以为要卖出手上的头名
-        guide_rows.append(
+        # 正常轮动：防守位只作灰色参考，不给动作指令，避免误以为要卖出手上的头名。
+        # ★ 2026-10-29（用户审阅指出）：这 3 行 + 「✅ 该建仓」绿勾在未过热时纯属背景噪音，
+        #   整体折叠进表格下方的 <details>，需要时才展开。
+        _def_fold.append(
             f"<tr class='defdim defmain'><td class='mono'>{def_code}</td>"
             f"<td class='nm2'>{html.escape(def_nm)} "
             f"<span class='tag def'>防守位</span></td>"
@@ -2647,7 +2667,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             f"或领先 &gt; {overheat_lead:.0f}pp（过热熔断）时才启用；"
             f"届时按下方「防守位操作指南」执行</td></tr>")
         if _grow:
-            guide_rows.append(_grow)
+            _def_fold.append(_grow)
     if overheated and ve_ok:
         # 防守期但价值引擎允许持有 → 若当前是持币状态, 需要建仓防守位
         guide_rows.append(
@@ -2657,17 +2677,38 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             f"<td class='rs'>价值引擎判定「{ve_state}」（偏离 MA200 {ve_ratio:+.2f}%），"
             f"防守期应持有防守位而非持币</td></tr>")
     # ★ 512890 策略二：紧跟在 512040 防守位之后（用户要求「在 512040 策略的下面」）
+    # 2026-10-29：未过热且无动作（zone=mid）时一并收进折叠框；有买卖信号时仍平铺在表里。
+    _tv_mid = str((ve_track or {}).get("zone") or "") == "mid"
     if _trow:
-        guide_rows.append(_trow)
+        if (not overheated) and _tv_mid:
+            _def_fold.append(_trow)
+        else:
+            guide_rows.append(_trow)
     guide_rows.append(
         f"<tr><td>其他</td><td class='nm2'>既非今日建议持仓、也非防守位</td>"
         f"<td>换到 <span class='mono'>{final_code}</span> {html.escape(final_nm)}</td>"
         f"<td class='rs'>换仓成本按双边约 0.2% 估算</td></tr>")
+
+    # ---- 折叠框：未过热时的防守位 / 策略二细节（2026-10-29 用户要求「藏绿勾」）----
+    _def_fold_html = ""
+    if _def_fold:
+        _fold_sum = (f'🛡 防守位 {def_code} {html.escape(def_nm)} · 本轮无需关注'
+                     + ('（策略二 512890 继续持有）' if (_trow and _tv_mid) else '')
+                     + '<span class="dfh">展开看判定细节</span>')
+        _def_fold_html = (
+            f'<details class="defcol"><summary>{_fold_sum}</summary>'
+            '<table class="gtbl"><thead><tr><th>代码</th><th>标的</th>'
+            '<th>今日动作</th><th>依据</th></tr></thead>'
+            f'<tbody>{"".join(_def_fold)}</tbody></table></details>')
     # ★ 2026-10-26：正常轮动日这段文字是**第三遍重复**（状态条一遍、这里一遍、
     #   操作表首行「依据」列一遍），三句在说同一件事：「持 513100、无需动作、未过热」。
     #   故只在「非正常轮动」（过热熔断 / 粘性带保留旧仓 / 空仓）时才保留文字解释——
     #   那几种情形下原因需要展开，且表格依据列写不下。
-    _guide_normal = (not overheated) and final_code == eff0 and final_nm == eff0_nm
+    # ★ 2026-10-29（用户审阅指出）：抄底日这段文字是第 4 遍重复
+    #   （胶囊一遍、抄底状态条一遍、操作表首行依据一遍、这里再一遍），
+    #   手机首屏被同一件事刷满 → 抄底持仓期整段不输出。
+    _guide_normal = (((not overheated) and final_code == eff0 and final_nm == eff0_nm)
+                     or _weak_active)
     if _guide_normal:
         guide_note = ""
     else:
@@ -3115,8 +3156,30 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     # ---- 粘性带安全垫（2026-10-25）：一眼回答「今天收盘前会不会换仓」----
     # 用户原来要自己心算「第1名 − 第2名 − 粘性带」，现在直接给结果。
     # 距换仓 = lead − sticky：次名相对头名追近这么多 pp，才会触发换仓判定。
+    # ★ 2026-10-29（用户审阅指出）：抄底锁定期内「头名一变就可能换仓」是**假命题**
+    #   —— 期内只看 588170 的两个出口，榜首再怎么变都不会调仓。
+    #   故锁定期优先渲染「锁定期横幅」，不再输出粘性带话术。
     _sr = []
-    if overheated:
+    if _ws_lock and _lock_code:
+        _lnm = str(_ws_lock.get("name") or "")
+        _lpos = next((i for i, r in enumerate(ranked, 1) if r.code == _lock_code), None)
+        _ldays = int(_ws_lock.get("days") or 0)
+        _llim = int(_ws_lock.get("limit") or 0)
+        _lrem = _ws_lock.get("remain")
+        _lpos_txt = f"#{_lpos} " if _lpos else ""
+        _sr.append(f'<span class="sr-t">🔒 抄底锁定期 · 持仓 {_lpos_txt}{_lock_code} '
+                   f'{html.escape(_lnm)}</span>')
+        if _llim:
+            _sr.append(f'<span>时间出口 <b>{_ldays}/{_llim}</b> 日'
+                       + (f'<i>剩 {int(_lrem)} 日</i>' if _lrem is not None else "") + '</span>')
+        if _ws_lock.get("use_ma20") and _ws_lock.get("dev") is not None:
+            _sr.append(f'<span>价格出口 回 MA20 还差 '
+                       f'<b>{abs(float(_ws_lock["dev"])):.2f}pp</b></span>')
+        _sr.append(f'<span class="dimtxt2">锁定期内 D3 / P3 不介入；榜首 {head1.code} '
+                   f'{html.escape(head1.name)}（动横{window} {head1.momentum[window]:+.2f}%）'
+                   f'暂不触发调仓</span>')
+        _saferow_html = '<div class="saferow lock">' + "".join(_sr) + "</div>"
+    elif overheated:
         _sr.append(f'<span class="sr-t">🔥 头名已过热熔断</span>')
         _sr.append(f'<span>乖离 <b>{head1.dev:+.2f}%</b> 或 领先 <b>{lead:+.2f}pp</b> 触线 → '
                    f'<b>今日切防守/持币</b>（见上方今日操作）</span>')
@@ -3146,33 +3209,14 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                            f'<i>（{_w}口径）</i></span>')
         _saferow_html = '<div class="saferow">' + "".join(_sr) + "</div>"
 
-    # ---- 抄底影子信号（2026-10-26）：**不改变默认口径**，只在全池转负时给参照 ----
-    # 研究结论：主选池 9 只动横20 全为负 → 买「排名最后一名」，主窗 11.0196→13.6360
-    # （+2.62），最大回撤不变（−15.12%），分年度 7/8 年跑赢、无一年为负，且零阈值参数。
-    # ⚠️ 但它不降低回撤、且属反直觉操作，故只作提示，不写进「今日应持」。
+    # ---- 抄底影子信号卡片：2026-10-29 已删除（用户审阅指出）----
+    # 「全池转负 → 买末位」自 2026-10-28 起已是默认口径（D3+P3+抄底）的一部分，
+    # 再挂一张「参照，不改默认口径」的卡片属于历史遗留：
+    #   · 与今日操作里的抄底结论重复第 5 遍，手机首屏白占半个屏；
+    #   · 卡片里的回测净值（11.0196 → 13.6360）与上方表格（8.8255）口径不同，互相打架。
+    # 保留 _all_neg 供后续可能的复用，不再渲染。
     _all_neg = bool(ranked) and all(r.momentum[window] < 0 for r in ranked)
     _weak_html = ""
-    if _all_neg and len(ranked) >= 2:
-        _wr = ranked[-1]
-        _wv = _wr.momentum[window]
-        _n_neg = sum(1 for r in ranked if r.momentum[window] < 0)
-        if _wr.code == final_code:
-            _wtxt = (f'当前持有<b>{html.escape(_wr.code)} {html.escape(_wr.name)}</b>'
-                     f'（正是最弱那只），与抄底信号方向一致 → 无需额外动作')
-            _wcls = "ok"
-        else:
-            _wtxt = (f'历史规律指向买最弱：<b>{html.escape(_wr.code)} '
-                     f'{html.escape(_wr.name)}</b>（动横{window} {_wv:+.2f}%，'
-                     f'排名 {len(ranked)}/{len(ranked)}）'
-                     f'，与上方默认口径的 {html.escape(str(final_code))} 不同')
-            _wcls = "diff"
-        _weak_html = f"""<div class="weaksig {_wcls}">
-<div class="wkh">🔍 抄底影子信号 · 全池转负 <span class="sphs">（参照，不改默认口径）</span></div>
-<div class="wkb">主选池 <b>{_n_neg}/{len(ranked)}</b> 只动横{window} 为负（最高 {head1.momentum[window]:+.2f}%，最弱 {_wv:+.2f}%）。{_wtxt}。</div>
-<div class="wkf">依据：2019-2026 主选池回测，此规则净值 <b>11.0196 → 13.6360</b>（+2.62）、
-最大回撤 <b>不变 −15.12%</b>、分年度 <b>7/8 年跑赢且无一年为负</b>、无阈值参数。
-<span class="dimtxt">⚠️ 属「增收益」而非「降回撤」，且为反直觉操作；是否执行由你决定。</span></div>
-</div>"""
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -3346,18 +3390,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .cbdet .tblwrap{{margin-top:7px}}
   .cbsh{{font-size:12px;font-weight:600;color:#202020;margin-bottom:5px}}
   .cbsh span{{font-weight:400;color:#6c717f;font-size:11px}}
-  /* 抄底影子信号（2026-10-26）：仅在「主选池动横20 全为负」当天出现，独立于默认口径 */
-  .weaksig{{margin:9px 0 0;border:1px solid #dbe6fb;border-left:3px solid #6d8bd8;
-    border-radius:9px;padding:8px 11px;background:#f7faff;font-size:11.5px;
-    line-height:1.68;color:#3b4a63;white-space:normal}}
-  .weaksig.diff{{border-left-color:#d4380d;background:#fff8f6}}
-  .weaksig.ok{{border-left-color:#2e9e5b;background:#f5fbf7}}
-  .wkh{{font-weight:700;color:#2c4fb8;margin-bottom:3px}}
-  .weaksig.diff .wkh{{color:#b3351a}}
-  .weaksig.ok .wkh{{color:#1f7a48}}
-  .wkb b{{color:#111}}
-  .wkf{{margin-top:4px;color:#6c717f;font-size:11px}}
-  .wkf b{{color:#42474f}}
+  /* 抄底影子信号卡片样式已于 2026-10-29 删除（该卡片已随口径转正一并移除） */
   table.cbst{{font-size:11.5px;margin:0;width:100%}}
   table.cbst th,table.cbst td{{padding:3px 5px}}
   table.cbst tr.hi td{{background:#fdf2f7}}
@@ -3545,9 +3578,25 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .saferow b{{color:#202020}}
   .saferow i{{font-style:normal;color:#8b93a1;margin-left:3px;font-size:10.5px}}
   .saferow .dimtxt2{{color:#8b93a1}}
+  /* 抄底锁定期横幅（2026-10-29）：琥珀色系，与「过热熔断」的橙红区分开 */
+  .saferow.lock{{background:#fffbf0;border-color:#ffe3b0;color:#7a5217}}
+  .saferow.lock .sr-t{{color:#b45309}}
+  /* 「👈 当前持仓」小标（2026-10-29）：锁定期内持仓可能是末位而非头名 */
+  .tag.nowheld{{background:#eaf7ee;color:#1f7a45;border:1px solid #c8ead4;
+    font-weight:700;margin-left:6px;white-space:nowrap}}
   table.rtbl tr.row-top1 td:first-child{{border-left:3px solid #3d57e5}}
   table.rtbl tr.row-held td{{background:#f1faf4}}
   table.rtbl tr.row-held td:first-child{{border-left:3px solid #2e9e5b}}
+  /* 未过热时折叠防守位细节（2026-10-29）：默认收起，避免背景噪音占首屏 */
+  details.defcol{{margin:8px 0 0;background:#fafbfd;border:1px solid #e6e9ef;
+    border-radius:10px;padding:0 10px}}
+  details.defcol>summary{{cursor:pointer;font-size:12px;color:#5b6472;
+    padding:8px 0;list-style:none;outline:none}}
+  details.defcol>summary::-webkit-details-marker{{display:none}}
+  details.defcol>summary::before{{content:"▸ ";color:#98a1ad}}
+  details.defcol[open]>summary::before{{content:"▾ "}}
+  details.defcol .dfh{{color:#9aa3b0;font-size:11px;margin-left:8px}}
+  details.defcol table.gtbl{{margin:2px 0 10px}}
   table.rtbl th,table.rtbl td{{padding:6px 6px}}
   table.rtbl td.vcell{{white-space:normal;min-width:130px}}
   /* ①「切换至今」列：买入日距今 >120 交易日 → 数字淡色 + 虚线下划线，
@@ -3615,6 +3664,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
       font-weight:400;line-height:1.2;margin-top:1px}}
     table.rtbl .c-since .since-sub{{display:block;font-size:10px;color:#8b93a1;
       font-weight:400;line-height:1.2;margin-top:1px}}
+    /* 「👈 当前持仓」在窄屏只留箭头，避免撑宽名称列（行底色仍标记持仓） */
+    table.rtbl .tag.nowheld .nwt{{display:none}}
+    table.rtbl .tag.nowheld{{padding:0 3px;font-size:10px;margin-left:3px}}
     .hspan{{font-size:11px;padding:5px 8px;gap:2px 10px}}
     .hdetb .v,.hspan .v{{white-space:normal}}
     .hdet>summary{{font-size:10.5px}}
@@ -3655,7 +3707,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 {('<div class="note" style="margin-bottom:8px">' + guide_note + '</div>') if guide_note else ''}
 <table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead>
 <tbody>{''.join(guide_rows)}</tbody></table>
-{_weak_html}
+{_def_fold_html}
 </section>
 
 <div class="lead">以下为主选池结论（第 ① ~ ⑤ 节），备选观察池在报告末尾第 ⑥ 节、与主选池完全独立。
