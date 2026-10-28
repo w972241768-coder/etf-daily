@@ -121,6 +121,62 @@ table.d3tbl.sm{font-size:11.5px}
 """
 
 
+def _wstate_html(ws) -> str:
+    """抄底锁定状态条（2026-10-28 用户需求：像 D3 一样显示「现在处在什么状态」）。
+
+    设计要点（2026-10-28 二次改版）：
+      · 两个离场出口量纲不同（时间 vs 价格），**分行并列**才读得出「哪个先到」；
+      · 时间出口给进度条（2/10 天），价格出口给「还差多少 pp」；
+      · 用橙色系但只做左侧细边，避免和红色告警抢注意力。
+    数据来自 recent["p3"]["weak_state"]，不处于锁定期就返回空串。
+    """
+    if not ws:
+        return ""
+    days = int(ws.get("days") or 0)
+    lim = int(ws.get("limit") or 0)
+    remain = ws.get("remain")
+    dev = ws.get("dev")
+    pnl = ws.get("pnl")
+    pct = (min(100.0, days / lim * 100) if lim else 0.0)
+    pc = (RED if (pnl or 0) > 0 else (GREEN if (pnl or 0) < 0 else "#42474f"))
+
+    rows = []
+    # ① 时间出口
+    if lim:
+        rows.append(
+            '<div class="wrow"><span class="wlab">时间出口 · 满 '
+            f'{lim} 日</span>'
+            f'<span class="wnum">{days} / {lim}</span>'
+            f'<span class="wbar"><i style="width:{pct:.0f}%"></i></span>'
+            f'<span class="wrest">还差 <b>{int(remain or 0)}</b> 个交易日</span></div>')
+    # ② 价格出口
+    if ws.get("use_ma20") and dev is not None:
+        _far = "已回到 MA20 上方" if dev >= 0 else f"还差 <b>{abs(dev):.2f}</b>pp"
+        rows.append(
+            '<div class="wrow"><span class="wlab">价格出口 · 回 MA20</span>'
+            f'<span class="wnum">{dev:+.2f}%</span>'
+            '<span class="wbar flat"><i></i></span>'
+            f'<span class="wrest">需回到 <b>0%</b> 上方（{_far}）</span></div>')
+    # ③ 浮动盈亏
+    _pnl_row = ""
+    if pnl is not None and ws.get("entry_px"):
+        _pnl_row = (f'<div class="wpnl">建仓 <b>{ws["entry_px"]:.3f}</b>'
+                    f'（{html.escape(str(ws.get("entry_date") or ""))}）'
+                    f' → 现价 <b>{(ws.get("px") or 0):.3f}</b> '
+                    f'<b style="color:{pc}">{pnl:+.2f}%</b></div>')
+    return (
+        '<div class="wstate">'
+        '<div class="whd"><span class="wbadge">🎯 抄底持仓中</span>'
+        f'<b>{html.escape(str(ws.get("code") or ""))} '
+        f'{html.escape(str(ws.get("name") or ""))}</b>'
+        '<span class="wtip">锁定期内 D3 / P3 都不介入</span></div>'
+        f'{"".join(rows)}'
+        f'{_pnl_row}'
+        '<div class="wnote">满足任一出口即换回当日第 1 名；'
+        '这是 2026-10-28 起的新口径（旧口径为「亏 3% 由 D3 止损」）。</div>'
+        '</div>')
+
+
 def _combo_summary_html(recent):
     """【今日操作指引】顶部的一眼可见摘要：基础轮动 / D3 / D3+P3 止盈 三方案今日对照。
 
@@ -188,24 +244,15 @@ def _combo_summary_html(recent):
         elif p3.get("hold") == d3.get("base_hold"):
             _same = ("空仓" if p3.get("hold") == "CASH"
                      else f"<b>{html.escape(str(p3_hold_nm))}</b>")
-            concl = (f"默认口径（D3+P3）与基础轮动今日<b>一致</b>：{_same}"
-                     f" → <b>无需任何操作</b>。")
-            if d3.get("hold") != p3.get("hold"):
-                concl += (f"<br><span class=\"dimtxt\">（仅 D3 单独口径给出不同结果"
-                          f"：{html.escape(str(d3_hold_nm))}，不影响执行）</span>")
+            concl = (f"今日持仓 <b>{_same}</b> → <b>无需任何操作</b>。")
             tone = "ok"
         elif p3.get("hold") == "CASH":
-            concl = (f"<b>默认口径要求空仓</b>：基础轮动本应持 "
-                     f"<b>{html.escape(str(base_hold_nm))}</b> → "
-                     f"<b>按 D3+P3 执行：今天不持仓</b>"
-                     f"（该组合净值/回撤均最优，见 ② 卡片）。")
+            concl = ("<b>今日空仓</b>（D3 止损 或 P3 追高触发）→ "
+                     "<b>卖出清仓</b>。")
             tone = "diff"
         else:
-            concl = (f"默认口径与基础轮动<b>不一致</b>：基础轮动持 "
-                     f"<b>{html.escape(str(base_hold_nm))}</b>、"
-                     f"D3+P3 持 <b>{html.escape(str(p3_hold_nm))}</b> → "
-                     f"<b>按 D3+P3 执行：调整为 {html.escape(str(p3_hold_nm))}</b>"
-                     f"（该组合净值/回撤均最优，见 ② 卡片）。")
+            concl = (f"<b>今日调整为 {html.escape(str(p3_hold_nm))}</b>"
+                     f"（D3 / P3 / 抄底 三者叠加后的结果）。")
             tone = "diff"
 
         # ---- 一行胶囊：打开页面第一眼只需要知道「今天持什么 · 要不要动手」----
@@ -221,26 +268,24 @@ def _combo_summary_html(recent):
             pill = "⚠ 默认口径本次未算出 · 暂按基础轮动执行"
         elif _h_p3 == _h_base:
             pill_cls = "ok"
-            pill = (f"✓ 与基础轮动持仓<b>一致</b>（今日 <b>{_h_disp}</b>）→ "
-                    f"<b>无需动作</b>")
+            pill = f"✓ 今日持 <b>{_h_disp}</b> → <b>无需动作</b>"
         elif _weak:
             # 抄底触发：这不是「口径打架」，而是规则主动换持末位，要说得像件事
             pill_cls = "diff"
-            pill = (f"🎯 <b>抄底触发</b>（主选池动横20 全部为负）→ <b>换持末位 {_h_disp}</b>"
-                    f"（基础策略本应持 {html.escape(str(base_hold_nm))}）")
+            pill = (f"🎯 <b>抄底触发</b>（主选池动横20 全部为负）→ "
+                    f"<b>换持末位 {_h_disp}</b>")
         elif _h_p3 == "CASH":
             pill_cls = "diff"
-            pill = (f"⚠ 默认口径要求<b>空仓</b>（基础轮动本应持 "
-                    f"{html.escape(str(base_hold_nm))}）→ <b>今天不持仓</b>")
+            pill = "⚠ 今日<b>空仓持币</b>（D3 止损 或 P3 追高触发）"
         else:
             pill_cls = "diff"
-            pill = (f"⚠ 口径不一致 → <b>按默认口径调整为 {_h_disp}</b>"
-                    f"（基础轮动持 {html.escape(str(base_hold_nm))}）")
+            pill = f"⚠ <b>今日调整为 {_h_disp}</b>（D3 / P3 / 抄底 叠加）"
         _cal = (p3.get("calmar") if p3.get("ok") else None) or base_pack.get("calmar")
         if _cal:
-            pill += f' ｜ 历史 Calmar <b>{_cal:.2f}</b>'
+            pill += (f'<span class="pillcal">　历史 Calmar <b>{_cal:.2f}</b></span>')
         _det_open = "" if pill_cls == "ok" else " open"
 
+        _wstate_bar = _wstate_html(((recent.get("p3") or {}).get("weak_state")))
         return f"""<div class="cbsum {pill_cls}">
 {_migrate_html}
 <div class="cbpill">{pill}
@@ -253,7 +298,8 @@ def _combo_summary_html(recent):
 抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做）。
 三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
-</div>"""
+</div>
+{_wstate_bar}"""
     except Exception:                          # noqa: BLE001
         return ""
 
@@ -345,15 +391,16 @@ def _p3_card_html(p3, recent, cost):
                 act = (f'若按 D3+P3 执行：<b>今天收盘应卖出、转入空仓</b>，'
                        f'到 <b>{back}</b> 收盘再按当日头名买回。')
         elif p3.get("same_base"):
-            state = (f'<span class="d3badge off">与基础轮动一致</span>'
-                     f'今日两者都持 <b>{html.escape(p3["hold_name"])}</b>，<b>无需任何动作</b>')
-            act = ("若按 D3+P3 执行：今天<b>不用操作</b>。"
-                   "区别只在「换出时亏≥3%」与「头名 ROC60 进历史 95 分位」这两种时点多空仓一段时间。")
+            # 2026-10-28 用户要求：不再提「基础轮动」——既然只用这一套口径，
+            # 拿基础策略做对照只会让人分心。
+            state = (f'<span class="d3badge off">持仓已一致</span>'
+                     f'今日持 <b>{html.escape(p3["hold_name"])}</b>，<b>无需任何动作</b>')
+            act = ("今天<b>不用操作</b>。"
+                   "D3 / P3 / 抄底 三条规则各自独立判定，谁触发谁生效。")
         else:
-            state = (f'<span class="d3badge on">持仓不同</span>'
-                     f'D3+P3 持 <b>{html.escape(p3["hold_name"])}</b> ／ '
-                     f'基础轮动持 <b>{html.escape(str(p3.get("base_hold_name") or "—"))}</b>')
-            act = f'若按 D3+P3 执行：今天应调整为 <b>{html.escape(p3["hold_name"])}</b>。'
+            state = (f'<span class="d3badge on">今日调整</span>'
+                     f'按现行口径应持 <b>{html.escape(p3["hold_name"])}</b>')
+            act = f'今天应调整为 <b>{html.escape(p3["hold_name"])}</b>。'
 
         def _n(v, unit="%", sign=True):
             """None/NaN 统一显示「—」，避免卡片出现 nan。"""
@@ -2387,21 +2434,17 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     _weak_active = bool(_p3v.get("weak_active"))
     if _p3v.get("ok") and _p3v.get("hold") and _p3v["hold"] != final_code:
         _ph, _ph_nm = _p3v["hold"], (_p3v.get("hold_name") or "")
-        _base_disp = f"{final_code} {html.escape(final_nm)}"
         if _ph == "CASH":
             # 2026-10-28 用户需求：空仓期要直观显示「已经空仓几天」
             _cd = _p3v.get("cash_days")
             _cd_txt = (f"，<b>已空仓 {int(_cd)} 个交易日</b>"
                        if isinstance(_cd, (int, float)) and _cd > 0 else "")
-            final_note = (f"主口径 D3+P3 处于空仓冷却期{_cd_txt} → <b>今日空仓</b>"
-                          f"（基础策略本应持 {_base_disp}）")
+            final_note = (f"主口径处于空仓冷却期{_cd_txt} → <b>今日空仓</b>")
         elif _weak_active:
-            final_note = (f"主选池动横20 <b>全部为负</b> → 抄底排名末位 "
-                          f"<b>{_ph} {html.escape(_ph_nm)}</b>"
-                          f"（基础策略本应持 {_base_disp}）")
+            # 不再重复「排名末位 XXX」——「今日建议持仓 = XXX」与胶囊已说过（2026-10-28 去重）
+            final_note = "依据：主选池动横20 <b>全部为负</b>，抄底规则取末位"
         else:
-            final_note = (f"主口径调整为 <b>{_ph} {html.escape(_ph_nm)}</b>"
-                          f"（基础策略本应持 {_base_disp}）")
+            final_note = (f"主口径调整为 <b>{_ph} {html.escape(_ph_nm)}</b>")
         final_code, final_nm = _ph, _ph_nm
 
     _g1 = "✓" if head1.dev < 9.0 else "✗"
@@ -2561,8 +2604,8 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     else:
         _act_txt = "<b>无需动作</b>"
         _tag = "<span class='tag rot'>今日建议持仓</span>"
-        _why_txt = ("防守期内" if overheated else "正常轮动（未触发过热熔断）") + \
-                   "，当前持仓已与今日建议一致，不产生交易与成本"
+        _why_txt = ("防守期内" if overheated else "未触发过热熔断") + \
+                   "，持仓已一致 · 无交易"
 
     guide_rows = [
         f"<tr><td class='mono'>{final_code}</td>"
@@ -2634,6 +2677,13 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             #   —— 那时手里是现金，这句话与「今日空仓」直接矛盾。按是否空仓分两种措辞。
             if final_code == "CASH":
                 guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热，"
+                               "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
+                               "下方操作指南已列出备用。</span>")
+            elif _weak_active:
+                # ★ 2026-10-28：抄底时手里是**末位**，不是「排名第一」——
+                #   旧文案在这里直接说错话（用户截图里就撞上了）。
+                guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热，"
+                               "你现在持有的是<b>抄底选出的末位标的</b>（不是头名），"
                                "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
                                "下方操作指南已列出备用。</span>")
             else:
@@ -3255,9 +3305,35 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .cbsum.diff{{border-left-color:#d4380d;background:#fff8f6}}
   .cbsum.warn{{border-left-color:#d4a017;background:#fffdf6}}
   /* 胶囊放大（2026-10-26 用户要求「第一时间看到」）：12.5px → 15px，结论加粗 */
-  .migr{{margin:0 0 9px;padding:10px 12px;background:#fff8f6;border:1px solid #f6d5c8;
-    border-left:3px solid #d4380d;border-radius:9px;font-size:12.5px;line-height:1.75;
-    color:#202020;white-space:normal}}
+  /* 抄底锁定状态条（2026-10-28 二次改版）：左侧细边 + 双出口分行，避免与红色告警抢注意力 */
+  .wstate{{margin:9px 0 0;padding:9px 12px 8px;background:#fffdfa;
+    border:1px solid #eee6dc;border-left:3px solid #d99a4e;border-radius:9px;
+    line-height:1.65;white-space:normal}}
+  .whd{{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;margin-bottom:7px}}
+  .wbadge{{display:inline-block;background:#fdf1e2;border:1px solid #f0d9bd;color:#8a5312;
+    border-radius:5px;padding:0 7px;font-size:11px;font-weight:700}}
+  .wtip{{font-size:10.5px;color:#9aa3ae;margin-left:auto}}
+  /* 双出口：label / 数值 / 条 / 剩余，四列对齐 */
+  .wrow{{display:grid;grid-template-columns:96px 62px 1fr auto;align-items:center;
+    gap:8px;padding:2px 0}}
+  .wlab{{font-size:11.5px;color:#6c717f;white-space:nowrap}}
+  .wnum{{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums;color:#202020;
+    text-align:right;white-space:nowrap}}
+  .wbar{{height:5px;background:#f2ece4;border-radius:3px;overflow:hidden;min-width:50px}}
+  .wbar i{{display:block;height:100%;background:linear-gradient(90deg,#e8b978,#c98336);
+    border-radius:3px}}
+  .wbar.flat{{background:transparent}}
+  .wrest{{font-size:11.5px;color:#5b6472;white-space:nowrap}}
+  .wpnl{{margin-top:6px;padding-top:6px;border-top:1px dashed #ece4d9;font-size:12px;
+    color:#42474f}}
+  .wnote{{margin-top:4px;font-size:10.5px;color:#9aa3ae}}
+  @media(max-width:640px){{.wrow{{grid-template-columns:1fr auto;gap:2px 8px}}
+    .wbar{{grid-column:1 / -1}} .wrest{{grid-column:1 / -1;font-size:11px}}}}
+  /* 口径变更提示：一次性通知而非风险告警，用中性灰蓝，别抢红色警报的注意力 */
+  .migr{{margin:0 0 9px;padding:8px 12px;background:#f7f9fb;border:1px solid #e2e8ef;
+    border-left:3px solid #7b8ea8;border-radius:9px;font-size:11.5px;line-height:1.7;
+    color:#4b5563;white-space:normal}}
+  .pillcal{{font-size:11px;color:#8b93a1;font-weight:400}}
   .cbpill{{font-size:15px;line-height:1.58;color:#202020;white-space:normal;font-weight:500}}
   .cbpill b{{font-weight:800}}
   .cbsum.diff .cbpill{{font-size:15px}}

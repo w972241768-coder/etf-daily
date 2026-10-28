@@ -640,6 +640,10 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 cools=cools, cool_n=cool_days_n,
                 roc_cools=roc_cools, roc_n=roc_days_n,
                 weak_events=weak_events, weak_exit_log=weak_exit_log,
+                # 2026-10-28：暴露「当前是否处于抄底锁定期」——日报要像 D3 一样
+                # 显示抄底现在处在什么状态（第几天 / 距离场还差什么）。
+                weak_hold=weak_hold, weak_hold_i=int(weak_hold_i),
+                weak_entry_px=weak_entry_px,
                 gate_days=gate_days_n, gate_trig=gate_trig_n)
 
 

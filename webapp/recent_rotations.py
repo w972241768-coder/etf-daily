@@ -569,6 +569,42 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                     cash_days = None
                 break
 
+    # ---- 抄底锁定状态（2026-10-28 用户需求：抄底也要像 D3 一样显示「现在处在什么状态」）----
+    # 引擎返回 weak_hold / weak_hold_i / weak_entry_px；这里换算成人类可读的进度：
+    #   已持有几天、距「满 N 日」还差几天、当前乖离多少（回 MA20 上方即离场）、浮盈亏。
+    weak_state = None
+    _wh = r.get("weak_hold")
+    if _wh and _wh != "CASH" and _wh in panel.columns:
+        try:
+            _i0 = int(r.get("weak_hold_i") or 0)
+            # ⚠️ end_i 可能指向 panel 末尾补的「虚拟行」（锚定日+1 自然日、同价），
+            #   直接用会多算 1 天。按 asof 精确落位。
+            _i1 = int(dates.searchsorted(pd.Timestamp(asof), side="right")) - 1
+            _i1 = max(_i0, min(_i1, len(dates) - 1))
+            _days = max(0, _i1 - _i0)
+            _px = panel[_wh].iloc[_i1]
+            _px = float(_px) if not pd.isna(_px) else None
+            _ep = r.get("weak_entry_px")
+            # 乖离 = 收盘 / MA20 − 1（与引擎 sig["dev"] 同口径）
+            _win = panel[_wh].iloc[max(0, _i1 - MA + 1):_i1 + 1]
+            _dev = None
+            if len(_win) == MA and not _win.isna().any() and _px:
+                _dev = (_px / float(_win.mean()) - 1.0) * 100
+            _lim = int(bl.LIVE_COMPOSITE.get("weak_exit_days", 0) or 0)
+            weak_state = dict(
+                code=_wh, name=bl.NAMES.get(_wh, _wh),
+                entry_date=str(dates[_i0].date()),
+                days=_days,
+                limit=_lim,
+                remain=(max(0, _lim - _days) if _lim else None),
+                dev=(round(_dev, 2) if _dev is not None else None),
+                px=_px, entry_px=(float(_ep) if _ep else None),
+                pnl=(round((_px / float(_ep) - 1.0) * 100, 2)
+                     if (_px and _ep) else None),
+                use_ma20=bool(bl.LIVE_COMPOSITE.get("weak_exit_ma20")))
+        except Exception:                          # noqa: BLE001
+            weak_state = None
+
     # ---- 主口径的「近 N 次换仓复盘」（2026-10-28 用户需求）----
     # 原来这张表用的是**基础策略**的换仓，所以抄底买入（10-23）和 D3 止损空仓（10-27）
     # 都看不到，用户以为它「不更新」。改成按主口径（D3+P3+抄底）复算，口径与本页一致。
@@ -778,6 +814,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         cash_days=cash_days, rows=p3_rows,
         cash_src=cash_src, cash_reason=cash_reason,
         cash_until=cash_until, cash_ret=cash_ret, cash_note=cash_note,
+        weak_state=weak_state,
         prev_hold=prev_hold,
         prev_hold_name=("持币" if prev_hold == "CASH"
                         else (bl.NAMES.get(prev_hold, prev_hold) if prev_hold else None)),
