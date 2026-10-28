@@ -8,10 +8,10 @@ name: ETF 轮动日报 · 每日生成
 #      时段一  UTC 04:20 = 北京 12:20 = 南非 06:20
 #      时段二  UTC 04:50 = 北京 12:50 = 南非 06:50
 #      时段三  UTC 07:45 = 北京 15:45 = 南非 09:45（收盘后，用收盘数据）
-#    三个时段都走 jobs.gate 分档判重（2026-10-27 修订）：
-#      时段一/二（盘中版）：北京时间当天已有任意日报提交 → 跳过；
-#      时段三（收盘版）：今天 15:00 收盘后已有日报提交 → 跳过；
-#        若当天只有盘中版（或尚无日报）则放行重跑 → 保证每天必有一份收盘版。
+#    三个时段都走 jobs.gate 时间窗判重（2026-10-28 修订）：
+#      时段一/二（盘中版）：今天 11:50 之后已有提交 → 跳过；否则跑（上午的手动版不会顶掉中午版）
+#      时段三（收盘版）  ：今天 15:00 之后已有提交 → 跳过；否则跑
+#    ⇒ 盘中版、收盘版各自独立刷新一次，互不吞并。
 # 交易日：时段一/时段二为盘中价（新浪快照补末根）；时段三为收盘数据。
 # 周末/非交易日：均为上一交易日收盘。
 
@@ -56,28 +56,22 @@ jobs:
             exit 0
           fi
           last=$(git log -1 --format=%ct -- docs/state.json 2>/dev/null || echo 0)
-          if [ "$SCHEDULE" = "45 7 * * 1-5" ]; then
-            # 时段三（收盘版）：门槛 = 今天 15:00（北京时间收盘）
-            threshold=$(TZ=Asia/Shanghai date -d 'today 15:00' +%s)
-            echo "时段三收盘版判重：state.json 上次提交=$last　今日收盘=$threshold"
-            if [ "$last" -ge "$threshold" ]; then
-              echo "skip=1" >> "$GITHUB_OUTPUT"
-              echo "::notice::今日已有收盘版日报，跳过时段三"
-            else
-              echo "skip=0" >> "$GITHUB_OUTPUT"
-              echo "今日尚无收盘版（仅盘中版或无日报），生成收盘版：$SCHEDULE"
-            fi
+          # 时间窗判重（2026-10-28）：不再按「当天是否有提交」，而是按「窗口内是否已有提交」
+          #   中午节点（时段一/二）：只认今天 11:50 之后的提交 → 早盘/上午的手动版不会顶掉中午版
+          #   收盘节点（时段三）  ：只认今天 15:00 之后的提交
+          # 这样无论 schedule 延迟多久、当天手动跑过几次，各窗口都能各自刷新一次。
+          case "$SCHEDULE" in
+            "45 7 * * 1-5") win="15:00"; label="收盘版" ;;
+            *)              win="11:50"; label="盘中版" ;;
+          esac
+          threshold=$(TZ=Asia/Shanghai date -d "today $win" +%s)
+          echo "$label 判重：state.json 上次提交=$last　门槛=今日$win($threshold)"
+          if [ "$last" -ge "$threshold" ]; then
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "::notice::今日 $win 之后已有日报提交，跳过本次（$SCHEDULE）"
           else
-            # 时段一/二（盘中版）：当天已有任意日报就跳过
-            today_start=$(TZ=Asia/Shanghai date -d 'today 00:00' +%s)
-            echo "盘中版判重：state.json 上次提交=$last　今日零点=$today_start"
-            if [ "$last" -ge "$today_start" ]; then
-              echo "skip=1" >> "$GITHUB_OUTPUT"
-              echo "::notice::北京时间当天已有日报提交（上次 $last），跳过本次：$SCHEDULE"
-            else
-              echo "skip=0" >> "$GITHUB_OUTPUT"
-              echo "今日尚无日报，执行本次：$SCHEDULE"
-            fi
+            echo "skip=0" >> "$GITHUB_OUTPUT"
+            echo "今日 $win 之后尚无日报，执行本次：$SCHEDULE"
           fi
 
   build:
