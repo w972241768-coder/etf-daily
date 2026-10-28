@@ -2586,9 +2586,17 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     else:
         guide_note = f"今日建议持仓 = <b>{final_code} {html.escape(final_nm)}</b>。{final_note}。"
         if not overheated:
-            guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热、你现在持有的是排名第一的轮动 ETF，"
-                           "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
-                           "下方操作指南已列出备用。</span>")
+            # ★ 2026-10-28：空仓（D3/P3 冷却）时不能说「你现在持有的是排名第一的轮动 ETF」
+            #   —— 那时手里是现金，这句话与「今日空仓」直接矛盾。按是否空仓分两种措辞。
+            if final_code == "CASH":
+                guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热，"
+                               "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
+                               "下方操作指南已列出备用。</span>")
+            else:
+                guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热、"
+                               "你现在持有的是排名第一的轮动 ETF，"
+                               "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
+                               "下方操作指南已列出备用。</span>")
 
     # ---- 防守位操作指南（规则常驻报告，不必记；强度随是否进入防守期切换）----
     if ve_state == "数据不足":
@@ -2890,6 +2898,13 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                 _days = rw.get("days", 0) or 0
                 _dtxt = (f"{_days} 日" if _days
                          else '<span class="dimtxt">0 日</span>')
+                # ★ 2026-10-28：空仓段（换到 CASH）不参与指数比较 ——
+                #   现金 vs 指数会显示成「跑输大盘」，属误导，直接标「空仓」。
+                _cash_row = bool(rw.get("cash"))
+                _bench_cell = ('<span class="dimtxt">空仓</span>' if _cash_row
+                               else _fmt(_b))
+                _alpha_cell = ('<span class="dimtxt">—</span>' if (_cash_row or _a is None)
+                               else _fmt(_a, pct=False, nd=2) + "pp")
                 rr_rows.append(
                     "<tr>"
                     f'<td class="num">{rw["idx"]}</td>'
@@ -2900,9 +2915,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                     f'<td class="num" style="font-weight:600">{_dtxt}</td>'
                     f'<td class="num" style="color:{_color(_r)};font-weight:600">'
                     f'{_fmt(_r)}</td>'
-                    f'<td class="num" style="color:{_color(_b)}">{_fmt(_b)}</td>'
+                    f'<td class="num" style="color:{_color(_b)}">{_bench_cell}</td>'
                     f'<td class="num" style="color:{_color(_a)};font-weight:600">'
-                    f'{"-" if _a is None else _fmt(_a, pct=False, nd=2) + "pp"}</td>'
+                    f'{_alpha_cell}</td>'
                     f'<td class="rs" style="min-width:150px">{html.escape(rw["reason"])}</td>'
                     "</tr>")
             # ★ 2026-10-28：Σ 行必须与**上面这张表**同源（明细已改主口径），
@@ -2940,9 +2955,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                 f'{_fmt(_cr)}</td>'
                 f'<td class="num" style="color:{_color(_cb)}">{_fmt(_cb)}</td>'
                 f'<td class="num" style="color:{_color(_ca)};font-weight:700">'
-                f'{"-" if _ca is None else _fmt(_ca, pct=False, nd=2) + "pp"}</td>'
+                f'{"<span class=\"dimtxt\">—</span>" if _ca is None else _fmt(_ca, pct=False, nd=2) + "pp"}</td>'
                 f'<td class="rs" style="min-width:150px">分段 (1+r) 连乘，与上表严格自洽'
-                f'{"；同期上证仅含已平仓段（末段今日刚换仓，无同期数据）" if _c.get("bench_partial") else ""}'
+                f'{"；同期上证只算持仓段（空仓段/末段不计），故不列超额" if _c.get("bench_partial") else ""}'
                 f'</td>'
                 '</tr>')
             _ext_txt = ""

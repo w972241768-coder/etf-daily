@@ -600,12 +600,19 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             _nav_end = float(navs.iloc[-1])
         _nav_start = float(_t["nav"])
         _same = (_d1 == _d0)
+        # ★ 2026-10-28：空仓段（换到 CASH）不参与「同期上证 / 超额」比较 ——
+        #   空仓是 D3/P3 规则强制的冷却，净值不变，拿现金去比指数会显示成
+        #   「跑输大盘」，属误导（实测 10-28 空仓段：策略 -0.00% vs 上证 +0.91%）。
+        _is_cash = (str(_t.get("to") or "") == "CASH")
         if _same:
             _ret = _br = _al = None
         else:
             _ret = (_nav_end / _nav_start - 1.0) if _nav_start > 0 else None
-            _br = _bench_ret(_d0, _d1)
-            _al = (_ret - _br) if (_ret is not None and _br is not None) else None
+            if _is_cash:
+                _br = _al = None
+            else:
+                _br = _bench_ret(_d0, _d1)
+                _al = (_ret - _br) if (_ret is not None and _br is not None) else None
         _days = 0
         if not _same:
             try:
@@ -619,7 +626,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             frm=_t.get("frm"), to=_t.get("to"),
             frm_name=_t.get("frm_name") or _t.get("frm"),
             to_name=_t.get("to_name") or _t.get("to"),
-            ret=_ret, bench=_br, alpha=_al,
+            ret=_ret, bench=_br, alpha=_al, cash=_is_cash,
             reason=_t.get("reason") or "",
             open=(_k == len(_sel) - 1)))
 
