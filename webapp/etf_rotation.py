@@ -137,6 +137,22 @@ def _combo_summary_html(recent):
             return ""
         base_pack = d3.get("base") or {}
 
+        # ---- 口径变更提示（2026-10-28 E3 接入，过渡期 1 周内显示）----
+        # 为什么必须提示：切到 E3 后「抄底持仓进锁定期、D3 不再介入」，
+        # 10-27 那条「D3 止损→空仓」的指令被撤销，页面会显示「继续持 588170 / 无需动作」，
+        # 但用户很可能已经按旧口径清仓了。不提示会让人以为不用买。
+        _migrate_html = ""
+        _asof_s = str(recent.get("asof") or "")
+        if "2026-10-28" <= _asof_s <= "2026-11-05":
+            _migrate_html = (
+                '<div class="migr"><b>⚠ 口径已变更（2026-10-28）</b>：'
+                '抄底持仓改为<b>锁定期</b> —— 期内 D3 / P3 不再介入，'
+                '满足「<b>回 MA20 上方</b>」或「<b>满 10 个交易日</b>」任一条件'
+                '才换回当日第 1 名。<br>'
+                '若你在 10-27 已按旧口径（D3 止损）清仓，<b>今日应按新口径买回</b>；'
+                '页面「当前持 X」是按模型口径推算的，与你的实际账户可能不同，'
+                '<b>请以实际持仓为准</b>。</div>')
+
         def _hold_cell(name, is_cash):
             cls = "cash" if is_cash else "hold"
             return f'<td class="{cls}">{html.escape(str(name or "—"))}</td>'
@@ -226,6 +242,7 @@ def _combo_summary_html(recent):
         _det_open = "" if pill_cls == "ok" else " open"
 
         return f"""<div class="cbsum {pill_cls}">
+{_migrate_html}
 <div class="cbpill">{pill}
 <details class="cbdet"{_det_open}><summary>回测对比 · 规则</summary>
 <div class="tblwrap"><table class="cbst"><thead><tr>
@@ -271,6 +288,39 @@ def _p3_card_html(p3, recent, cost):
         # 它只是底座，不是现在在用的东西。差值改为「叠加 D3 相对仅 P3 的增量」。
         up = p3["total"] - p3o.get("total", 0)
         um = p3["mdd"] - p3o.get("mdd", 0)        # 更接近 0 = 回撤更浅 = 改善
+        # ---- 抄底「何时卖出」说明（2026-10-28 按口径自动切换）----
+        # E3 接入后旧文案（隔夜短打 / 靠 D3 兜底）全部失效，必须跟着引擎常量走，
+        # 避免以后改回旧口径时页面说错话。⚠️ HTML 属性一律用单引号，别用 \" 转义。
+        _lc = bl.LIVE_COMPOSITE
+        _lock_on = bool(_lc.get("weak_exit_ma20") or (_lc.get("weak_exit_days") or 0) > 0)
+        if _lock_on:
+            _ex_parts = []
+            if _lc.get("weak_exit_ma20"):
+                _ex_parts.append("收盘<b>回到自身 MA20 上方</b>"
+                                 "（主要出口，实测 13/16 次）")
+            if (_lc.get("weak_exit_days") or 0) > 0:
+                _ex_parts.append(f"持满 <b>{int(_lc['weak_exit_days'])} 个交易日</b>"
+                                 f"（兜底出口，实测 3/16 次）")
+            if _lc.get("weak_exit_pos"):
+                _ex_parts.append("池内出现动横20 ≥ 0 的标的（轮动转正）")
+            _weak_exit_txt = (
+                "<b>抄底持仓何时卖出</b>（锁定期规则，2026-10-28 起）："
+                "抄底买入后进入锁定期，期内 <b>D3 / P3 都不介入</b>，"
+                "满足下列任一条件即换回<b>当日第 1 名</b>：<br>"
+                + "；<br>".join(f"{'①②③④'[i]} {t}" for i, t in enumerate(_ex_parts))
+                + "。<br><span class='dimtxt'>实测：持有中位 <b>6 个交易日</b>、"
+                  "单笔收益中位 <b>+2.52%</b>、胜率 <b>75%</b>、"
+                  "最大单笔 <b>−3.83%</b>。"
+                  "不再按「池内转正 / 末位换人」离场 —— 实测加「转正」出口"
+                  "反而少 2.3 净值。代价：抄底那笔亏到 3% 也不止损了"
+                  "（等回 MA20 或满 10 日）。</span><br>")
+        else:
+            _weak_exit_txt = (
+                "<b>抄底持仓何时卖出</b>（每天收盘按顺序判断）："
+                "① 池内<b>不再全负</b>（有标的动横20 ≥ 0）→ 次日换回<b>当日第 1 名</b>；"
+                "② 仍全负但<b>末位换人</b> → 换到<b>新的末位</b>；"
+                "③ 仍全负且末位没变 → <b>继续持有</b>，但受 D3 约束："
+                "<b>亏 ≥3% 即止损空仓 5 日</b>。<br>")
         if p3["active"]:
             rem = (f"还剩 <b>{p3['remain']}</b> 个交易日"
                    if p3.get("remain") is not None else "")
@@ -341,20 +391,14 @@ def _p3_card_html(p3, recent, cost):
   </div>
   <details class="d3rd"><summary>规则定义（D3 / P3 / 抄底）</summary>
   <div class="d3rule">主口径 = <b>三条独立规则</b>（各判各的、独立计时，
-  目标持仓优先级 D3 &gt; P3 &gt; 抄底）：<br>
+  目标持仓优先级 D3 &gt; P3 &gt; 抄底；<b>抄底锁定期内 D3 / P3 让位</b>）：<br>
   ① <b>D3 单笔止损</b>（看盈亏）：某笔在换出时相对建仓价亏损 ≥3% ⇒ 空仓 5 个交易日；<br>
   ② <b>P3 追高止盈</b>（不看盈亏）：<b>头名的 60 日动量（ROC60）冲进它自身历史的 95 分位</b>
   ——即已涨到「历史极高位」、动量透支 ⇒ 空仓 20 个交易日；<br>
   ③ <b>抄底</b>（零参数）：主选池 <b>全部</b> 标的动横20 都为负 ⇒ 当日换持<b>排名最后一名</b>
   （不是倒数第二）；{("同一标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 个交易日内不重复抄底；") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}
   池内可用标的少于 {bl.LIVE_COMPOSITE.get('weak_min_pool', 0)} 只时不做（小池子最弱恒为同一只，会连买暴跌品）。<br>
-  <b>抄底持仓何时卖出</b>（每天收盘按顺序判断，2026-10-27 实测 32 段持仓）：
-  ① 池内<b>不再全负</b>（有标的动横20 ≥ 0）→ 次日换回<b>当日第 1 名</b>
-  —— 这是主要出口，<b>20/32 次（62%）</b>；<br>
-  ② 仍全负但<b>末位换人</b>（别的标的跌得更惨）→ 换到<b>新的末位</b>，<b>12/32 次（38%）</b>；<br>
-  ③ 仍全负且<b>末位没变</b>（还是手里这只）→ <b>继续持有</b>，但受 D3 约束：<b>亏 ≥3% 即止损空仓 5 日</b>。<br>
-  <span class="dimtxt">实测持有期：中位 <b>1 个交易日</b>、均值 1.6 天、最长 5 天；该笔收益中位 <b>+0.93%</b>、胜率 <b>78%</b>。
-  ⇒ 抄底是「隔夜短打」，不是「长拿等反弹」；没有「涨多少才卖」的规则，也不需要。</span><br>
+  {_weak_exit_txt}
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
   <span class="dimtxt">三条规则互不替代；下表即为现行口径在该窗口的历史表现。</span></div>
   </details>
@@ -3211,6 +3255,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .cbsum.diff{{border-left-color:#d4380d;background:#fff8f6}}
   .cbsum.warn{{border-left-color:#d4a017;background:#fffdf6}}
   /* 胶囊放大（2026-10-26 用户要求「第一时间看到」）：12.5px → 15px，结论加粗 */
+  .migr{{margin:0 0 9px;padding:10px 12px;background:#fff8f6;border:1px solid #f6d5c8;
+    border-left:3px solid #d4380d;border-radius:9px;font-size:12.5px;line-height:1.75;
+    color:#202020;white-space:normal}}
   .cbpill{{font-size:15px;line-height:1.58;color:#202020;white-space:normal;font-weight:500}}
   .cbpill b{{font-weight:800}}
   .cbsum.diff .cbpill{{font-size:15px}}

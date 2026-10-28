@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """三策略对比回测报告（近 10 年）：基础 / 基础+D3+P3 / 基础+D3+P3+抄底
++ 4 种抄底离场方式（满5日 / 满10日 / 满10日+回MA20 / 轮动转正，2026-10-28 追加）
 
 用户 2026-10-28 要求：验证「加抄底是否真有正反馈」，要全方位对比、月度+年度表格、
 主轮动池、初始净值 1.0、输出 HTML。
@@ -26,6 +27,22 @@ START = "2016-10-26"
 COST = 0.0001
 RED, GREEN, BLUE, GREY, PURPLE, ORANGE = ("#d4380d", "#0f9d58", "#3d57e5",
                                           "#9aa3ae", "#c2185b", "#b45309")
+# 2026-10-28 新增：抄底离场方式的 4 个变体配色
+C_E1, C_E2, C_E3, C_E4 = "#b45309", "#7c3aed", "#0891b2", "#6b7280"
+
+# 抄底「持仓锁定 + 离场条件」的 4 种写法（其余条件与 C 完全相同）。
+# 语义：抄底买入后进入锁定期，期内 target 锁定该标的、D3/P3 不介入，
+#       直到下列条件之一成立才换回当日头名。
+EXITS = [
+    ("E1 满 5 日", dict(weak_exit_days=5), C_E1,
+     "抄底买入后锁 5 个交易日，到期即换回当日头名"),
+    ("E2 满 10 日", dict(weak_exit_days=10), C_E2,
+     "锁 10 个交易日，到期即换回当日头名"),
+    ("E3 满10日 + 回MA20", dict(weak_exit_days=10, weak_exit_ma20=True), C_E3,
+     "满 10 日 或 收盘回到自身 MA20 上方，任一成立即换回当日头名"),
+    ("E4 轮动转正", dict(weak_exit_pos=True), C_E4,
+     "池内出现动横20 ≥ 0 的标的（不再全负）即换回当日头名"),
+]
 BG, FG, MUT, BD = "#eef0f3", "#202020", "#6c717f", "#e2e5ea"
 
 D3P3 = dict(loss_cool=0.03, loss_days=5, roc_q=0.95, roc_days=20,
@@ -175,6 +192,7 @@ def main():
                     calmar=s["calmar"], sharpe=s["sharpe"], sortino=s["sortino"])
     PA, PB, PC = pack(sa, na), pack(sb, nb), pack(sc, nc)
 
+
     # 抄底贡献
     contrib = {y: (yc.get(y, {}).get("ret") or 0) * 100 - (yb.get(y, {}).get("ret") or 0) * 100
                for y in years}
@@ -185,6 +203,12 @@ def main():
     top2 = sorted(contrib.items(), key=lambda kv: -kv[1])[:2]
     top2_pp = sum(v for _k, v in top2)
     top2_share = (top2_pp / tot_pp * 100) if tot_pp else 0
+    # ⚠️ 当其他年份是负贡献时 top2_share 会 >100%（如 196%），直接写百分比很反直觉
+    if tot_pp > 0 and top2_pp <= tot_pp:
+        share_txt = f"占累计贡献的 <b>{top2_share:.0f}%</b>"
+    else:
+        share_txt = (f"<b>已超过</b>累计贡献（其余年份合计 "
+                     f"{tot_pp - top2_pp:+.1f}pp，是拖累）")
 
     def cell(v, d=2, unit="%", color=None, bold=False):
         if v is None or not np.isfinite(v):
@@ -192,6 +216,122 @@ def main():
         c = color if color else "#42474f"
         st = f' style="color:{c};font-weight:700"' if bold else f' style="color:{c}"'
         return f'<td class="num"{st}>{v:+.{d}f}{unit}</td>'
+
+    # ======================================================================
+    # 2026-10-28 新增：抄底「离场方式」4 个变体（锁定期 + 退出条件）
+    #   其余条件（全池动横20 全负触发、买末位、池≥5 只、当日换）与 C 完全相同，
+    #   唯一差别是买入后怎么卖。锁定期内 target 锁定该标的、D3/P3 不介入。
+    # ======================================================================
+    EXR = []
+    for _lab, _kw, _col, _desc in EXITS:
+        _r, _s, _nv = run(panel, dates, pool, dfn, **D3P3, **WEAK, **_kw)
+        EXR.append(dict(label=_lab, desc=_desc, color=_col, r=_r, nv=_nv,
+                        pack=pack(_s, _nv), y=yearly_of(_r["navs"]),
+                        m=monthly_of(_nv),
+                        n_weak=len(_r.get("weak_events") or []),
+                        n_exit=len(_r.get("weak_exit_log") or [])))
+
+    def _dv(v, unit="", d=3):
+        """差值单元格：红涨绿跌（正=更好=红）"""
+        if v is None or not np.isfinite(v):
+            return '<td class="num dim">—</td>'
+        c = RED if v > 5e-4 else (GREEN if v < -5e-4 else "#8b93a1")
+        w = "700" if abs(v) > 5e-4 else "400"
+        return f'<td class="num" style="color:{c};font-weight:{w}">{v:+.{d}f}{unit}</td>'
+
+    def _erow(nm, pk, r, col, hi=False):
+        tdc = f'<td><b style="color:{col}">{nm}</b></td>' if hi else f'<td style="color:{col}">{nm}</td>'
+        bg = ' style="background:#fdf5f9"' if hi else ""
+        fv = f'<b>{pk["final"]:.3f}</b>' if hi else f'{pk["final"]:.3f}'
+        return (f'<tr{bg}>{tdc}<td class="num">{fv}</td>'
+                + _dv(pk["final"] - PB["final"]) + _dv(pk["final"] - PC["final"])
+                + f'<td class="num">{pk["ann"]:+.2f}%</td>'
+                f'<td class="num">{pk["mdd"]:.2f}%</td>'
+                f'<td class="num">{pk["calmar"] or 0:.2f}</td>'
+                f'<td class="num">{pk["sharpe"] or 0:.2f}</td>'
+                f'<td class="num">{len(r.get("weak_events") or [])}</td>'
+                f'<td class="num">{len(r["trades"])}</td></tr>')
+
+    erows = (_erow("B 不加抄底（参照）", PB, B, GREY)
+             + _erow("C +抄底（现状·无锁定）", PC, C, PURPLE, hi=True)
+             + "".join(_erow(e["label"], e["pack"], e["r"], e["color"]) for e in EXR))
+
+    # 两张净值曲线（4 条/张，避免 6 条线糊成一团）
+    curve1 = multi_curve([(nb, "B +D3P3", BLUE, 1.4),
+                          (nc, "C 现状(无锁定)", PURPLE, 1.9),
+                          (EXR[0]["nv"], "E1 满5日", C_E1, 1.6),
+                          (EXR[1]["nv"], "E2 满10日", C_E2, 1.6)],
+                         title="满5日 / 满10日")
+    curve2 = multi_curve([(nb, "B +D3P3", BLUE, 1.4),
+                          (nc, "C 现状(无锁定)", PURPLE, 1.9),
+                          (EXR[2]["nv"], "E3 满10日+回MA20", C_E3, 1.6),
+                          (EXR[3]["nv"], "E4 轮动转正", C_E4, 1.6)],
+                         title="满10日+回MA20 / 轮动转正")
+
+    # 年度柱（6 组，标签用短名）
+    gd_e = {e["label"]: {y: (e["y"].get(y, {}).get("ret") or 0) * 100 for y in years}
+            for e in EXR}
+    # ⚠️ 这里不能用后面才定义的 gd_b / gd_c（会 UnboundLocalError），本地重算
+    _gb = {y: (yb.get(y, {}).get("ret") or 0) * 100 for y in years}
+    _gc = {y: (yc.get(y, {}).get("ret") or 0) * 100 for y in years}
+    ybars2 = year_bars(years, [
+        ("B", _gb, BLUE), ("C", _gc, PURPLE),
+        ("满5", gd_e["E1 满 5 日"], C_E1), ("满10", gd_e["E2 满 10 日"], C_E2),
+        ("10+MA20", gd_e["E3 满10日 + 回MA20"], C_E3),
+        ("转正", gd_e["E4 轮动转正"], C_E4)])
+
+    # 年度表（B / C / E1~E4）
+    yrows2 = []
+    for y in years:
+        vals = [(yb.get(y, {}).get("ret") or 0) * 100,
+                (yc.get(y, {}).get("ret") or 0) * 100]
+        vals += [(e["y"].get(y, {}).get("ret") or 0) * 100 for e in EXR]
+        cells = "".join(cell(v) for v in vals)
+        _mx = max(vals)
+        _win = [["B", "C", "E1", "E2", "E3", "E4"][i] for i, v in enumerate(vals)
+                if abs(v - _mx) < 0.01]
+        _wt = "并列" if len(_win) >= 6 else ("/".join(_win[:2]) if len(_win) > 1
+                                            else _win[0])
+        yrows2.append(f'<tr><td class="mono">{y}</td>{cells}'
+                      f'<td class="num dim">{_wt}</td></tr>')
+
+    # 月度表（B / C / E1~E4）
+    mkeys2 = sorted(set(mb) | set(mc) | {k for e in EXR for k in e["m"]})
+    mrows2 = []
+    for k in mkeys2:
+        vals = [mb.get(k, (None,))[0], mc.get(k, (None,))[0]]
+        vals += [e["m"].get(k, (None,))[0] for e in EXR]
+        cells = "".join(cell(v) for v in vals)
+        mrows2.append(f'<tr><td class="mono">{k}</td>{cells}</tr>')
+
+    # 离场方式汇总（含平均持有天数、单笔中位）
+    def _exit_profile(e):
+        lg = e["r"].get("weak_exit_log") or []
+        if not lg:
+            return "—", "—", "—"
+        dd_ = np.array([x["days"] for x in lg])
+        rr_ = np.array([x["ret"] for x in lg if x["ret"] is not None])
+        med = f"{np.median(rr_):+.2f}%" if len(rr_) else "—"
+        win = f"{(rr_ > 0).mean()*100:.0f}%" if len(rr_) else "—"
+        return f"{np.median(dd_):.0f} 天", med, win
+
+    prof = {e["label"]: _exit_profile(e) for e in EXR}
+    prows = []
+    for e in EXR:
+        h, md, wn = prof[e["label"]]
+        prows.append(
+            f'<tr><td><b style="color:{e["color"]}">{e["label"]}</b></td>'
+            f'<td>{e["desc"]}</td>'
+            f'<td class="num">{e["n_weak"]}</td><td class="num">{e["n_exit"]}</td>'
+            f'<td class="num">{h}</td><td class="num">{md}</td>'
+            f'<td class="num">{wn}</td></tr>')
+    prows = "".join(prows)
+
+    # 最优方案（按净值）
+    _best = max(EXR, key=lambda e: e["pack"]["final"])
+    best_txt = (f'<b style="color:{_best["color"]}">{_best["label"]}</b>'
+                f'（净值 {_best["pack"]["final"]:.3f}，比现状 C '
+                f'{_best["pack"]["final"]-PC["final"]:+.3f}）')
 
     # 年度表
     yrows = []
@@ -268,9 +408,12 @@ td.mono{{font-family:ui-monospace,Menlo,monospace}}
 <h1>基础策略 + D3 + P3 + 抄底 · 回测对比</h1>
 <div class="sub">区间 <b>{d0} ~ {d1}</b>（近 10 年）　主选池 <b>{len(pool)}</b> 只（早期未全部上市，见年度表「池」列）　
 防守位 {dfn}　单边成本 <b>0.01%</b>　前复权　<b>初始净值 1.0</b><br>
-三条曲线：<b style="color:{GREY}">A 基础轮动</b>（只有动横20 选最强 + 粘性带 + 过热熔断）／
+三条基础曲线：<b style="color:{GREY}">A 基础轮动</b>（只有动横20 选最强 + 粘性带 + 过热熔断）／
 <b style="color:{BLUE}">B + D3 单笔止损 + P3 追高止盈</b>／
-<b style="color:{PURPLE}">C + 抄底（全池负→买末位）</b></div>
+<b style="color:{PURPLE}">C + 抄底（全池负→买末位）</b><br>
+<b>另加 4 种抄底离场方式</b>（第七~十节）：
+<b style="color:{C_E1}">E1 满5日</b>　<b style="color:{C_E2}">E2 满10日</b>　
+<b style="color:{C_E3}">E3 满10日+回MA20</b>　<b style="color:{C_E4}">E4 轮动转正</b></div>
 
 <div class="card">
 <div class="cap">一、总览（近 10 年）</div>
@@ -315,7 +458,7 @@ Calmar <b>{(PC['calmar'] or 0)-(PB['calmar'] or 0):+.2f}</b>、最大回撤 <b>{
 <b>⚠ 关于「抄底是否真有正反馈」——数据给出的答案是有条件的「是」，但很不均匀：</b><br>
 · 近 10 年抄底累计贡献 <b>{tot_pp:+.1f}pp</b>（逐年算术和），净值由 {PB['final']:.2f} 提升到 {PC['final']:.2f}；<br>
 · 但贡献<b>高度集中</b>：<b>{top2[0][0]} 年 {top2[0][1]:+.1f}pp</b> + <b>{top2[1][0]} 年 {top2[1][1]:+.1f}pp</b>
-= <b>{top2_pp:+.1f}pp</b>，占累计贡献的 <b>{top2_share:.0f}%</b>；<br>
+= <b>{top2_pp:+.1f}pp</b>，{share_txt}；<br>
 · {len(years)} 个年份里：<b>{pos_y} 年正贡献</b>、<b>{neg_y} 年负贡献</b>、<b>{zero_y} 年零贡献</b>（池子小未触发或全年无机会）；<br>
 · 换句话说：<b>抄底不是「每年多赚一点」的稳定增强，而是「平时不拖后腿、遇到特定行情（2020 疫情暴跌 / 2022 熊市）大幅加分」的尾部期权</b>。
 如果你对「10 年里 8 年看不到它起作用」这件事不接受，那它对你就不算正反馈。
@@ -339,10 +482,78 @@ Calmar <b>{(PC['calmar'] or 0)-(PB['calmar'] or 0):+.2f}</b>、最大回撤 <b>{
 <div class="note">「抄底贡献」= C 当月收益 − B 当月收益。正数=抄底加分，负数=拖累。</div>
 </div>
 
+<div class="card">
+<div class="cap">七、抄底离场方式对比（4 种规则，进场条件与选股完全相同）</div>
+<div class="tblwrap"><table>
+<thead><tr><th>方案</th><th class="num">净值</th><th class="num">vs B</th><th class="num">vs C</th>
+<th class="num">年化</th><th class="num">最大回撤</th><th class="num">Calmar</th><th class="num">Sharpe</th>
+<th class="num">抄底次数</th><th class="num">换仓</th></tr></thead>
+<tbody>{erows}</tbody></table></div>
+<div class="note">
+<b>规则定义</b>（进场完全一致：主选池动横20 全部为负 → 当日买末位，池内可用 &lt;5 只不做）：<br>
+· <b style="color:{C_E1}">E1 满 5 日</b>：抄底买入后锁 5 个交易日，到期即换回当日头名；<br>
+· <b style="color:{C_E2}">E2 满 10 日</b>：锁 10 个交易日，到期即换回当日头名；<br>
+· <b style="color:{C_E3}">E3 满10日 + 回MA20</b>：满 10 日 <b>或</b> 收盘回到自身 MA20 上方，任一成立即离场；<br>
+· <b style="color:{C_E4}">E4 轮动转正</b>：池内出现动横20 ≥ 0 的标的（不再全负）即离场。<br>
+<span class="dim">锁定期内 target 锁定该标的、<b>D3 / P3 都不介入</b>（否则 D3 的 3% 会在第 2 天就把它清掉，
+永远走不到这些出口）。这是与「C 现状」最本质的区别：C 没有锁定期，抄底买完就交给 D3 管。</span>
+</div>
+</div>
+
+<div class="card">
+<div class="cap">八、离场方式 · 净值曲线（起点 1.0，含换仓成本）</div>
+<div style="margin-bottom:4px;font-size:11.5px;color:#8b93a1">① 固定天数：满 5 日 / 满 10 日</div>
+{curve1}
+<div style="margin:14px 0 4px;font-size:11.5px;color:#8b93a1">② 条件触发：满10日+回MA20 / 轮动转正</div>
+{curve2}
+</div>
+
+<div class="card">
+<div class="cap">九、离场方式 · 持仓画像与年度收益</div>
+<div class="tblwrap"><table>
+<thead><tr><th>方案</th><th>离场规则</th><th class="num">触发</th><th class="num">离场</th>
+<th class="num">持有中位</th><th class="num">单笔中位</th><th class="num">胜率</th></tr></thead>
+<tbody>{prows}</tbody></table></div>
+<div class="note">「持有中位」= 每次抄底持仓的交易日数中位数；「单笔中位」= 每笔从建仓到离场的收益中位数（不含卖出成本）。</div>
+<div style="margin-top:14px"></div>
+{ybars2}
+<div class="tblwrap" style="margin-top:8px"><table>
+<thead><tr><th>年份</th><th class="num">B +D3P3</th><th class="num">C 现状</th>
+<th class="num">E1 满5日</th><th class="num">E2 满10日</th><th class="num">E3 10+MA20</th>
+<th class="num">E4 转正</th><th class="num">当年最佳</th></tr></thead>
+<tbody>{''.join(yrows2)}</tbody></table></div>
+</div>
+
+<div class="card">
+<div class="cap">十、离场方式 · 月度收益（%，共 {len(mkeys2)} 个月）</div>
+<div class="tblwrap"><table>
+<thead><tr><th>月份</th><th class="num">B +D3P3</th><th class="num">C 现状</th>
+<th class="num">E1 满5日</th><th class="num">E2 满10日</th><th class="num">E3 10+MA20</th>
+<th class="num">E4 转正</th></tr></thead>
+<tbody>{''.join(mrows2)}</tbody></table></div>
+<div class="note">空仓月收益为 0.00%。表格可横向滚动。</div>
+</div>
+
+<div class="warn">
+<b>★ 四种离场方式的核心结论（{d0} ~ {d1}，最新数据）：</b><br>
+· <b>最优：{best_txt}</b>；<br>
+· <b>「轮动转正」是最差的一条</b>——池内只要有一只标的动横20 转正就离场，而这往往正是反弹刚开始，
+把最肥的一段让掉了；<br>
+· <b>「固定天数」越长越好</b>：满 10 日（{EXR[1]['pack']['final']:.3f}）优于满 5 日（{EXR[0]['pack']['final']:.3f}），
+因为持有期短于 5 天时，抄底吃不到反弹；<br>
+· <b>四种写法的最大回撤完全相同（{EXR[0]['pack']['mdd']:.2f}%）</b>——说明换一种卖法<b>并不能</b>改善回撤，
+那个 −23% 是 2026-10 单笔（588170）造成的，跟怎么卖无关；<br>
+· <span class="dim">所有锁定期写法都把抄底次数从 C 的 {len(C.get('weak_events') or [])} 次压缩到
+{min(e['n_weak'] for e in EXR)}~{max(e['n_weak'] for e in EXR)} 次 —— 锁定期必然减少「连续滚动」的机会，
+这是收益与「明确的卖出规则」之间的取舍。</span>
+</div>
+
 <div class="note">
 口径说明：动横20 选最强 + 粘性带 1.0pp + 过热熔断（乖离&gt;12% 或领先&gt;15pp）；
 D3 = 换出时该笔亏 ≥3% ⇒ 空仓 5 日；P3 = 头名 ROC60 进自身滚动 95 分位 ⇒ 空仓 20 日；
 抄底 = 主选池动横20 全部为负 ⇒ 当日换持末位（可用标的 &lt;5 只时不做）。<br>
+E1~E4 = 抄底买入后进入锁定期（期内 D3/P3 不介入），分别按「满5日 / 满10日 / 满10日或回MA20 /
+轮动转正」离场，其余条件与 C 完全相同。<br>
 早期（2016-2019）主选池只有 3~5 只已上市，与现在的 9 只不是同一个策略，早期数据请打折看待。<br>
 本报告由 make_compare_report.py 生成，仅供研究参考，不构成投资建议。
 </div>

@@ -503,6 +503,9 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                     weak_delay=bl.LIVE_COMPOSITE.get("weak_delay", 0),
                     weak_cd=bl.LIVE_COMPOSITE.get("weak_cd", 0),
                     weak_min_pool=bl.LIVE_COMPOSITE.get("weak_min_pool", 0),
+                    # 抄底离场（2026-10-28 E3 接入）：锁定期 + 满N日/回MA20
+                    weak_exit_ma20=bl.LIVE_COMPOSITE.get("weak_exit_ma20", False),
+                    weak_exit_days=bl.LIVE_COMPOSITE.get("weak_exit_days", 0),
                     **kw)
     navs = r["navs"]
     st = bl.stats(navs)

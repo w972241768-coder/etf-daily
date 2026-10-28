@@ -88,6 +88,23 @@ LIVE_COMPOSITE = dict(
     weak_delay=0,
     weak_cd=0,
     weak_min_pool=5,
+    # ---- 抄底离场规则（2026-10-28 用户拍板接入 E3）----
+    # 抄底买入后进入「锁定期」：期内 target 锁定该标的、**D3/P3 都不介入**，
+    # 直到下列任一条件成立才换回当日头名：
+    #   ① 收盘回到自身 MA20 上方（weak_exit_ma20）
+    #   ② 持满 10 个交易日（weak_exit_days）
+    # 实测（2016-10-26~2026-10-28，主选池 9 只，单边万一）：
+    #   无锁定（旧口径）18.872 / −23.37% / Calmar 1.47 / 抄底 52 次
+    #   E3（本口径）    20.897 / −23.36% / Calmar 1.53 / 抄底 17 次  → +2.025
+    # 离场分布：13 次回 MA20、3 次满 10 日；持有中位 6 日、单笔中位 +2.52%、胜率 75%
+    # ⚠️ 已知取舍（用户 2026-10-28 确认接受）：
+    #   · 抄底那笔亏到 −3% 也不止损了（17 笔里 5 笔曾破 −3%，扛完后平均 −1.5%）；
+    #   · E3 **没有「转正」出口** ⇒ 池内已有标的转正时仍继续持有（17 笔里 11 笔遇到）；
+    #   · 回撤一点没改善（−23.36% vs −23.37%），那个 −23% 是 2026-10 单笔造成，与卖法无关；
+    #   · 最大单笔从 −6.62% 改善到 −3.83%（不再割在跳空最低点）。
+    # 改回旧口径：删掉下面两行即可（weak_exit_days / weak_exit_ma20）。
+    weak_exit_ma20=True,
+    weak_exit_days=10,
 )
 
 
@@ -249,6 +266,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              weak_mode: Optional[str] = None, weak_rank: int = 1,
              weak_delay: int = 0, weak_cd: int = 0, weak_min_pool: int = 0,
              weak_first_d3: bool = False,
+             weak_ma20_entry: bool = False,
+             weak_exit_ma20: bool = False, weak_exit_days: int = 0,
+             weak_exit_pos: bool = False,
              pos_frac: Optional[float] = None,
              add_drop: float = 0.01) -> dict:
     """策略B 状态机 (ROT / DEF)。value_engine=True 时防守期叠加价值引擎择时,
@@ -289,6 +309,12 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     pending_weak: Optional[str] = None    # 抄底模型的「次日买入」待执行标的
     weak_events: List[dict] = []          # 抄底触发明细（研究用）
     weak_cd_map: dict = {}                # 标的 -> 上次抄底日索引（冷却用）
+    # 抄底「持仓锁定」状态（2026-10-28 研究）：建仓后锁定该标的，
+    # 直到 weak_exit_ma20 / weak_exit_days / weak_exit_pos 任一成立才释放。
+    weak_hold: Optional[str] = None
+    weak_hold_i: int = -1
+    weak_entry_px: Optional[float] = None
+    weak_exit_log: List[dict] = []        # 抄底退出事件明细（研究用）
     cool_until = -1                      # 冷却到期日（含），仅 loss_cool 开启时用
     cools: List[dict] = []               # 冷却事件明细
     cool_days_n = 0
@@ -358,11 +384,53 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
         note_cool = ""
         if state == "ROT":
             target = eff_head
+            # ★ 2026-10-28 抄底「持仓锁定」模式（研究）：
+            #   进场可加「末位须在 MA20 下方」；离场改为【回MA20上方 / 满N日 / 轮动转正】任一。
+            #   一旦抄底买入即进入锁定期，期内 target 锁定该标的、**D3/P3 不介入**
+            #   —— 否则 D3 的 3% 会在第 2 天就把它清掉，永远走不到 MA20 / 满N日 那两条出口。
+            _wlock = bool(weak_mode is not None
+                          and (weak_exit_ma20 or (weak_exit_days or 0) > 0
+                               or weak_exit_pos))
+            _wt = None
+            if _wlock and weak_hold is not None:
+                _ex = None
+                _c = weak_hold
+                if _c not in sig["m"]:                 # 已不可交易 -> 强制退出
+                    _ex = "标的不再可交易"
+                elif weak_exit_ma20:
+                    _dv = sig["dev"].get(_c)
+                    if _dv is not None and _dv >= 0:
+                        _ex = "回MA20上方"
+                if _ex is None and weak_exit_days and (i - weak_hold_i) >= weak_exit_days:
+                    _ex = f"满{weak_exit_days}个交易日"
+                if _ex is None and weak_exit_pos:
+                    if weak_mode == "allneg":
+                        _pos_ok = not all(v < 0 for v in sig["m"].values())
+                    else:
+                        try:
+                            _pos_ok = min(sig["m"].values()) > float(weak_mode)
+                        except (TypeError, ValueError):
+                            _pos_ok = False
+                    if _pos_ok:
+                        _ex = "轮动转正"
+                if _ex:
+                    _pnl = None
+                    if (weak_entry_px and _c in panel.columns
+                            and not pd.isna(panel[_c].iloc[i])):
+                        _pnl = round((float(panel[_c].iloc[i])
+                                      / float(weak_entry_px) - 1.0) * 100, 2)
+                    weak_exit_log.append(dict(
+                        date=str(dates[i].date()), code=_c,
+                        name=NAMES.get(_c, _c), reason=_ex,
+                        days=int(i - weak_hold_i), ret=_pnl))
+                    weak_hold = None
+                    weak_entry_px = None
+                else:
+                    _wt = _c                          # 继续锁定持有
             # ★ weak_first_d3：先算「抄底今天会买什么」，再判 D3 的「是否真的换出」。
             #   否则 D3 会按「头名接管」的假设判定换出，而抄底本来会让它继续持有
             #   （2026-10-27：全池仍负、末位还是 588170，D3 却按头名 513100 触发了止损）。
-            _wt = None
-            if weak_first_d3 and weak_mode is not None and sig["rank"]:
+            if _wt is None and weak_first_d3 and weak_mode is not None and sig["rank"]:
                 _wrk = sig["rank"]
                 _ww = _wrk[-weak_rank] if len(_wrk) >= weak_rank else None
                 _wp_ok = len(_wrk) >= max(1, weak_min_pool)
@@ -404,8 +472,8 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                             days=int(np.searchsorted(dates, dates[cool_until]) - i)))
             # ---- P3 追高止盈：头名 ROC(n) 进自身滚动 q 分位 -> 空仓 roc_days 日 ----
             # 与 D3 独立判定、独立计时；目标持仓优先级 D3 > P3（D3 已置 CASH 时不再覆盖）
-            if roc_q is not None and held != "CASH" and i >= roc_until \
-                    and bool(roc_hold.iloc[i]):
+            if roc_q is not None and _wt is None and held != "CASH" \
+                    and i >= roc_until and bool(roc_hold.iloc[i]):
                 roc_until = min(i + roc_days, len(dates) - 1)
                 roc_days_n += 1
                 # ⚠️ 三处口径必须分清（2026-10-25 修）：
@@ -430,7 +498,8 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 if target != "CASH":
                     note_cool = (f" | P3 追高止盈(头名ROC{roc_n} 进历史"
                                  f"{roc_q*100:.0f}分位) → 空仓{roc_days}日")
-            if roc_q is not None and i < roc_until and target != "CASH":
+            if roc_q is not None and _wt is None and i < roc_until \
+                    and target != "CASH":
                 target = "CASH"
                 if not note_cool:
                     note_cool = f" | P3 空仓中(至 {dates[roc_until].date()})"
@@ -438,7 +507,12 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             # weak_mode = "allneg"（全池动横20 均为负）或 数值字符串（最弱者 ≤ 该阈值，如 "-30"）
             # weak_rank = 1 买最后一名 / 2 买倒数第二名（模拟博主选股）
             # weak_delay = 0 当日换持 / 1 当日清仓、次日再买（博主原话「今天清仓、明天抄底」）
-            if weak_mode is not None:
+            if _wt is not None:
+                # 抄底持仓锁定中（2026-10-28）：继续持有，不再重新选标的
+                target = _wt
+                note_cool = ((note_cool + f" | 抄底持有{_wt}") if note_cool
+                             else f" | 抄底持有{_wt}")
+            elif weak_mode is not None:
                 _rk = sig["rank"]
                 _weak = _rk[-weak_rank] if len(_rk) >= weak_rank else None
                 # 保险①：池内可用标的太少时不做抄底（小池子最弱永远是同一只，会连买暴跌品）
@@ -446,6 +520,12 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 _cd_ok = (_weak is not None
                           and weak_cd_map.get(_weak, -10 ** 6) + weak_cd <= i)
                 _pool_ok = len(_rk) >= max(1, weak_min_pool)
+                # 保险③（2026-10-28 新增）：末位须在**自身 MA20 下方**才抄底
+                #   —— 「跌得深」不等于「超跌」，站上 MA20 的最弱往往只是横盘偏弱。
+                _ma_ok = True
+                if weak_ma20_entry and _weak is not None:
+                    _dve = sig["dev"].get(_weak)
+                    _ma_ok = (_dve is not None and _dve < 0)
                 if pending_weak is not None:
                     if target != "CASH":
                         target = pending_weak
@@ -461,7 +541,8 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                             _trig = min(sig["m"].values()) <= float(weak_mode)
                         except (TypeError, ValueError):
                             _trig = False
-                    if _trig and _weak and target != "CASH" and _cd_ok and _pool_ok:
+                    if (_trig and _weak and target != "CASH" and _cd_ok
+                            and _pool_ok and _ma_ok):
                         weak_events.append(dict(
                             date=str(dates[i].date()), code=_weak,
                             name=NAMES.get(_weak, _weak),
@@ -469,6 +550,14 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                         weak_cd_map[_weak] = i
                         if weak_delay == 0:
                             target = _weak
+                            if _wlock:                 # 进入锁定期（2026-10-28）
+                                weak_hold = _weak
+                                weak_hold_i = i
+                                weak_entry_px = (
+                                    float(panel[_weak].iloc[i])
+                                    if (_weak in panel.columns
+                                        and not pd.isna(panel[_weak].iloc[i]))
+                                    else None)
                             note_cool = ((note_cool + f" | 抄底{_weak}") if note_cool
                                          else f" | 抄底{_weak}")
                         else:
@@ -492,6 +581,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                                  if note_cool else " | 全池动横20为负→空仓")
                 target = "CASH"
         else:
+            # 切防守期：抄底锁定状态失效（防守期不做抄底）
+            weak_hold = None
+            weak_entry_px = None
             ve_ok = (not value_engine) or bool(ve_hold.loc[dates[i]])
             target = defensive if ve_ok else "CASH"
             if not ve_ok:
@@ -547,7 +639,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 cash_days=int(sum(1 for _d, t in held_log if t == "CASH")),
                 cools=cools, cool_n=cool_days_n,
                 roc_cools=roc_cools, roc_n=roc_days_n,
-                weak_events=weak_events,
+                weak_events=weak_events, weak_exit_log=weak_exit_log,
                 gate_days=gate_days_n, gate_trig=gate_trig_n)
 
 
