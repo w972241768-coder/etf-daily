@@ -2689,14 +2689,17 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
         f"<td>换到 <span class='mono'>{final_code}</span> {html.escape(final_nm)}</td>"
         f"<td class='rs'>换仓成本按双边约 0.2% 估算</td></tr>")
 
-    # ---- 折叠框：未过热时的防守位 / 策略二细节（2026-10-29 用户要求「藏绿勾」）----
+    # ---- 防守位 / 策略二分组框（2026-10-29 用户要求「藏绿勾」→ 同日改为**默认展开**）----
+    # ⚠️ 用户实际持有 512040 与 512890 两只基金，需要每次打开页面就能看到它们的
+    #    MA200 偏离 / 买线距离 / 状态，**不能默认藏起来**。
+    #    故这里保留分组标题（一眼看出是这两只），但默认 open，仍可手动点开/收起。
     _def_fold_html = ""
     if _def_fold:
-        _fold_sum = (f'🛡 防守位 {def_code} {html.escape(def_nm)} · 本轮无需关注'
-                     + ('（策略二 512890 继续持有）' if (_trow and _tv_mid) else '')
-                     + '<span class="dfh">展开看判定细节</span>')
+        _fold_sum = (f'🛡 防守位 {def_code} {html.escape(def_nm)}'
+                     + (' · 策略二 512890 红利低波' if (_trow and _tv_mid) else '')
+                     + '<span class="dfh">持仓实时跟踪 · 点击可收起</span>')
         _def_fold_html = (
-            f'<details class="defcol"><summary>{_fold_sum}</summary>'
+            f'<details class="defcol" open><summary>{_fold_sum}</summary>'
             '<table class="gtbl"><thead><tr><th>代码</th><th>标的</th>'
             '<th>今日动作</th><th>依据</th></tr></thead>'
             f'<tbody>{"".join(_def_fold)}</tbody></table></details>')
@@ -3595,6 +3598,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   details.defcol>summary::-webkit-details-marker{{display:none}}
   details.defcol>summary::before{{content:"▸ ";color:#98a1ad}}
   details.defcol[open]>summary::before{{content:"▾ "}}
+  details.defcol[open]>summary{{border-bottom:1px solid #eceff4;margin-bottom:2px}}
   details.defcol .dfh{{color:#9aa3b0;font-size:11px;margin-left:8px}}
   details.defcol table.gtbl{{margin:2px 0 10px}}
   table.rtbl th,table.rtbl td{{padding:6px 6px}}
