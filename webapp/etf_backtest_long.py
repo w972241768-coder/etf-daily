@@ -526,6 +526,13 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 if weak_ma20_entry and _weak is not None:
                     _dve = sig["dev"].get(_weak)
                     _ma_ok = (_dve is not None and _dve < 0)
+                # ⚠️ 2026-10-28 已实测并删除「末位动横20 ≤ 阈值」这一前提（用户提议 -15%）：
+                #   近10年 20.8975 → 19.6209（−1.28），5/5 窗口全负、三种成本全负；
+                #   抄底次数 17 → 4（样本不足）；被滤掉的 13 笔合计 +22.15%、胜率 69%，
+                #   不是烂机会而是「小赚但值得做」的机会。阈值邻域还是锯齿
+                #   （−12 给 +1.69、−10 给 −0.64、−15 给 −1.28），没有稳定高原。
+                #   ⇒ 「跌得深才抄」在 9 只池子上不成立，抄底的价值在「次数 × 小胜率」。
+                _roc_ok = True
                 if pending_weak is not None:
                     if target != "CASH":
                         target = pending_weak
@@ -542,7 +549,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                         except (TypeError, ValueError):
                             _trig = False
                     if (_trig and _weak and target != "CASH" and _cd_ok
-                            and _pool_ok and _ma_ok):
+                            and _pool_ok and _ma_ok and _roc_ok):
                         weak_events.append(dict(
                             date=str(dates[i].date()), code=_weak,
                             name=NAMES.get(_weak, _weak),
