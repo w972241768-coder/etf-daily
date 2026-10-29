@@ -384,14 +384,27 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
         except Exception as e:                    # noqa: BLE001
             mine = dict(error=f"{type(e).__name__}: {e}")
 
+    # ---- 净值曲线的「持仓色带」（2026-10-29 用户需求，参考博主的持仓条）----
+    # 用**主口径**（D3+P3+抄底）的换仓序列铺成逐日持仓，供曲线下方色带使用。
+    _cv = _build_curve(navs, panel, asof, bench, CURVE_DAYS, trades,
+                       d3_navs=(d3.get("navs") if d3.get("ok") else None),
+                       p3_navs=(p3.get("navs") if p3 and p3.get("ok") else None))
+    if _cv:
+        try:
+            _cv["holds"] = _hold_band(
+                _cv["dates"],
+                (p3.get("trades") if (p3 and p3.get("ok")) else trades))
+            _cv["hold_names"] = {c: bl.NAMES.get(c, c)
+                                 for c in set(_cv["holds"]) if c and c != "CASH"}
+        except Exception:                          # noqa: BLE001
+            pass
+
     return dict(
         rows=rows,
         cum=dict(start=d_first, end=asof, ret=cum_ret, bench=cum_bench,
                  alpha=(cum_ret - cum_bench if cum_ret is not None and cum_bench is not None else None),
                  trades=len(trades) - idx0),
-        curve=_build_curve(navs, panel, asof, bench, CURVE_DAYS, trades,
-                           d3_navs=(d3.get("navs") if d3.get("ok") else None),
-                           p3_navs=(p3.get("navs") if p3 and p3.get("ok") else None)),
+        curve=_cv,
         yearly=bl.yearly(navs),
         asof=asof, data_end=data_end, hist_end=hist_end,
         ext_note=ext_note, extended=bool((hist_end is not None)
@@ -904,7 +917,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     )
 
 
-CURVE_DAYS = 1826         # 近 5 年(日历日)净值曲线窗口
+CURVE_DAYS = 1826         # 兼容保留（旧签名参数）；窗口实际固定 2020-01-01 起
 
 
 def _build_curve(navs, panel, asof: str, bench: str, days: int = CURVE_DAYS,
@@ -921,7 +934,11 @@ def _build_curve(navs, panel, asof: str, bench: str, days: int = CURVE_DAYS,
     返回 dict(失败返回 None): dates / series / rets / switches / info
     """
     end_d = pd.Timestamp(asof)
-    start_d = end_d - pd.Timedelta(days=days - 1)
+    # ★ 2026-10-29 用户要求：5 年净值曲线固定从 2020-01-01 起算
+    #   （不再用「今天往前推 1826 天」的滚动窗口，起点每年漂移、跨年对比不一致）。
+    start_d = pd.Timestamp("2020-01-01")
+    if end_d <= start_d:                      # 数据早于 2020 时兜底（正常不会发生）
+        start_d = end_d - pd.Timedelta(days=1825)
 
     # 策略净值(Series, 索引为日期字符串)
     try:
@@ -1042,3 +1059,25 @@ def _build_curve(navs, panel, asof: str, bench: str, days: int = CURVE_DAYS,
                 series=series, rets=rets, switches=switches,
                 ndx_ok=("ndx" in series), sh_ok=("sh" in series),
                 info=info)
+
+
+def _hold_band(dates, trs):
+    """把换仓序列铺成「每个交易日手里持有什么」，供净值曲线下方的持仓色带。
+
+    dates : 交易日字符串列表（与曲线同窗口、同长度）
+    trs   : 换仓列表 [{date, frm, to, ...}]，按时间升序（传主口径 p3["trades"]）
+    返回  : 同长度列表，元素为标的代码；"CASH" 表示空仓。
+    用途  : 2026-10-29 用户参考博主的持仓条，要求在「近 2 个月放大」下方也看到
+            每一段持有什么、哪几天是空仓。
+    """
+    if not dates:
+        return []
+    trs = [t for t in (trs or []) if t.get("date")]
+    cur = (trs[0].get("frm") if trs else "CASH") or "CASH"
+    out, j = [], 0
+    for d in dates:
+        while j < len(trs) and str(trs[j]["date"]) <= str(d):
+            cur = trs[j].get("to") or "CASH"
+            j += 1
+        out.append(cur)
+    return out

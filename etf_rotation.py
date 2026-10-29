@@ -1118,7 +1118,8 @@ def _rebase_pct(pct, i0):
     return out
 
 
-def _svg_chart(dates, pct, switches=None, *, W=920.0, H=300.0, uid="cv1"):
+def _svg_chart(dates, pct, switches=None, *, W=920.0, H=300.0, uid="cv1",
+               tail_html=""):
     """单张内联 SVG 折线图 + 光标数据；失败返回 None。
 
     静态部分（网格/折线/末端标注/切换点）全在 SVG 里，打印与禁用 JS 时仍正确；
@@ -1260,7 +1261,7 @@ def _svg_chart(dates, pct, switches=None, *, W=920.0, H=300.0, uid="cv1"):
            f'<div class="tblwrap"><svg id="{uid}-svg" viewBox="0 0 {W:.0f} {H:.0f}" '
            f'class="csvg" role="img" aria-label="净值曲线 {uid}">'
            f'{grid_svg}{xt_svg}{"".join(lines)}{ends_svg}{mark_svg}{cursor_svg}'
-           f'</svg></div>'
+           f'</svg>{tail_html}</div>'
            f'<div class="cvhint">鼠标在图上移动 → 竖线与高亮点跟随，浮窗显示当日各序列的累计涨跌；'
            f'<b>单击可锁定/解锁</b>，方便对着某一天慢慢看（触屏可拖动）。</div>'
            f'</div>')
@@ -1397,11 +1398,86 @@ def _mine_block_html(mine) -> str:
             f'即可调整起点。</div></section>')
 
 
+# ---- 持仓色带（2026-10-29 用户需求，参考博主的持仓条）----
+# 目的：在「近 2 个月放大」净值图下方直接看到**每一段持有什么、哪几天空仓**，
+#      比在曲线上找换仓点直观得多。
+# 配色按标的固定，**刻意避开纯红/纯绿**——这里是「持有什么」的分类信息，
+# 不是涨跌方向，用红绿会与页面别处的语义打架。
+_HOLD_COLORS = {
+    "513100": ("#3d57e5", "#ffffff"),   # 纳指
+    "588170": ("#c2185b", "#ffffff"),   # 科创半导体
+    "518880": ("#c9930a", "#ffffff"),   # 黄金
+    "561700": ("#6f5bd6", "#ffffff"),   # 电力
+    "510300": ("#1f9e8f", "#ffffff"),   # 沪深300
+    "563300": ("#2f7fd0", "#ffffff"),   # 中证2000
+    "159967": ("#d0703a", "#ffffff"),   # 创成长
+    "516080": ("#5b8f3a", "#ffffff"),   # 创新药
+    "513660": ("#8a6d3b", "#ffffff"),   # 恒生
+    "512040": ("#4b5563", "#ffffff"),   # 防守位
+    "512890": ("#7b8ea8", "#ffffff"),   # 策略二
+    "CASH":   ("#d5dae1", "#4b5563"),   # 空仓
+}
+
+
+def _short_hold(nm):
+    """持仓色带里的短标签：去掉「ETF」和基金公司后缀，最长 6 字。"""
+    s = str(nm or "")
+    for suf in ("ETF华夏", "ETF易方达", "ETF博时", "ETF富国", "ETF华泰柏瑞",
+                "ETF国泰", "ETF嘉实", "ETF南方", "ETF广发", "ETF汇添富", "ETF",
+                "华夏", "易方达", "博时", "富国", "华泰柏瑞", "国泰"):
+        s = s.replace(suf, "")
+    return s[:6]
+
+
+def _hold_band_svg(dates, holds, names=None, *, W=920.0, H=34.0):
+    """持仓色带 SVG：与上方净值图**共用 x 轴**（pl/pr 与 _svg_chart 完全一致）。
+
+    每段连续持仓画一个圆角矩形，宽度够就写短名；灰块 = 空仓。
+    """
+    n = len(dates)
+    if n < 2 or not holds or len(holds) != n:
+        return ""
+    pl, pr = 62.0, 16.0                       # ⚠ 必须与 _svg_chart 的 pl/pr 同步
+    iw = W - pl - pr
+    step = iw / (n - 1)
+
+    def _x(i):
+        return pl + iw * i / (n - 1)
+
+    segs, i = [], 0
+    while i < n:
+        j = i
+        while j + 1 < n and holds[j + 1] == holds[i]:
+            j += 1
+        segs.append((i, j, holds[i]))
+        i = j + 1
+
+    parts = []
+    for i, j, code in segs:
+        x0 = max(pl, _x(i) - step / 2.0)
+        x1 = min(pl + iw, _x(j) + step / 2.0)
+        w = max(1.2, x1 - x0)
+        fill, tc = _HOLD_COLORS.get(code, ("#9aa3ae", "#ffffff"))
+        parts.append(f'<rect x="{x0:.1f}" y="3" width="{w:.1f}" height="{H - 11:.1f}" '
+                     f'rx="2" fill="{fill}"/>')
+        lab = ("空仓" if code == "CASH"
+               else _short_hold((names or {}).get(code) or code))
+        if w >= 34 and lab:
+            parts.append(f'<text x="{x0 + w / 2:.1f}" y="{H / 2 + 2:.1f}" font-size="9.5" '
+                         f'text-anchor="middle" fill="{tc}" '
+                         f'style="font-weight:600">{html.escape(lab)}</text>')
+    return (f'<svg viewBox="0 0 {W:.0f} {H:.0f}" class="csvg" role="img" '
+            f'aria-label="持仓色带（灰=空仓）">{"".join(parts)}</svg>')
+
+
 def _curve_block(curve):
     """把 recent_rotations._build_curve 的结果渲染成两张内联 SVG（近 5 年 + 近 2 个月放大）。
 
     序列：策略净值 / D3 单笔止损影子组合 / P3 追高止盈影子组合 / 上证指数 / 纳斯达克综合指数。
     两张图都带可移动光标（纯 JS、无外部依赖）；禁用 JS 时静态图仍完整。
+    ★ 2026-10-29（用户需求，参考博主持仓条）：「近 2 个月放大」图下加**持仓色带**，
+      与该图共用 x 轴，直接看每一段持有什么、哪几天空仓；
+      且整个曲线块（放大图在前、5 年图在后）移到「近 5 年策略体检」**之前**。
     """
     if not curve:
         return ""
@@ -1416,9 +1492,7 @@ def _curve_block(curve):
 
     big = _svg_chart(dates, pct, switches, W=920.0, H=300.0, uid="cv1")
     if not big:
-        return ""
-
-    # —— 近 2 个月放大：同一批序列，基准重置到该段首日 ——
+        return ""    # —— 近 2 个月放大：同一批序列，基准重置到该段首日 ——
     small, zoom_from = None, ""
     i0 = None
     try:
@@ -1457,6 +1531,11 @@ def _curve_block(curve):
         zpairs = list(small["vis"])
         zpairs.sort(key=lambda t: CURVE_LEGEND.index(t[0]) if t[0] in CURVE_LEGEND else 9)
         zchips_html = _chips(zpairs)
+        # 持仓色带（2026-10-29）：截取放大窗口内的逐日持仓，与该图共用 x 轴
+        _zband = ""
+        if curve.get("holds") and len(curve["holds"]) == n:
+            _zband = _hold_band_svg(dates[i0:], curve["holds"][i0:],
+                                    curve.get("hold_names") or {}, W=920.0, H=34.0)
         zoom_block = f"""
 <h3 class="sph3" style="margin-top:18px">🔍 近 2 个月放大（{zoom_from} 起 = 1.0）</h3>
 <div class="note" style="margin-bottom:8px;padding:9px 12px">
@@ -1465,6 +1544,10 @@ def _curve_block(curve):
 便于看清最近两个月的相对强弱；纵轴仍是自该日以来的累计涨跌，光标用法相同。</span>
 </div>
 {small["html"]}
+{('<div class="bandwrap">' + _zband + '</div>'
+  + '<div class="sub" style="margin-top:4px">底条 = 每个交易日实际持有的标的'
+    '（按主口径 D3+P3+抄底 复算），<b>灰块 = 空仓</b>；与上方曲线共用同一时间轴。</div>')
+ if _zband else ""}
 """
 
     d3_note = ("；<b style=\"color:" + CLR_D3 + "\">D3 单笔止损</b>是参照组合"
@@ -1477,7 +1560,8 @@ def _curve_block(curve):
         if "p3" in pct else ""
 
     return f"""<style>{_CV_CSS}</style>
-<h3 class="sph3" style="margin-top:20px">📈 近 5 年净值曲线（策略 / D3 单笔止损 / D3+P3 止盈 vs 上证指数 · 纳斯达克综合指数）</h3>
+{zoom_block}
+<h3 class="sph3" style="margin-top:20px">📈 净值曲线 2020 年至今（策略 / D3 单笔止损 / D3+P3 止盈 vs 上证指数 · 纳斯达克综合指数）</h3>
 <div class="note" style="margin-bottom:8px;padding:9px 12px">
 {chips_html}
 <span class="chip"><i style="background:{RED};width:8px;height:8px;border-radius:50%"></i>正向轮动切换</span>
@@ -1486,7 +1570,6 @@ def _curve_block(curve):
 纵轴为自该日起的累计涨跌；策略净值与「② 近期换仓复盘」同源同口径（前复权长历史 + 同一套规则复算）{d3_note}{p3_note}。</span>
 </div>
 {big["html"]}
-{zoom_block}
 <div class="sub" style="margin-top:8px">注：纳斯达克综合指数为美股日线，按公历日与 A 股交易日对齐（休市日沿用前值），
 仅作全球风险偏好对比，不参与任何信号计算。曲线上每个圆点为一次系统换仓：
 <b style="color:{RED}">● 红 = 正向轮动切换</b>（切到动量头名）、
@@ -3217,7 +3300,8 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 </tbody></table></div>
 <div class="sub" style="margin-top:8px">{rr_note}</div>
 {_p3_card_html(recent.get("p3") or {}, recent, recent.get("cost", 0.002))}
-{_health_html((recent.get("p3") or {}).get("metrics"))}
+<!-- 2026-10-29 用户要求：「近 2 个月放大 + 持仓色带」与 5 年净值曲线排在
+     「近 5 年策略体检」**之前**，故体检卡从本块移出，改由外层按序插入。 -->
 <!-- 2026-10-26 用户要求：正文不再单列「D3 单笔止损 · 参照」卡片（现在没人只看这一条）。
      recent["d3"] 仍照常计算并保留在净值曲线里，只是不单独成卡。 -->
 """
@@ -3790,6 +3874,10 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .csvg .cx{{font-size:10.5px;fill:#98a1ad;text-anchor:middle;font-family:inherit}}
   .csvg .cz{{stroke:#b9c0ca;stroke-dasharray:5 4}}
   .csvg .ce{{font-size:11px;font-weight:700;font-family:inherit}}
+  /* 持仓色带（2026-10-29）：与上方净值曲线共用时间轴，紧贴图底 */
+  .bandwrap{{margin-top:-6px}}
+  .bandwrap .csvg{{min-width:560px;background:transparent;
+    border:1px solid #e6e9ef;border-radius:8px;padding:2px 0}}
   .chip{{display:inline-flex;align-items:center;gap:5px;margin:0 12px 0 0;
     font-size:12px;color:#374151;white-space:nowrap}}
   .chip i{{display:inline-block;width:14px;height:3px;border-radius:2px}}
@@ -3850,6 +3938,8 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 {rr_block}
 
 {_curve_block(recent.get("curve") if recent else "")}
+
+{_health_html(((recent or {}).get("p3") or {}).get("metrics"))}
 
 <h2>③ 动横阶梯全表 · 主选池（第 n 列 = 冻结价格下未来第 {window}-n 个交易日的动横{window}）</h2>
 <div class="tblwrap"><table class="lad"><thead><tr><th>代码</th><th>名称</th>
