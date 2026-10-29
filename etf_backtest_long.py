@@ -267,6 +267,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              weak_delay: int = 0, weak_cd: int = 0, weak_min_pool: int = 0,
              weak_first_d3: bool = False,
              weak_ma20_entry: bool = False,
+
              weak_exit_ma20: bool = False, weak_exit_days: int = 0,
              weak_exit_pos: bool = False,
              pos_frac: Optional[float] = None,
@@ -532,6 +533,17 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 #   不是烂机会而是「小赚但值得做」的机会。阈值邻域还是锯齿
                 #   （−12 给 +1.69、−10 给 −0.64、−15 给 −1.28），没有稳定高原。
                 #   ⇒ 「跌得深才抄」在 9 只池子上不成立，抄底的价值在「次数 × 小胜率」。
+                # ⚠️ 2026-10-29 已实测并删除「估值百分位闸门」（weak_gate / weak_px_pct）：
+                #   用户提议「估值百分位 <40% 才抄底」。两个口径都测了，都是负向：
+                #   · 沪深300 加权 PE 5年百分位 <40%：20.8975 → 18.2394（−2.66），5 窗口 4 负 1 正
+                #   · 末位自身价格 5年分位 <40%：19.9780（−0.92），5 窗口 3 负 2 正
+                #   反直觉的机制：PE 百分位 <40% 的 7 笔抄底胜率仅 57%、合计 +16.48%；
+                #   ≥40% 的 9 笔胜率 89%、合计 +33.10% —— **估值低的抄底反而更差**。
+                #   原因：沪深300 估值是大盘蓝筹口径，抄底买的是高波动成长股，两者不同步；
+                #   且「全池动横20 全负」本身已隐含市场低迷，估值条件重复且滞后（月度 vs 日频）。
+                #   注：所有闸门都把 MDD 修到 −17.92%，但那是排除了 2026-10-26 单笔（PE 76.7%），
+                #   样本 1 次，属运气而非规律。
+                _val_ok = True
                 _roc_ok = True
                 if pending_weak is not None:
                     if target != "CASH":
@@ -549,7 +561,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                         except (TypeError, ValueError):
                             _trig = False
                     if (_trig and _weak and target != "CASH" and _cd_ok
-                            and _pool_ok and _ma_ok and _roc_ok):
+                            and _pool_ok and _ma_ok and _roc_ok and _val_ok):
                         weak_events.append(dict(
                             date=str(dates[i].date()), code=_weak,
                             name=NAMES.get(_weak, _weak),
