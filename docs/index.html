@@ -157,6 +157,14 @@
   .migr{margin:0 0 9px;padding:8px 12px;background:#f7f9fb;border:1px solid #e2e8ef;
     border-left:3px solid #7b8ea8;border-radius:9px;font-size:11.5px;line-height:1.7;
     color:#4b5563;white-space:normal}
+  /* 口径变更说明（2026-10-29）：从首屏顶部挪到「今日操作」最底部，默认折叠，3 天后自动消失 */
+  details.migrdet{margin:9px 0 0;font-size:11.5px;color:#6c717f}
+  details.migrdet>summary{cursor:pointer;list-style:none;outline:none;color:#7b8ea8;
+    padding:2px 0}
+  details.migrdet>summary::-webkit-details-marker{display:none}
+  details.migrdet>summary::before{content:"▸ "}
+  details.migrdet[open]>summary::before{content:"▾ "}
+  details.migrdet .migr{margin:6px 0 0}
   .pillcal{font-size:11px;color:#8b93a1;font-weight:400}
   .cbpill{font-size:15px;line-height:1.58;color:#202020;white-space:normal;font-weight:500}
   .cbpill b{font-weight:800}
@@ -250,6 +258,9 @@
   .hc .hk{font-size:11px;color:#6c717f}
   .hc b{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}
   .hc i{font-style:normal;font-size:10.5px;color:#8b93a1;line-height:1.5}
+  /* 指标对应的时间段（2026-10-29）：小一号、更淡，紧贴在数值说明下面 */
+  .hc .hseg{font-size:10px;color:#a3abb8;line-height:1.45;
+    font-variant-numeric:tabular-nums}
   @media(max-width:600px){.hc{flex:1 1 46%}}
   /* 「我的实盘跟踪」区块（2026-10-26）：放在 ③ 之后，不挤占首屏 */
   .minesec{margin:26px 0 0;background:#fbfcfe;border:1px solid #e2e5ea;
@@ -379,6 +390,12 @@
   details.defcol .dfh{color:#9aa3b0;font-size:11px;margin-left:8px}
   details.defcol table.gtbl{margin:2px 0 10px}
   table.rtbl th,table.rtbl td{padding:6px 6px}
+  /* 数字列居中（2026-10-29 用户要求）：① 排名表与 ② 换仓复盘共用 .rtbl，
+     表头与数值同列对齐，扫行时不再左右横跳 */
+  table.rtbl td.num, table.rtbl th.num,
+  table.rtbl th.c-idx, table.rtbl th.c-m20, table.rtbl th.c-dev,
+  table.rtbl th.c-since, table.rtbl th.c-px, table.rtbl th.c-chg,
+  table.rtbl th.c-ma20{text-align:center}
   table.rtbl td.vcell{white-space:normal;min-width:130px}
   /* ①「切换至今」列：买入日距今 >120 交易日 → 数字淡色 + 虚线下划线，
      提醒这是很久以前那一段的收益，不是近期表现（悬停看起止日） */
@@ -474,7 +491,7 @@
 <div class="hero">
 <h1>ETF 动横阶梯轮动报告</h1>
 <div class="sub"><b>动横20</b> · 粘性带 <b>1.0pp</b> · 主选 <b>9+1</b> 只
- ｜ 生成 2026-10-29 04:47</div>
+ ｜ 生成 2026-10-29 08:01</div>
 <div class="fdot"><span class="fdot-i"></span>数据正常 · 截至 <b>2026-10-28</b><details class="fdet"><summary>来源</summary><div class="fdetb">✓ <b>在线前复权数据</b>　数据源 <b>新浪财经 日线(在线, 前复权校正, 已收盘)</b>　｜　数据截至 <b>2026-10-28</b>（已收盘/非交易时段）　｜　成功 25/25 只。分红与拆分已按前复权还原，无除权假跳空。</div></details></div>
 </div>
 
@@ -485,7 +502,6 @@
   <span class="gdate">锚定日 <b>2026-10-28</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准</span>
 </div>
 <div class="cbsum diff">
-<div class="migr"><b>⚠ 口径已变更（2026-10-28）</b>：抄底持仓改为<b>锁定期</b> —— 期内 D3 / P3 不再介入，满足「<b>回 MA20 上方</b>」或「<b>满 10 个交易日</b>」任一条件才换回当日第 1 名。<br>若你在 10-27 已按旧口径（D3 止损）清仓，<b>今日应按新口径买回</b>；页面「当前持 X」是按模型口径推算的，与你的实际账户可能不同，<b>请以实际持仓为准</b>。</div>
 <div class="cbpill">🎯 <b>抄底触发</b>（主选池动横20 全部为负）→ <b>换持末位 588170 科创半导体ETF华夏</b><span class="pillcal">　历史 Calmar <b>1.52</b></span>
 <details class="cbdet"><summary>回测对比 · 规则</summary>
 <div class="tblwrap"><table class="cbst"><thead><tr>
@@ -497,11 +513,11 @@
 三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
 </div>
-<div class="wstate"><div class="whd"><span class="wbadge">🎯 抄底持仓中</span><b>588170 科创半导体ETF华夏</b><span class="wtip">锁定期内 D3 / P3 都不介入</span></div><div class="wrow"><span class="wlab">时间出口 · 满 10 日</span><span class="wnum">2 / 10</span><span class="wbar"><i style="width:20%"></i></span><span class="wrest">还差 <b>8</b> 个交易日</span></div><div class="wrow"><span class="wlab">价格出口 · 回 MA20</span><span class="wnum">-18.89%</span><span class="wbar flat"><i></i></span><span class="wrest">需回到 <b>0%</b> 上方（还差 <b>18.89</b>pp）</span></div><div class="wpnl">建仓 <b>0.697</b>（2026-10-26） → 现价 <b>0.673</b> <b style="color:#0f9d58">-3.44%</b></div><div class="wnote">满足任一出口即换回当日第 1 名；这是 2026-10-28 起的新口径（旧口径为「亏 3% 由 D3 止损」）。</div></div>
+<div class="wstate"><div class="whd"><span class="wbadge">🎯 抄底持仓中</span><b>588170 科创半导体ETF华夏</b><span class="wtip">锁定期内 D3 / P3 都不介入</span></div><div class="wrow"><span class="wlab">时间出口 · 满 10 日</span><span class="wnum">2 / 10</span><span class="wbar"><i style="width:20%"></i></span><span class="wrest">还差 <b>8</b> 个交易日</span></div><div class="wrow"><span class="wlab">价格出口 · 回 MA20</span><span class="wnum">-18.89%</span><span class="wbar flat"><i></i></span><span class="wrest">需回到 <b>0%</b> 上方（还差 <b>18.89</b>pp）</span></div><div class="wpnl">建仓 <b>0.697</b>（2026-10-26） → 现价 <b>0.673</b> <b style="color:#0f9d58">-3.44%</b></div><div class="wnote">满足任一出口即换回当日第 1 名；这是 2026-10-28 起的新口径（旧口径为「亏 3% 由 D3 止损」）。</div></div><details class="migrdet"><summary>⚠ 10-28 口径变更说明（抄底持仓改为锁定期）</summary><div class="migr">自 2026-10-28 起，抄底持仓改为<b>锁定期</b> —— 期内 D3 / P3 不再介入，满足「<b>回 MA20 上方</b>」或「<b>满 10 个交易日</b>」任一条件才换回当日第 1 名。若你在 10-27 已按旧口径（D3 止损）清仓，<b>需按新口径买回</b>；页面「当前持 X」是按模型口径推算的，与你的实际账户可能不同，<b>请以实际持仓为准</b>。</div></details>
 
 <table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead>
 <tbody><tr><td class='mono'>588170</td><td class='nm2'>科创半导体ETF华夏 <span class='tag rot'>今日建议持仓</span></td><td><b>无需动作</b></td><td class='rs'>未触发过热熔断，持仓已一致 · 无交易</td></tr><tr><td>其他</td><td class='nm2'>既非今日建议持仓、也非防守位</td><td>换到 <span class='mono'>588170</span> 科创半导体ETF华夏</td><td class='rs'>换仓成本按双边约 0.2% 估算</td></tr></tbody></table>
-<details class="defcol" open><summary>🛡 防守位 512040 价值ETF富国 · 策略二 512890 红利低波<span class="dfh">持仓实时跟踪 · 点击可收起</span></summary><table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead><tbody><tr class='defdim defmain'><td class='mono'>512040</td><td class='nm2'>价值ETF富国 <span class='tag def'>防守位</span></td><td class='dimtxt'>本轮无需关注</td><td class='rs dimtxt'>仅当头名乖离 &gt; 12% 或领先 &gt; 15pp（过热熔断）时才启用；届时按下方「防守位操作指南」执行</td></tr><tr class='defx dimx'><td colspan='4'><div class="gidxbar"><span class="k">MA200 偏离（买线 −3%）</span><span class="v">基金 512040 <b style="color:#0f9d58">-3.90%</b><i>已破 0.90pp</i></span><span class="v">指数 931052 <b style="color:#0f9d58">-5.86%</b><i>已破 2.86pp</i></span><span class="v">口径差 <b>+1.96pp</b></span></div><div class="hspan"><span class="k">近 1 年 MA200 偏离区间（243 日）</span><span class="v">当前 <b style="color:#0f9d58">-3.90%</b>位于 <b>5 分位</b><i>≈近 1 年最便宜</i></span><span class="v dimtxt">｜近 5 年仍 27 分位</span><details class="hdet"><summary>极值 · 长窗口 · 买点稀缺度</summary><div class="hdetb"><span class="v">最深回踩 <b style="color:#0f9d58">-5.03%</b><i>2026-10-22</i></span><span class="v">最高冲高 <b style="color:#d4380d">+19.53%</b><i>2026-01-28</i></span><span class="v">−3% 买线下方 <b>10/243</b> 日（4.1%）</span><span class="v">更长期 · 3 年 <b>-8.66%</b><i>当前 17 分位</i></span><span class="v">更长期 · 5 年 <b>-12.76%</b><i>当前 27 分位</i></span><span class="v dimtxt">指数口径 -7.06% ~ +17.55%</span><span class="v dimtxt">窗口 2025-10-28 ~ 2026-10-28</span></div></details></div><div class="gidxnote pos">✅ 两个口径都已跌破 −3% → 按价值引擎<b>该建仓 / 补仓</b>防守位</div></td></tr><tr class='tvmk tvmid'><td class='mono'>512890</td><td class='nm2'>红利低波ETF华泰柏瑞 <span class='tag tvt'>策略二 · 每日跟踪</span></td><td><b>继续持有</b></td><td class='rs'>收盘 <b>1.220</b> / MA200 <b>1.1733</b>；最近买入 2026-01-05、最近卖出 2025-11-10</td></tr><tr class='tvx'><td colspan='4'><div class="tvbar"><span class="k">规则：回踩 MA200 买 / 超 +6% 卖</span><span class="v">买线 <b>1.1733</b><i>还差 <b>3.98pp</b></i></span><span class="v">卖线 <b>1.2437</b><i>还差 <b>2.02pp</b></i></span><span class="v">偏离 <b style="color:#d4380d">+3.98%</b></span><span class="v">状态 <b>持有中</b></span></div><div class="hspan"><span class="k">近 1 年 MA200 偏离区间（243 日）</span><span class="v">当前 <b style="color:#d4380d">+3.98%</b>位于 <b>78 分位</b><i>近 1 年偏贵区</i></span><span class="v dimtxt">｜近 5 年仍 48 分位</span><details class="hdet"><summary>极值 · 长窗口 · 买点稀缺度</summary><div class="hdetb"><span class="v">最深回踩 <b style="color:#0f9d58">-9.38%</b><i>2026-06-30</i></span><span class="v">最高冲高 <b style="color:#d4380d">+7.77%</b><i>2025-11-12</i></span><span class="v">MA200 买线下方 <b>109/243</b> 日（44.9%）</span><span class="v">更长期 · 3 年 <b>-9.38%</b><i>当前 58 分位</i></span><span class="v">更长期 · 5 年 <b>-9.38%</b><i>当前 48 分位</i></span><span class="v dimtxt">窗口 2025-10-28 ~ 2026-10-28</span></div></details></div></td></tr></tbody></table></details>
+<details class="defcol" open><summary>🛡 防守位 512040 价值ETF富国 · 策略二 512890 红利低波<span class="dfh">持仓实时跟踪 · 点击可收起</span></summary><table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead><tbody><tr class='defdim defmain'><td class='mono'>512040</td><td class='nm2'>价值ETF富国 <span class='tag def'>防守位</span></td><td class='dimtxt'>本轮无需关注</td><td class='rs dimtxt'>仅当头名乖离 &gt; 12% 或领先 &gt; 15pp（过热熔断）时才启用；届时按下方「防守位操作指南」执行</td></tr><tr class='defx dimx'><td colspan='4'><div class="gidxbar"><span class="k">MA200 偏离（买线 −3%）</span><span class="v">基金 512040 <b style="color:#0f9d58">-3.90%</b><i>已破 0.90pp</i></span><span class="v">指数 931052 <b style="color:#0f9d58">-5.86%</b><i>已破 2.86pp</i></span><span class="v">口径差 <b>+1.96pp</b></span><span class="v">历史胜率 <b style="color:#42474f">100%</b><i>5 笔已平仓 · 均 +14.28%</i></span></div><div class="hspan"><span class="k">近 1 年 MA200 偏离区间（243 日）</span><span class="v">当前 <b style="color:#0f9d58">-3.90%</b>位于 <b>5 分位</b><i>≈近 1 年最便宜</i></span><span class="v dimtxt">｜近 5 年仍 27 分位</span><details class="hdet"><summary>极值 · 长窗口 · 买点稀缺度</summary><div class="hdetb"><span class="v">最深回踩 <b style="color:#0f9d58">-5.03%</b><i>2026-10-22</i></span><span class="v">最高冲高 <b style="color:#d4380d">+19.53%</b><i>2026-01-28</i></span><span class="v">−3% 买线下方 <b>10/243</b> 日（4.1%）</span><span class="v">更长期 · 3 年 <b>-8.66%</b><i>当前 17 分位</i></span><span class="v">更长期 · 5 年 <b>-12.76%</b><i>当前 27 分位</i></span><span class="v dimtxt">指数口径 -7.06% ~ +17.55%</span><span class="v dimtxt">窗口 2025-10-28 ~ 2026-10-28</span></div></details></div><div class="gidxnote pos">✅ 两个口径都已跌破 −3% → 按价值引擎<b>该建仓 / 补仓</b>防守位</div></td></tr><tr class='tvmk tvmid'><td class='mono'>512890</td><td class='nm2'>红利低波ETF华泰柏瑞 <span class='tag tvt'>策略二 · 每日跟踪</span></td><td><b>继续持有</b></td><td class='rs'>收盘 <b>1.220</b> / MA200 <b>1.1733</b>；最近买入 2026-01-05、最近卖出 2025-11-10</td></tr><tr class='tvx'><td colspan='4'><div class="tvbar"><span class="k">规则：回踩 MA200 买 / 超 +6% 卖</span><span class="v">买线 <b>1.1733</b><i>还差 <b>3.98pp</b></i></span><span class="v">卖线 <b>1.2437</b><i>还差 <b>2.02pp</b></i></span><span class="v">偏离 <b style="color:#d4380d">+3.98%</b></span><span class="v">状态 <b>持有中</b></span><span class="v">历史胜率 <b style="color:#42474f">100%</b><i>8 笔已平仓 · 均 +9.42%</i></span></div><div class="hspan"><span class="k">近 1 年 MA200 偏离区间（243 日）</span><span class="v">当前 <b style="color:#d4380d">+3.98%</b>位于 <b>78 分位</b><i>近 1 年偏贵区</i></span><span class="v dimtxt">｜近 5 年仍 48 分位</span><details class="hdet"><summary>极值 · 长窗口 · 买点稀缺度</summary><div class="hdetb"><span class="v">最深回踩 <b style="color:#0f9d58">-9.38%</b><i>2026-06-30</i></span><span class="v">最高冲高 <b style="color:#d4380d">+7.77%</b><i>2025-11-12</i></span><span class="v">MA200 买线下方 <b>109/243</b> 日（44.9%）</span><span class="v">更长期 · 3 年 <b>-9.38%</b><i>当前 58 分位</i></span><span class="v">更长期 · 5 年 <b>-9.38%</b><i>当前 48 分位</i></span><span class="v dimtxt">窗口 2025-10-28 ~ 2026-10-28</span></div></details></div></td></tr></tbody></table></details>
 </section>
 
 <div class="lead">以下为主选池结论（第 ① ~ ⑤ 节），备选观察池在报告末尾第 ⑥ 节、与主选池完全独立。
@@ -554,10 +570,10 @@ style="color:#e8890c;font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 取最近 3 次系统建议换仓，计算「该次换仓日起到下一次换仓（或至今）」的净值收益与<b>持仓天数</b>，
 并与<b>同期上证指数</b>对比。数据源：前复权长历史（20261028） · 基点 2019-12-31 · 每次换仓双边 0.2%；「至今」= <b>2026-10-28</b></div></details>
 </div>
-<div class="tblwrap"><table class="rtbl"><thead><tr><th>#</th><th>建议换仓日</th><th>买入</th><th>持仓至</th>
-<th title="该段实际持仓的交易日根数">持仓天数</th>
-<th>策略收益</th><th>同期上证</th><th>超额</th><th>触发依据</th></tr></thead><tbody>
-<tr><td class="num">1</td><td class="mono">2026-09-21</td><td><span class="mono">563300</span> 中证2000ETF <span class="tag tie">自 电力ETF博时</span></td><td class="mono">2026-09-24<br><span class="dimtxt">已平仓</span></td><td class="num" style="font-weight:600">3 日</td><td class="num" style="color:#0f9d58;font-weight:600">-1.54%</td><td class="num" style="color:#0f9d58">-1.56%</td><td class="num" style="color:#d4380d;font-weight:600">+0.01pp</td><td class="rs" style="min-width:150px">池内头名变更(粘性带外)</td></tr><tr><td class="num">2</td><td class="mono">2026-09-24</td><td><span class="mono">513100</span> 纳指ETF <span class="tag tie">自 中证2000ETF</span></td><td class="mono">2026-10-26<br><span class="dimtxt">已平仓</span></td><td class="num" style="font-weight:600">16 日</td><td class="num" style="color:#0f9d58;font-weight:600">-3.48%</td><td class="num" style="color:#0f9d58">-4.91%</td><td class="num" style="color:#d4380d;font-weight:600">+1.43pp</td><td class="rs" style="min-width:150px">池内头名变更(粘性带外)</td></tr><tr><td class="num">3</td><td class="mono">2026-10-26</td><td><span class="mono">588170</span> 科创半导体ETF华夏 <span class="tag tie">自 纳指ETF</span></td><td class="mono">2026-10-28<br><span class="dimtxt"><span class="tag tie">持仓中 · 未扣卖出成本</span></span></td><td class="num" style="font-weight:600">2 日</td><td class="num" style="color:#0f9d58;font-weight:600">-3.44%</td><td class="num" style="color:#0f9d58">-0.43%</td><td class="num" style="color:#0f9d58;font-weight:600">-3.01pp</td><td class="rs" style="min-width:150px">池内头名变更(粘性带外) | 抄底588170</td></tr><tr class="def"><td class="num">Σ</td><td class="mono">2026-09-21</td><td><b>累计 3 次换仓连乘</b></td><td class="mono">2026-10-28</td><td class="num" style="font-weight:700">21 日</td><td class="num" style="color:#0f9d58;font-weight:700">-8.24%</td><td class="num" style="color:#0f9d58">-6.80%</td><td class="num" style="color:#0f9d58;font-weight:700">-1.45pp</td><td class="rs" style="min-width:150px">分段 (1+r) 连乘，与上表严格自洽</td></tr>
+<div class="tblwrap"><table class="rtbl"><thead><tr><th class="num">#</th><th class="num">建议换仓日</th><th>买入</th><th class="num">持仓至</th>
+<th class="num" title="该段实际持仓的交易日根数">持仓天数</th>
+<th class="num">策略收益</th><th class="num">同期上证</th><th class="num">超额</th><th>触发依据</th></tr></thead><tbody>
+<tr><td class="num">1</td><td class="mono num">2026-09-21</td><td><span class="mono">563300</span> 中证2000ETF <span class="tag tie">自 电力ETF博时</span></td><td class="mono num">2026-09-24<br><span class="dimtxt">已平仓</span></td><td class="num" style="font-weight:600">3 日</td><td class="num" style="color:#0f9d58;font-weight:600">-1.54%</td><td class="num" style="color:#0f9d58">-1.56%</td><td class="num" style="color:#d4380d;font-weight:600">+0.01pp</td><td class="rs" style="min-width:150px">池内头名变更(粘性带外)</td></tr><tr><td class="num">2</td><td class="mono num">2026-09-24</td><td><span class="mono">513100</span> 纳指ETF <span class="tag tie">自 中证2000ETF</span></td><td class="mono num">2026-10-26<br><span class="dimtxt">已平仓</span></td><td class="num" style="font-weight:600">16 日</td><td class="num" style="color:#0f9d58;font-weight:600">-3.48%</td><td class="num" style="color:#0f9d58">-4.91%</td><td class="num" style="color:#d4380d;font-weight:600">+1.43pp</td><td class="rs" style="min-width:150px">池内头名变更(粘性带外)</td></tr><tr><td class="num">3</td><td class="mono num">2026-10-26</td><td><span class="mono">588170</span> 科创半导体ETF华夏 <span class="tag tie">自 纳指ETF</span></td><td class="mono num">2026-10-28<br><span class="dimtxt"><span class="tag tie">持仓中 · 未扣卖出成本</span></span></td><td class="num" style="font-weight:600">2 日</td><td class="num" style="color:#0f9d58;font-weight:600">-3.44%</td><td class="num" style="color:#0f9d58">-0.43%</td><td class="num" style="color:#0f9d58;font-weight:600">-3.01pp</td><td class="rs" style="min-width:150px">池内头名变更(粘性带外) | 抄底588170</td></tr><tr class="def"><td class="num">Σ</td><td class="mono num">2026-09-21</td><td><b>累计 3 次换仓连乘</b></td><td class="mono num">2026-10-28</td><td class="num" style="font-weight:700">21 日</td><td class="num" style="color:#0f9d58;font-weight:700">-8.24%</td><td class="num" style="color:#0f9d58">-6.80%</td><td class="num" style="color:#0f9d58;font-weight:700">-1.45pp</td><td class="rs" style="min-width:150px">分段 (1+r) 连乘，与上表严格自洽</td></tr>
 </tbody></table></div>
 <div class="sub" style="margin-top:8px">最后一段为当前持仓、未平仓，不计卖出成本；其余各段已扣双边成本。<b>持仓天数</b>按交易日计（非自然日），今日刚换仓记 0 日。本节为事后规则复算（模型输出），非实盘成交记录。</div>
 <style>
@@ -624,7 +640,7 @@ table.d3tbl.sm{font-size:11.5px}
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
   <span class="dimtxt">三条规则互不替代；下表即为现行口径在该窗口的历史表现。</span></div>
   </details>
-  <div class="d3state"><span class="d3badge on">今日调整</span>按现行口径应持 <b>科创半导体ETF华夏</b></div>
+  <div class="d3state"><span class="d3badge off">持仓维持</span>按现行口径继续持 <b>科创半导体ETF华夏</b></div>
   <div class="tblwrap"><table class="d3tbl"><thead><tr>
     <th>同一窗口（2019-12-31 → 2026-10-28）</th>
     <th class="num">净值</th><th class="num">区间收益</th>
@@ -658,7 +674,7 @@ table.d3tbl.sm{font-size:11.5px}
     ③ <b>触发日＝清仓日</b>：当天收盘判定、当天收盘清仓，次日起空仓；<b>回场日</b> = 空仓满 20 个交易日后那天，按当日动横20 第 1 名买回。
     <br>「自身历史分位」= 该值在该标的自身扩张历史里排第几（0~100），触发线固定 95，所以必然 ≥95；越接近 100 说明当时涨得越极端。</div>
   </div>
-  <div class="d3sw">今天应调整为 <b>科创半导体ETF华夏</b>。</div>
+  <div class="d3sw">今天<b>无需调整</b>，继续持有 <b>科创半导体ETF华夏</b>（自 <b>2026-10-26</b> 建仓，锁定期内不随头名换仓）。</div>
   <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 0.2%，
   只多打开「亏≥3% 空仓 5 日」+「头名 ROC60 进 95 分位空仓 20 日」两条。回测口径，非实盘成交。<br>
   信号实测：ROC60 触发后头名未来 20 日中位 <b>−4.11%</b>、胜率仅 <b>37%</b>（动量透支）。
@@ -666,7 +682,7 @@ table.d3tbl.sm{font-size:11.5px}
   改规则只改那一处。</span></div>
 </div>
 
-<section class="hsec"><div class="hhd"><h2 class="hh2">📊 近 5 年策略体检</h2><span class="htip">2021-10-25 起 · 波段按 5% 阈值切分（44 个拐点：21 涨 / 22 跌）</span></div><div class="hrow"><div class="hc"><span class="hk">近 5 年最大波段涨幅</span><b style="color:#d4380d">+45.4%</b><i>单段 谷→峰</i></div><div class="hc"><span class="hk">近 5 年最大波段回撤</span><b style="color:#0f9d58">-24.6%</b><i>单段 峰→谷</i></div><div class="hc"><span class="hk">当前波段</span><b style="color:#0f9d58">↓ 下跌中 -22.0%</b><i>自 2026-08-18 的峰起</i></div><div class="hc"><span class="hk">当前持仓段收益</span><b style="color:#0f9d58">-3.44%</b><i>第 <b>8</b> 百分位（共 221 段，越高越好）</i></div></div></section>
+<section class="hsec"><div class="hhd"><h2 class="hh2">📊 近 5 年策略体检</h2><span class="htip">2021-10-25 起 · 波段按 5% 阈值切分（44 个拐点：21 涨 / 22 跌）</span></div><div class="hrow"><div class="hc"><span class="hk">近 5 年最大波段涨幅</span><b style="color:#d4380d">+45.4%</b><i>单段 谷→峰</i><span class="hseg">2025-01-21 → 2025-06-12</span></div><div class="hc"><span class="hk">近 5 年最大波段回撤</span><b style="color:#0f9d58">-24.6%</b><i>单段 峰→谷</i><span class="hseg">2026-08-18 → 2026-10-27</span></div><div class="hc"><span class="hk">当前波段</span><b style="color:#d4380d">↑ 上涨中 +3.4%</b><i>自 2026-10-27 的谷起</i><span class="hseg">2026-10-27 → 至今</span></div><div class="hc"><span class="hk">当前持仓段收益</span><b style="color:#0f9d58">-3.44%</b><i>第 <b>8</b> 百分位（共 221 段，越高越好）</i><span class="hseg">2026-10-26 → 至今</span></div></div></section>
 <!-- 2026-10-26 用户要求：正文不再单列「D3 单笔止损 · 参照」卡片（现在没人只看这一条）。
      recent["d3"] 仍照常计算并保留在净值曲线里，只是不单独成卡。 -->
 
@@ -866,14 +882,14 @@ table.d3tbl.sm{font-size:11.5px}
 
 <h3 class="sph3" style="margin-top:22px">📉 512040 价值引擎 · 近 5 年回测净值曲线</h3>
 <div class="note" style="margin-bottom:8px;padding:9px 12px">
-<span class="chip"><i style="background:#3d57e5"></i>价值引擎策略 <b style="color:#d4380d">+100.19%</b></span><span class="chip"><i style="background:#98a1ad"></i>同期买入持有 <b style="color:#d4380d">+55.05%</b></span><span class="chip">最大回撤 <b style="color:#0f9d58">-15.23%</b>（买入持有 -21.62%）</span><span class="chip">年化 <b style="color:#d4380d">+14.89%</b></span><span class="chip">持仓 <b>39.5%</b> 交易日</span><span class="chip">买卖 <b>6</b> 买 / <b>5</b> 卖</span><span class="chip">当前 <b>持仓中</b>（06-26 买入）</span>
+<span class="chip"><i style="background:#3d57e5"></i>价值引擎策略 <b style="color:#d4380d">+100.19%</b></span><span class="chip"><i style="background:#98a1ad"></i>同期买入持有 <b style="color:#d4380d">+55.05%</b></span><span class="chip">最大回撤 <b style="color:#0f9d58">-15.23%</b>（买入持有 -21.62%）</span><span class="chip">年化 <b style="color:#d4380d">+14.89%</b></span><span class="chip">持仓 <b>39.5%</b> 交易日</span><span class="chip">买卖 <b>6</b> 买 / <b>5</b> 卖</span><span class="chip">胜率 <b style="color:#42474f">100%</b><i>（5 笔已平仓，均 +14.28%）</i></span><span class="chip">当前 <b>持仓中</b>（06-26 买入）</span>
 <div class="dimtxt" style="margin-top:6px;line-height:1.75">
 口径：<b>前复权</b>收盘价 · <b>零手续费</b> · 初始净值 <b>1.00</b> ·
 窗口 2021-10-28 ~ 2026-10-28（1212 个交易日 / 5.00 年）。
 规则：收盘 &lt; MA200×0.97 买入 → 收盘 &gt; MA200×1.06 卖出 →
 中间区间维持上一状态，未达买点持币。收益按「前一日收盘后的状态」结算，信号当日成交、次日才计入涨跌，无未来函数。
 <b>▲ 红 = 买入　▼ 绿 = 卖出</b>，底部色带 = 持有 512040 的区间（空白即持币）。
-<br>· 长历史 CSV（2018-12-03 起）
+<br>· 长历史 CSV（2018-12-03 起）<br>· <b>胜率口径</b>：已平仓回合「收益 &gt; 0」的比例（当前未平仓那笔不计）。本策略卖出条件是 MA200×1.06，本身即<b>盈利出场</b>，故胜率天然接近 100%；真正区分度看<b>平均每笔</b>与<b>持仓天数</b>。
 </div>
 </div>
 <div class="tblwrap"><svg viewBox="0 0 980 300" class="csvg" role="img"
@@ -926,14 +942,14 @@ table.d3tbl.sm{font-size:11.5px}
 
 <h3 class="sph3" style="margin-top:22px">📉 512890 价值引擎 · 近 5 年回测净值曲线</h3>
 <div class="note" style="margin-bottom:8px;padding:9px 12px">
-<span class="chip"><i style="background:#3d57e5"></i>价值引擎策略 <b style="color:#d4380d">+113.42%</b></span><span class="chip"><i style="background:#98a1ad"></i>同期买入持有 <b style="color:#d4380d">+60.74%</b></span><span class="chip">最大回撤 <b style="color:#0f9d58">-11.82%</b>（买入持有 -14.16%）</span><span class="chip">年化 <b style="color:#d4380d">+16.37%</b></span><span class="chip">持仓 <b>40.4%</b> 交易日</span><span class="chip">买卖 <b>9</b> 买 / <b>8</b> 卖</span><span class="chip">当前 <b>持仓中</b>（01-05 买入）</span>
+<span class="chip"><i style="background:#3d57e5"></i>价值引擎策略 <b style="color:#d4380d">+113.42%</b></span><span class="chip"><i style="background:#98a1ad"></i>同期买入持有 <b style="color:#d4380d">+60.74%</b></span><span class="chip">最大回撤 <b style="color:#0f9d58">-11.82%</b>（买入持有 -14.16%）</span><span class="chip">年化 <b style="color:#d4380d">+16.37%</b></span><span class="chip">持仓 <b>40.4%</b> 交易日</span><span class="chip">买卖 <b>9</b> 买 / <b>8</b> 卖</span><span class="chip">胜率 <b style="color:#42474f">100%</b><i>（8 笔已平仓，均 +9.42%）</i></span><span class="chip">当前 <b>持仓中</b>（01-05 买入）</span>
 <div class="dimtxt" style="margin-top:6px;line-height:1.75">
 口径：<b>前复权</b>收盘价 · <b>零手续费</b> · 初始净值 <b>1.00</b> ·
 窗口 2021-10-28 ~ 2026-10-28（1212 个交易日 / 5.00 年）。
 规则：收盘 &lt; MA200×1.00 买入 → 收盘 &gt; MA200×1.06 卖出 →
 中间区间维持上一状态，未达买点持币。收益按「前一日收盘后的状态」结算，信号当日成交、次日才计入涨跌，无未来函数。
 <b>▲ 红 = 买入　▼ 绿 = 卖出</b>，底部色带 = 持有 512040 的区间（空白即持币）。
-<br>· 长历史 CSV（2019-01-18 起）
+<br>· 长历史 CSV（2019-01-18 起）<br>· <b>胜率口径</b>：已平仓回合「收益 &gt; 0」的比例（当前未平仓那笔不计）。本策略卖出条件是 MA200×1.06，本身即<b>盈利出场</b>，故胜率天然接近 100%；真正区分度看<b>平均每笔</b>与<b>持仓天数</b>。
 </div>
 </div>
 <div class="tblwrap"><svg viewBox="0 0 980 300" class="csvg" role="img"
@@ -996,7 +1012,7 @@ table.d3tbl.sm{font-size:11.5px}
 <div id="rfFab"><button id="rfBtn" onclick="rfToggle()">🔄 刷新日报</button></div>
 <div id="rfPanel">
   <h4>一键刷新（触发云端重算）</h4>
-  <div id="rfGen">本页生成于：2026-10-29 04:47</div>
+  <div id="rfGen">本页生成于：2026-10-29 08:01</div>
   <p>首次使用粘贴一次 <b>GitHub Token</b>（仅需 repo 权限）。<b>仅存你本机浏览器</b>，不进仓库、不发给任何第三方，只发往 api.github.com。</p>
   <input id="rfToken" type="password" placeholder="ghp_... 或 github_pat_..." />
   <button onclick="rfSaveRun()">保存并刷新</button>
