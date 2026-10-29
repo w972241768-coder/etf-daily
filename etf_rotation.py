@@ -425,6 +425,10 @@ def _p3_card_html(p3, recent, cost):
                 return "—"
             return f"{v:+.2f}{unit}" if sign else f"{v:.2f}{unit}"
 
+        def _c2(v):
+            """None/NaN 一律灰色，其余红涨绿跌。"""
+            return col(v) if (isinstance(v, (int, float)) and v == v) else "#98a1ad"
+
         rows_last = ""
         for x in (p3.get("last") or []):
             _p = x.get("pct")
@@ -436,16 +440,27 @@ def _p3_card_html(p3, recent, cost):
                           f'<span class="dimtxt"> {html.escape(str(x.get("code") or ""))}</span>')
             if x.get("head") == x.get("code"):
                 _sell_cell += '<span class="dimtxt">（同上）</span>'
+            # 本次事件表现（2026-10-29 用户要求）：该笔赚了多少 / 同期上证 / 超额；
+            # 空仓格里再补一行「空仓期上证」，说明这 20 天躲过（或错过）了多少。
+            _bc = x.get("bench_cool")
+            _bc_txt = (f'<br><span class="dimtxt">上证 {_n(_bc)}</span>'
+                       if isinstance(_bc, (int, float)) and _bc == _bc else "")
             rows_last += (
                 f'<tr><td class="mono">{html.escape(str(x["date"]))}</td>'
                 f'<td>{_head_cell}</td>'
                 f'<td class="num" style="color:{CLR_P3};font-weight:700">{_n(x.get("roc"))}</td>'
                 f'<td class="num">{_pcell}</td>'
                 f'<td>{_sell_cell}</td>'
-                f'<td class="num">{x["days"]} 日</td>'
+                f'<td class="num" style="color:{_c2(x.get("hold_ret"))};font-weight:600">'
+                f'{_n(x.get("hold_ret"))}</td>'
+                f'<td class="num" style="color:{_c2(x.get("bench_hold"))}">'
+                f'{_n(x.get("bench_hold"))}</td>'
+                f'<td class="num" style="color:{_c2(x.get("excess"))};font-weight:600">'
+                f'{_n(x.get("excess"))}</td>'
+                f'<td class="num">{x["days"]} 日{_bc_txt}</td>'
                 f'<td class="mono">{html.escape(str(x["until"]))}</td></tr>')
         if not rows_last:
-            rows_last = '<tr><td colspan="7" class="dimtxt">区间内没有触发</td></tr>'
+            rows_last = '<tr><td colspan="10" class="dimtxt">区间内没有触发</td></tr>'
 
         return f"""<style>{_D3_CSS}</style>
 <div class="d3card p3">
@@ -492,13 +507,20 @@ def _p3_card_html(p3, recent, cost):
       <th class="num" title="当日头名的 60 日动量">该头名 ROC60</th>
       <th class="num" title="该 ROC60 在自身扩张历史中的百分位；触发线 95，故必然 ≥95">自身历史分位</th>
       <th>当日卖出（当时持仓）</th>
-      <th class="num">空仓</th><th>回场日</th></tr></thead>
+      <th class="num" title="被止盈那一笔的持仓段收益（策略净值口径，已含双边成本）">本次持仓</th>
+      <th class="num" title="与该笔持仓完全同窗口的上证指数涨跌">同期上证</th>
+      <th class="num" title="本次持仓 − 同期上证">超额</th>
+      <th class="num" title="空仓交易日数；下方小字为这 20 天上证的涨跌（空仓期策略收益为 0）">空仓</th>
+      <th>回场日</th></tr></thead>
       <tbody>{rows_last}</tbody></table></div>
     <div class="sub" style="margin-top:6px;font-size:11px;line-height:1.6">
     <b>三件事别混</b>：①「触发依据 · 当日头名」= 当天动横20 排名第 1 名，P3 判定的是<b>它的</b> ROC60 有没有进自身历史 95 分位；
     ②「当日卖出」= 你那时<b>实际持有的</b>那只 —— 因为冷却/未换仓，它可能不是当日头名，两者不同是正常的；
     ③ <b>触发日＝清仓日</b>：当天收盘判定、当天收盘清仓，次日起空仓；<b>回场日</b> = 空仓满 {p3['days']} 个交易日后那天，按当日动横20 第 1 名买回。
-    <br>「自身历史分位」= 该值在该标的自身扩张历史里排第几（0~100），触发线固定 95，所以必然 ≥95；越接近 100 说明当时涨得越极端。</div>
+    <br>「自身历史分位」= 该值在该标的自身扩张历史里排第几（0~100），触发线固定 95，所以必然 ≥95；越接近 100 说明当时涨得越极端。
+    <br>「本次持仓 / 同期上证 / 超额」= 被止盈那一笔从建仓到清仓的收益、同一窗口的上证涨跌、两者之差
+    （策略收益含双边成本 {cost*100:.1f}%）；「空仓」格里的小字是<b>空仓期</b>的上证涨跌 ——
+    空仓期策略收益为 0，所以它为正 = 这 20 天躲过了上涨（代价），为负 = 躲过了下跌（收益）。</div>
   </div>
   <div class="d3sw">{act}</div>
   <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 {cost*100:.1f}%，

@@ -709,6 +709,30 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     weak_last = _we[-1] if _we else None
     rc = r.get("roc_cools") or []
     rci = ri.get("roc_cools") or []
+
+    # ---- 单次 P3 事件的表现（2026-10-29 用户要求：每次事件都要有收益 + 同期上证对比）----
+    def _ev_perf(c):
+        """返回该次事件的三个数：
+          hold_ret   = 被止盈那一笔的持仓段收益（策略净值口径，已含双边成本）
+          bench_hold = 同持仓段的上证涨跌（同一窗口）
+          bench_cool = 空仓期（触发日→回场日）的上证涨跌 —— P3 到底躲过了什么
+        """
+        _d0, _nav0, _nav1 = None, None, None
+        for _t in r["trades"]:
+            if _t["date"] > c["date"]:
+                break
+            if _t.get("to") and _t["to"] != "CASH":
+                _d0, _nav0 = _t["date"], float(_t["nav"])
+            if _t["date"] == c["date"]:
+                _nav1 = float(_t["nav"])
+        _hold = ((_nav1 / _nav0 - 1.0) * 100) if (_nav0 and _nav1) else None
+        _bh = _bench_ret(_d0, c["date"]) if _d0 else None
+        _bc = _bench_ret(c["date"], c["until"])
+        _bhv = (_bh * 100) if _bh is not None else None
+        return dict(hold_ret=_hold, bench_hold=_bhv,
+                    bench_cool=(_bc * 100 if _bc is not None else None),
+                    excess=((_hold - _bhv) if (_hold is not None and _bhv is not None) else None))
+
     last = rc[-1] if rc else None
     active = (hold == "CASH")
     remain, back = None, None
@@ -865,7 +889,8 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                    roc=c.get("roc"), pct=c.get("pct"), m20=c.get("m20"),
                    code=c.get("code"), name=c.get("name"),
                    held_m20=c.get("held_m20"),
-                   until=c["until"], days=c["days"]) for c in rc[-3:]][::-1],
+                   until=c["until"], days=c["days"],
+                   **_ev_perf(c)) for c in rc[-3:]][::-1],
         # 三列对比：现用策略 / D3+P3（主口径） / 参照 D3 / 参照 仅P3
         metrics=metrics,
         base=_pack(sb, base_navs), d3=_pack(sd, d3_navs),
