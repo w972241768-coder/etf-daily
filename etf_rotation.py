@@ -193,23 +193,23 @@ def _combo_summary_html(recent):
             return ""
         base_pack = d3.get("base") or {}
 
-        # ---- 口径变更提示（2026-10-28 E3 接入，过渡期 1 周内显示）----
-        # 为什么必须提示：切到 E3 后「抄底持仓进锁定期、D3 不再介入」，
-        # 10-27 那条「D3 止损→空仓」的指令被撤销，页面会显示「继续持 588170 / 无需动作」，
-        # 但用户很可能已经按旧口径清仓了。不提示会让人以为不用买。
-        # ★ 2026-10-29（用户审阅指出）：这条备忘只对「当天按旧口径清仓」的人有意义，
-        #   3 天后就是挡视线的置顶广告 ⇒ 只显示 10-28 ~ 10-30 三天，之后自动消失。
+        # ---- 口径变更提示（2026-10-28 E3 接入，过渡期显示）----
+        # ★ 2026-10-29（用户要求「把首屏最顶端的位置彻底腾出来」）：
+        #   这条提示从**顶部 4 行橙框**改为**底部折叠条目**（默认收起），
+        #   且只在 10-28 ~ 10-30 三个交易日内出现，之后自动消失。
         _migrate_html = ""
         _asof_s = str(recent.get("asof") or "")
         if "2026-10-28" <= _asof_s <= "2026-10-30":
             _migrate_html = (
-                '<div class="migr"><b>⚠ 口径已变更（2026-10-28）</b>：'
-                '抄底持仓改为<b>锁定期</b> —— 期内 D3 / P3 不再介入，'
+                '<details class="migrdet"><summary>⚠ 10-28 口径变更说明'
+                '（抄底持仓改为锁定期）</summary>'
+                '<div class="migr">'
+                '自 2026-10-28 起，抄底持仓改为<b>锁定期</b> —— 期内 D3 / P3 不再介入，'
                 '满足「<b>回 MA20 上方</b>」或「<b>满 10 个交易日</b>」任一条件'
-                '才换回当日第 1 名。<br>'
-                '若你在 10-27 已按旧口径（D3 止损）清仓，<b>今日应按新口径买回</b>；'
+                '才换回当日第 1 名。'
+                '若你在 10-27 已按旧口径（D3 止损）清仓，<b>需按新口径买回</b>；'
                 '页面「当前持 X」是按模型口径推算的，与你的实际账户可能不同，'
-                '<b>请以实际持仓为准</b>。</div>')
+                '<b>请以实际持仓为准</b>。</div></details>')
 
         def _hold_cell(name, is_cash):
             cls = "cash" if is_cash else "hold"
@@ -289,7 +289,6 @@ def _combo_summary_html(recent):
 
         _wstate_bar = _wstate_html(((recent.get("p3") or {}).get("weak_state")))
         return f"""<div class="cbsum {pill_cls}">
-{_migrate_html}
 <div class="cbpill">{pill}
 <details class="cbdet"{_det_open}><summary>回测对比 · 规则</summary>
 <div class="tblwrap"><table class="cbst"><thead><tr>
@@ -301,7 +300,7 @@ def _combo_summary_html(recent):
 三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
 </div>
-{_wstate_bar}"""
+{_wstate_bar}{_migrate_html}"""
     except Exception:                          # noqa: BLE001
         return ""
 
@@ -400,9 +399,25 @@ def _p3_card_html(p3, recent, cost):
             act = ("今天<b>不用操作</b>。"
                    "D3 / P3 / 抄底 三条规则各自独立判定，谁触发谁生效。")
         else:
-            state = (f'<span class="d3badge on">今日调整</span>'
-                     f'按现行口径应持 <b>{html.escape(p3["hold_name"])}</b>')
-            act = f'今天应调整为 <b>{html.escape(p3["hold_name"])}</b>。'
+            # ★ 2026-10-29（用户指出歧义）：只要「今日该持」≠「基础轮动头名」，
+            #   这段每天都会输出「今天应调整为 X」——可实际上昨天就已经持有 X 了，
+            #   连着几天读会误以为天天都要动手。改为与**上一交易日实际持仓**比较：
+            #     已持有 → 「无需调整，继续持有（自 X 起）」
+            #     确实要换 → 才说「今天应调整为 X」
+            _prev = p3.get("prev_hold")
+            _same_prev = bool(_prev) and _prev == p3.get("hold")
+            if _same_prev:
+                _ws = p3.get("weak_state") or {}
+                _since = (f'（自 <b>{_ws["entry_date"]}</b> 建仓，锁定期内不随头名换仓）'
+                          if _ws.get("entry_date") else "")
+                state = (f'<span class="d3badge off">持仓维持</span>'
+                         f'按现行口径继续持 <b>{html.escape(p3["hold_name"])}</b>')
+                act = (f'今天<b>无需调整</b>，继续持有 '
+                       f'<b>{html.escape(p3["hold_name"])}</b>{_since}。')
+            else:
+                state = (f'<span class="d3badge on">今日调整</span>'
+                         f'按现行口径应持 <b>{html.escape(p3["hold_name"])}</b>')
+                act = f'今天应调整为 <b>{html.escape(p3["hold_name"])}</b>。'
 
         def _n(v, unit="%", sign=True):
             """None/NaN 统一显示「—」，避免卡片出现 nan。"""
@@ -1280,14 +1295,28 @@ def _health_html(m) -> str:
                        f'（第 {hp:.0f} 百分位 / 共 {_n} 段）</i>')
         else:
             pct_txt = f'<i>第 <b>{hp:.0f}</b> 百分位（共 {_n} 段，越高越好）</i>'
+    # ★ 2026-10-29 用户要求：每个数据下面标出它对应的时间段，避免「+45.4% 是哪一年」的歧义
+    def _rng(a, b, tail=""):
+        if not a:
+            return ""
+        _t = f'{html.escape(str(a))} → {html.escape(str(b or "至今"))}{tail}'
+        return f'<span class="hseg">{_t}</span>'
+    up_rng = _rng(m.get("seg_up_from"), m.get("seg_up_to"))
+    dn_rng = _rng(m.get("seg_dn_from"), m.get("seg_dn_to"))
+    cur_rng = ""
+    if cdd < -0.05 and m.get("peak_date"):
+        cur_rng = _rng(m.get("peak_date"), "至今")
+    elif cup > 0.05 and m.get("trough_date"):
+        cur_rng = _rng(m.get("trough_date"), "至今")
+    hold_rng = _rng(m.get("hold_since"), "至今")
     cells = [
         ("近 5 年最大波段涨幅",
-         f'<b style="color:{RED}">{_pc(up)}</b><i>单段 谷→峰</i>'),
+         f'<b style="color:{RED}">{_pc(up)}</b><i>单段 谷→峰</i>{up_rng}'),
         ("近 5 年最大波段回撤",
-         f'<b style="color:{GREEN}">{_pc(dn)}</b><i>单段 峰→谷</i>'),
-        ("当前波段", cur_v + cur_n),
+         f'<b style="color:{GREEN}">{_pc(dn)}</b><i>单段 峰→谷</i>{dn_rng}'),
+        ("当前波段", cur_v + cur_n + cur_rng),
         ("当前持仓段收益",
-         f'<b style="color:{hcol}">{_pc(hr, 2)}</b>{pct_txt}'),
+         f'<b style="color:{hcol}">{_pc(hr, 2)}</b>{pct_txt}{hold_rng}'),
     ]
     body = "".join(f'<div class="hc"><span class="hk">{k}</span>{v}</div>'
                    for k, v in cells)
@@ -1847,6 +1876,23 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
     navs = pd.Series(navs, index=w.index)
     bh = w / float(w.iloc[0])
 
+    # ---- 每笔「买入→卖出」的胜率（2026-10-29 用户要求：两个策略都要看胜率）----
+    # 口径：只统计**已平仓**的完整回合（BUY → 下一次 SELL），用净值比算该段收益
+    # （零手续费口径，与卡片其余数字同源）；当前未平仓的那一笔不计入，避免虚高/虚低。
+    _trips, _open_d = [], None
+    for _e in events:
+        if _e["act"] == "BUY":
+            _open_d = _e["date"]
+        elif _e["act"] == "SELL" and _open_d is not None:
+            try:
+                _trips.append(float(navs.loc[_e["date"]]) / float(navs.loc[_open_d]) - 1.0)
+            except Exception:                  # noqa: BLE001
+                pass
+            _open_d = None
+    _n_tr = len(_trips)
+    _win_rate = (sum(1 for _x in _trips if _x > 0) / _n_tr * 100) if _n_tr else None
+    _trip_avg = (sum(_trips) / _n_tr * 100) if _n_tr else None
+
     yrs = (w.index[-1] - w.index[0]).days / 365.25
     mdd = float((navs / navs.cummax() - 1).min() * 100)
     return dict(
@@ -1863,6 +1909,7 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
         hold_rate=float(sw.mean() * 100),
         n_buy=sum(1 for e in events if e["act"] == "BUY"),
         n_sell=sum(1 for e in events if e["act"] == "SELL"),
+        win_rate=_win_rate, trips_n=_n_tr, trip_avg=_trip_avg,
         bh_final=float(bh.iloc[-1]), bh_ret=(float(bh.iloc[-1]) - 1) * 100,
         bh_mdd=float((bh / bh.cummax() - 1).min() * 100),
         holding_now=bool(sw.iloc[-1]),
@@ -1989,13 +2036,24 @@ def _ve_curve_block(vc):
         f'<span class="chip">年化 <b style="color:{_cc(vc["cagr"])}">{vc["cagr"]:+.2f}%</b></span>'
         f'<span class="chip">持仓 <b>{vc["hold_rate"]:.1f}%</b> 交易日</span>'
         f'<span class="chip">买卖 <b>{vc["n_buy"]}</b> 买 / <b>{vc["n_sell"]}</b> 卖</span>'
-        f'<span class="chip">当前 <b>{"持仓中" if vc["holding_now"] else "持币中"}</b>'
+        # 胜率：非方向性指标，按页面规范用中性色（不用红涨绿跌）
+        + (f'<span class="chip">胜率 <b style="color:#42474f">{vc["win_rate"]:.0f}%</b>'
+           f'<i>（{vc["trips_n"]} 笔已平仓，均 {vc["trip_avg"]:+.2f}%）</i></span>'
+           if vc.get("win_rate") is not None else "")
+        + f'<span class="chip">当前 <b>{"持仓中" if vc["holding_now"] else "持币中"}</b>'
         + (f'（{vc["last_buy"]:%m-%d} 买入）'
            if vc["holding_now"] and vc["last_buy"] is not None else "")
         + '</span>'
     )
 
     notes = "".join(f"<br>· {html.escape(x)}" for x in (vc.get("notes") or []))
+    if vc.get("win_rate") is not None:
+        # 口径说明必须写在屏上（触屏没有 hover）：本策略的卖出条件本身就是
+        # 「涨过 MA200×1.06」，属盈利出场，所以胜率天然接近 100%，区分度看平均每笔。
+        notes += (f'<br>· <b>胜率口径</b>：已平仓回合「收益 &gt; 0」的比例'
+                  f'（当前未平仓那笔不计）。本策略卖出条件是 '
+                  f'MA{vc["ma"]}×{vc["sell"]:.2f}，本身即<b>盈利出场</b>，'
+                  f'故胜率天然接近 100%；真正区分度看<b>平均每笔</b>与<b>持仓天数</b>。')
 
     return f"""
 <h3 class="sph3" style="margin-top:22px">📉 {vc['code']} 价值引擎 · 近 {vc['years']} 年回测净值曲线</h3>
@@ -2509,7 +2567,11 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             f'<span class="v">指数 {idx["code"]} <b style="color:{_cid}">{_idv:+.2f}%</b>'
             f'<i>{_dist(_idv)}</i></span>'
             f'<span class="v">口径差 <b>{idx["gap"]:+.2f}pp</b></span>'
-            '</div>'
+            # 历史胜率（2026-10-29 用户要求）：用户实持 512040，需要知道这套规则的历史命中率
+            + (f'<span class="v">历史胜率 <b style="color:#42474f">{ve_curve["win_rate"]:.0f}%</b>'
+               f'<i>{ve_curve["trips_n"]} 笔已平仓 · 均 {ve_curve["trip_avg"]:+.2f}%</i></span>'
+               if (ve_curve or {}).get("win_rate") is not None else "")
+            + '</div>'
             # 近 1 年偏离区间：判「今天 −4.38% 到底算便宜还是还在半山腰」的参照
             + _hspan_html(idx.get("f_span"), buy_label="−3% 买线",
                           alt=idx.get("i_span"), alt_label="指数口径")
@@ -2587,7 +2649,11 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             f'<i>{_tsell_txt}</i></span>'
             f'<span class="v">偏离 <b style="color:{_tcls}">{_tdev:+.2f}%</b></span>'
             f'<span class="v">状态 <b>{_tstate}</b></span>'
-            f'</div>'
+            # 历史胜率（2026-10-29 用户要求）：512890 也实持，同样给命中率
+            + (f'<span class="v">历史胜率 <b style="color:#42474f">{ve2_curve["win_rate"]:.0f}%</b>'
+               f'<i>{ve2_curve["trips_n"]} 笔已平仓 · 均 {ve2_curve["trip_avg"]:+.2f}%</i></span>'
+               if (ve2_curve or {}).get("win_rate") is not None else "")
+            + '</div>'
             # 近 1 年偏离区间：判「现在 +2.42% 该不该等回踩」的参照
             + _hspan_html(_t.get("span"), buy_label="MA200 买线")
             + (f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>' if _tnote else "")
@@ -3046,10 +3112,10 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                 rr_rows.append(
                     "<tr>"
                     f'<td class="num">{rw["idx"]}</td>'
-                    f'<td class="mono">{rw["date"]}</td>'
+                    f'<td class="mono num">{rw["date"]}</td>'
                     f'<td><span class="mono">{rw["to"]}</span> {html.escape(rw["to_name"])}'
                     f' <span class="tag tie">自 {rw["frm_name"]}</span></td>'
-                    f'<td class="mono">{rw["end_date"]}<br><span class="dimtxt">{_tag}</span></td>'
+                    f'<td class="mono num">{rw["end_date"]}<br><span class="dimtxt">{_tag}</span></td>'
                     f'<td class="num" style="font-weight:600">{_dtxt}</td>'
                     f'<td class="num" style="color:{_color(_r)};font-weight:600">'
                     f'{_fmt(_r)}</td>'
@@ -3085,9 +3151,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             rr_rows.append(
                 '<tr class="def">'
                 f'<td class="num">Σ</td>'
-                f'<td class="mono">{_c["start"]}</td>'
+                f'<td class="mono num">{_c["start"]}</td>'
                 f'<td><b>累计 {_c["trades"]} 次换仓连乘</b></td>'
-                f'<td class="mono">{_c["end"]}</td>'
+                f'<td class="mono num">{_c["end"]}</td>'
                 f'<td class="num" style="font-weight:700">{_cum_days} 日</td>'
                 f'<td class="num" style="color:{_color(_cr)};font-weight:700">'
                 f'{_fmt(_cr)}</td>'
@@ -3122,9 +3188,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 取最近 {_n} 次系统建议换仓，计算「该次换仓日起到下一次换仓（或至今）」的净值收益与<b>持仓天数</b>，
 并与<b>同期上证指数</b>对比。{rr_src}</div></details>
 </div>
-<div class="tblwrap"><table class="rtbl"><thead><tr><th>#</th><th>建议换仓日</th><th>买入</th><th>持仓至</th>
-<th title="该段实际持仓的交易日根数">持仓天数</th>
-<th>策略收益</th><th>同期上证</th><th>超额</th><th>触发依据</th></tr></thead><tbody>
+<div class="tblwrap"><table class="rtbl"><thead><tr><th class="num">#</th><th class="num">建议换仓日</th><th>买入</th><th class="num">持仓至</th>
+<th class="num" title="该段实际持仓的交易日根数">持仓天数</th>
+<th class="num">策略收益</th><th class="num">同期上证</th><th class="num">超额</th><th>触发依据</th></tr></thead><tbody>
 {''.join(rr_rows)}
 </tbody></table></div>
 <div class="sub" style="margin-top:8px">{rr_note}</div>
@@ -3380,6 +3446,14 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .migr{{margin:0 0 9px;padding:8px 12px;background:#f7f9fb;border:1px solid #e2e8ef;
     border-left:3px solid #7b8ea8;border-radius:9px;font-size:11.5px;line-height:1.7;
     color:#4b5563;white-space:normal}}
+  /* 口径变更说明（2026-10-29）：从首屏顶部挪到「今日操作」最底部，默认折叠，3 天后自动消失 */
+  details.migrdet{{margin:9px 0 0;font-size:11.5px;color:#6c717f}}
+  details.migrdet>summary{{cursor:pointer;list-style:none;outline:none;color:#7b8ea8;
+    padding:2px 0}}
+  details.migrdet>summary::-webkit-details-marker{{display:none}}
+  details.migrdet>summary::before{{content:"▸ "}}
+  details.migrdet[open]>summary::before{{content:"▾ "}}
+  details.migrdet .migr{{margin:6px 0 0}}
   .pillcal{{font-size:11px;color:#8b93a1;font-weight:400}}
   .cbpill{{font-size:15px;line-height:1.58;color:#202020;white-space:normal;font-weight:500}}
   .cbpill b{{font-weight:800}}
@@ -3473,6 +3547,9 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .hc .hk{{font-size:11px;color:#6c717f}}
   .hc b{{font-size:16px;font-weight:800;font-variant-numeric:tabular-nums}}
   .hc i{{font-style:normal;font-size:10.5px;color:#8b93a1;line-height:1.5}}
+  /* 指标对应的时间段（2026-10-29）：小一号、更淡，紧贴在数值说明下面 */
+  .hc .hseg{{font-size:10px;color:#a3abb8;line-height:1.45;
+    font-variant-numeric:tabular-nums}}
   @media(max-width:600px){{.hc{{flex:1 1 46%}}}}
   /* 「我的实盘跟踪」区块（2026-10-26）：放在 ③ 之后，不挤占首屏 */
   .minesec{{margin:26px 0 0;background:#fbfcfe;border:1px solid #e2e5ea;
@@ -3602,6 +3679,12 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   details.defcol .dfh{{color:#9aa3b0;font-size:11px;margin-left:8px}}
   details.defcol table.gtbl{{margin:2px 0 10px}}
   table.rtbl th,table.rtbl td{{padding:6px 6px}}
+  /* 数字列居中（2026-10-29 用户要求）：① 排名表与 ② 换仓复盘共用 .rtbl，
+     表头与数值同列对齐，扫行时不再左右横跳 */
+  table.rtbl td.num, table.rtbl th.num,
+  table.rtbl th.c-idx, table.rtbl th.c-m20, table.rtbl th.c-dev,
+  table.rtbl th.c-since, table.rtbl th.c-px, table.rtbl th.c-chg,
+  table.rtbl th.c-ma20{{text-align:center}}
   table.rtbl td.vcell{{white-space:normal;min-width:130px}}
   /* ①「切换至今」列：买入日距今 >120 交易日 → 数字淡色 + 虚线下划线，
      提醒这是很久以前那一段的收益，不是近期表现（悬停看起止日） */

@@ -770,19 +770,31 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     _ups, _downs = [], []
     for _k in range(1, len(_piv)):
         _a, _b = _piv[_k - 1], _piv[_k]
+        # ★ 2026-10-29 用户要求：每个体检指标下面要标「是哪一段时间」，
+        #   故每段都带上起止日期（谷日/峰日），取极值时一并取出。
         if _a[2] == "L" and _b[2] == "H":
-            _ups.append((_b[1] / _a[1] - 1.0) * 100)      # 单段上涨（谷→峰）
+            _ups.append(((_b[1] / _a[1] - 1.0) * 100,
+                         str(_d5.index[_a[0]].date()), str(_d5.index[_b[0]].date())))
         elif _a[2] == "H" and _b[2] == "L":
-            _downs.append((_b[1] / _a[1] - 1.0) * 100)    # 单段下跌（峰→谷）
+            _downs.append(((_b[1] / _a[1] - 1.0) * 100,
+                           str(_d5.index[_a[0]].date()), str(_d5.index[_b[0]].date())))
     _hs = [p for p in _piv if p[2] == "H"]
     _ls = [p for p in _piv if p[2] == "L"]
     _lh = _hs[-1] if _hs else None
     _ll = _ls[-1] if _ls else None
     _now5 = float(_d5.iloc[-1])
-    _cur_dd = ((_now5 / _lh[1] - 1.0) * 100) if (_lh and _now5 < _lh[1]) else 0.0
-    _cur_up = ((_now5 / _ll[1] - 1.0) * 100) if (_ll and _now5 > _ll[1]) else 0.0
-    _seg_max_up = max(_ups) if _ups else None
-    _seg_max_dn = min(_downs) if _downs else None
+    # ★ 2026-10-29：当前波段的方向必须看**最后一个拐点是峰还是谷**。
+    #   旧写法只要价格低于最后一个峰就报「下跌中」，于是在「刚从谷底反弹」的日子
+    #   会同时显示「最大回撤段已结束于 10-27」和「当前下跌中」，自相矛盾。
+    _last_is_low = bool(_ll) and (not _lh or _ll[0] > _lh[0])
+    _cur_dd = (((_now5 / _lh[1] - 1.0) * 100)
+               if (not _last_is_low and _lh and _now5 < _lh[1]) else 0.0)
+    _cur_up = (((_now5 / _ll[1] - 1.0) * 100)
+               if (_last_is_low and _ll and _now5 > _ll[1]) else 0.0)
+    _seg_up = max(_ups, key=lambda x: x[0]) if _ups else None
+    _seg_dn = min(_downs, key=lambda x: x[0]) if _downs else None
+    _seg_max_up = _seg_up[0] if _seg_up else None
+    _seg_max_dn = _seg_dn[0] if _seg_dn else None
     _peak_date = str(_d5.index[_lh[0]].date()) if _lh else None
     _trough_date = str(_d5.index[_ll[0]].date()) if _ll else None
     # 每笔持仓段收益（用换仓时点的净值差近似，含成本）
@@ -793,9 +805,11 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             _seg.append((_b / _a - 1.0) * 100)
     # 「当前持仓阶段」= 最后一笔非 CASH 换仓至今（若已清仓，则等于该笔已实现收益）
     _seg_nav = None
+    _hold_since = None
     for _t in reversed(r["trades"]):
         if _t.get("to") and _t["to"] != "CASH":
             _seg_nav = float(_t["nav"])
+            _hold_since = str(_t.get("date") or "")
             break
     _hold_ret = ((float(navs.iloc[-1]) / _seg_nav - 1.0) * 100
                  if _seg_nav else None)
@@ -806,6 +820,12 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         _hold_pct = sum(1 for _x in _seg if _x < _hold_ret) / len(_seg) * 100
     metrics = dict(mdd5=_mdd5, dd_now=_dd_now,
                    seg_max_up=_seg_max_up, seg_max_dn=_seg_max_dn,
+                   # 每个极值段的起止日（2026-10-29 用户要求：数据下方标明时间段）
+                   seg_up_from=(_seg_up[1] if _seg_up else None),
+                   seg_up_to=(_seg_up[2] if _seg_up else None),
+                   seg_dn_from=(_seg_dn[1] if _seg_dn else None),
+                   seg_dn_to=(_seg_dn[2] if _seg_dn else None),
+                   hold_since=_hold_since,
                    cur_dd=_cur_dd, cur_up=_cur_up,
                    peak_date=_peak_date, trough_date=_trough_date,
                    piv_n=len(_piv), up_n=len(_ups), dn_n=len(_downs),
