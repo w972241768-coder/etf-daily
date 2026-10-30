@@ -1119,7 +1119,7 @@ def _rebase_pct(pct, i0):
 
 
 def _svg_chart(dates, pct, switches=None, *, W=920.0, H=300.0, uid="cv1",
-               tail_html=""):
+               tail_html="", after_svg=""):
     """单张内联 SVG 折线图 + 光标数据；失败返回 None。
 
     静态部分（网格/折线/末端标注/切换点）全在 SVG 里，打印与禁用 JS 时仍正确；
@@ -1261,7 +1261,7 @@ def _svg_chart(dates, pct, switches=None, *, W=920.0, H=300.0, uid="cv1",
            f'<div class="tblwrap"><svg id="{uid}-svg" viewBox="0 0 {W:.0f} {H:.0f}" '
            f'class="csvg" role="img" aria-label="净值曲线 {uid}">'
            f'{grid_svg}{xt_svg}{"".join(lines)}{ends_svg}{mark_svg}{cursor_svg}'
-           f'</svg>{tail_html}</div>'
+           f'</svg>{tail_html}{after_svg}</div>'
            f'<div class="cvhint">鼠标在图上移动 → 竖线与高亮点跟随，浮窗显示当日各序列的累计涨跌；'
            f'<b>单击可锁定/解锁</b>，方便对着某一天慢慢看（触屏可拖动）。</div>'
            f'</div>')
@@ -1466,7 +1466,7 @@ def _hold_band_svg(dates, holds, names=None, *, W=920.0, H=34.0):
             parts.append(f'<text x="{x0 + w / 2:.1f}" y="{H / 2 + 2:.1f}" font-size="9.5" '
                          f'text-anchor="middle" fill="{tc}" '
                          f'style="font-weight:600">{html.escape(lab)}</text>')
-    return (f'<svg viewBox="0 0 {W:.0f} {H:.0f}" class="csvg" role="img" '
+    return (f'<svg viewBox="0 0 {W:.0f} {H:.0f}" class="csvg cband" role="img" '
             f'aria-label="持仓色带（灰=空仓）">{"".join(parts)}</svg>')
 
 
@@ -1494,6 +1494,7 @@ def _curve_block(curve):
     if not big:
         return ""    # —— 近 2 个月放大：同一批序列，基准重置到该段首日 ——
     small, zoom_from = None, ""
+    _zband = ""
     i0 = None
     try:
         z0 = pd.Timestamp(dates[-1]) - pd.Timedelta(days=ZOOM_DAYS - 1)
@@ -1506,7 +1507,13 @@ def _curve_block(curve):
     if i0 is not None and n - i0 >= 8:
         zpct = _rebase_pct(pct, i0)
         zsw = [s for s in switches if str(s.get("date", "")) >= dates[i0]]
-        small = _svg_chart(dates[i0:], zpct, zsw, W=920.0, H=232.0, uid="cv2")
+        # ★ 2026-10-30：色带必须塞进**同一张图的滚动容器**（after_svg），
+        #   否则它自己是 560px 的独立 svg，在手机上会把整页撑宽 194px。
+        if curve.get("holds") and len(curve["holds"]) == n:
+            _zband = _hold_band_svg(dates[i0:], curve["holds"][i0:],
+                                    curve.get("hold_names") or {}, W=920.0, H=34.0)
+        small = _svg_chart(dates[i0:], zpct, zsw, W=920.0, H=232.0, uid="cv2",
+                           after_svg=_zband)
         if small:
             zoom_from = dates[i0]
 
@@ -1531,22 +1538,20 @@ def _curve_block(curve):
         zpairs = list(small["vis"])
         zpairs.sort(key=lambda t: CURVE_LEGEND.index(t[0]) if t[0] in CURVE_LEGEND else 9)
         zchips_html = _chips(zpairs)
-        # 持仓色带（2026-10-29）：截取放大窗口内的逐日持仓，与该图共用 x 轴
-        _zband = ""
-        if curve.get("holds") and len(curve["holds"]) == n:
-            _zband = _hold_band_svg(dates[i0:], curve["holds"][i0:],
-                                    curve.get("hold_names") or {}, W=920.0, H=34.0)
+        # 持仓色带已在上面作为 after_svg 塞进同一张图的滚动容器（2026-10-30 改），
+        # 这里只保留说明文字。
         zoom_block = f"""
 <h3 class="sph3" style="margin-top:18px">🔍 近 2 个月放大（{zoom_from} 起 = 1.0）</h3>
 <div class="note" style="margin-bottom:8px;padding:9px 12px">
 {zchips_html}
 <span class="dimtxt">　把上面同一批序列截到最近 {ZOOM_DAYS} 个自然日，并把<b>区间首日重定为 1.0</b>，
-便于看清最近两个月的相对强弱；纵轴仍是自该日以来的累计涨跌，光标用法相同。</span>
+便于看清最近两个月的相对强弱；纵轴仍是自该日以来的累计涨跌，光标用法相同。
+<span class="only-m">📱 手机上<b>左右滑动</b>可看完整区间（图与下方色带同步滚动）。</span></span>
 </div>
 {small["html"]}
-{('<div class="bandwrap">' + _zband + '</div>'
-  + '<div class="sub" style="margin-top:4px">底条 = 每个交易日实际持有的标的'
-    '（按主口径 D3+P3+抄底 复算），<b>灰块 = 空仓</b>；与上方曲线共用同一时间轴。</div>')
+{('<div class="sub" style="margin-top:6px">底条 = 每个交易日实际持有的标的'
+  '（按主口径 D3+P3+抄底 复算），<b>灰块 = 空仓</b>；与上方曲线共用同一时间轴，'
+  '手机上可左右滑动查看。</div>')
  if _zband else ""}
 """
 
@@ -2142,8 +2147,10 @@ def _ve_curve_block(vc):
         f'<span class="chip">持仓 <b>{vc["hold_rate"]:.1f}%</b> 交易日</span>'
         f'<span class="chip">买卖 <b>{vc["n_buy"]}</b> 买 / <b>{vc["n_sell"]}</b> 卖</span>'
         # 胜率：非方向性指标，按页面规范用中性色（不用红涨绿跌）
+        # ⚠️ 注释文字必须用 .cnote，不能再用 <i>：`.chip i` 是图例色块（14×3px），
+        #   复用它会把说明文字挤进 14px 的框里溢出到卡片外（2026-10-30 手机端撞出 74px 溢出）。
         + (f'<span class="chip">胜率 <b style="color:#42474f">{vc["win_rate"]:.0f}%</b>'
-           f'<i>（{vc["trips_n"]} 笔已平仓，均 {vc["trip_avg"]:+.2f}%）</i></span>'
+           f'<span class="cnote">（{vc["trips_n"]} 笔已平仓，均 {vc["trip_avg"]:+.2f}%）</span></span>'
            if vc.get("win_rate") is not None else "")
         + f'<span class="chip">当前 <b>{"持仓中" if vc["holding_now"] else "持币中"}</b>'
         + (f'（{vc["last_buy"]:%m-%d} 买入）'
@@ -3783,6 +3790,8 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   details.defcol[open]>summary::before{{content:"▾ "}}
   details.defcol[open]>summary{{border-bottom:1px solid #eceff4;margin-bottom:2px}}
   details.defcol .dfh{{color:#9aa3b0;font-size:11px;margin-left:8px}}
+  /* 手机端：防守位分组标题里的提示语省掉，避免标题折成两行 */
+  @media(max-width:640px){{details.defcol .dfh{{display:none}}}}
   details.defcol table.gtbl{{margin:2px 0 10px}}
   table.rtbl th,table.rtbl td{{padding:6px 6px}}
   /* 数字列居中（2026-10-29 用户要求）：① 排名表与 ② 换仓复盘共用 .rtbl，
@@ -3851,7 +3860,10 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .code-sub,.since-sub{{display:none}}
   @media (max-width:640px){{
     table.rtbl{{font-size:11.5px}}
-    table.rtbl th,table.rtbl td{{padding:5px 4px}}
+    /* 2026-10-30：6 列在 390px 下仍差 34px → 名称允许折行、单元格左右内边距收窄，
+       让「今日涨跌」不再被裁掉（原来要靠左右滑动才看得到最后一列）。 */
+    table.rtbl th,table.rtbl td{{padding:5px 3px}}
+    table.rtbl .c-nm{{white-space:normal;line-height:1.25;max-width:118px}}
     table.rtbl .c-code,table.rtbl .c-px,table.rtbl .c-ma20{{display:none}}
     table.rtbl .c-nm .code-sub{{display:block;font-size:10px;color:#98a1ad;
       font-weight:400;line-height:1.2;margin-top:1px}}
@@ -3865,6 +3877,37 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     .hdet>summary{{font-size:10.5px}}
     /* 今日操作明细表：手机上允许换行，避免长名称撑宽 */
     .gsec table.gtbl{{font-size:11.5px}}
+    /* ===== 今日操作表 → 「一行一卡」（2026-10-30 手机端重排）=====
+       问题：桌面端 table-layout:fixed + 104/296/214px 定宽列，390px 屏上被硬压
+             ⇒「标的」一个字一行、标签竖排、依据只剩 1 字宽，整页横向溢出 194px。
+       方案：拆掉表格语义，每行变一张独立卡片：
+             ① 代码（灰小字）→ ② 标的（粗体 + 标签）→ ③ 今日动作 → ④ 依据（灰小字）
+             条带行（MA200 偏离 / 512890 跟踪）不套卡片，保持块状自然换行。 */
+    .gsec table.gtbl{{display:block;table-layout:auto;width:100%;
+      border:none;background:transparent;box-shadow:none}}
+    .gsec table.gtbl thead{{display:none}}
+    .gsec table.gtbl tbody{{display:block}}
+    .gsec table.gtbl tr{{display:block;background:#fff;border:1px solid #e2e5ea;
+      border-radius:10px;padding:9px 11px;margin:0 0 8px}}
+    .gsec table.gtbl tr:last-child{{margin-bottom:0}}
+    .gsec table.gtbl td{{display:block;width:auto;border:none;padding:0;
+      white-space:normal;text-align:left;min-width:0}}
+    .gsec table.gtbl td.mono{{font-size:11.5px;color:#8b93a1;line-height:1.4}}
+    .gsec table.gtbl td.nm2{{font-size:13.5px;font-weight:600;line-height:1.55;
+      margin:1px 0 6px}}
+    .gsec table.gtbl td.nm2 .tag{{font-size:10.5px;margin-left:4px;
+      vertical-align:2px}}
+    .gsec table.gtbl td:nth-child(3){{font-size:13px;margin-bottom:3px}}
+    .gsec table.gtbl td.rs{{font-size:11.5px;color:#6c717f;line-height:1.65;
+      min-width:0}}
+    /* 条带行（colspan=4）不套卡片 */
+    .gsec table.gtbl tr.defx,.gsec table.gtbl tr.tvx{{background:transparent;
+      border:none;border-radius:0;padding:0;margin:-2px 0 8px}}
+    .gsec table.gtbl tr.defx td,.gsec table.gtbl tr.tvx td{{padding:0}}
+    details.defcol table.gtbl tr{{background:#f8fafc;border-color:#e6e9ef}}
+    /* 底部留白：给固定定位的「刷新日报」按钮让位，避免压住最后一张卡片 */
+    body{{padding:14px 12px 86px}}
+    .wrap{{max-width:100%}}
   }}
 
   /* 净值曲线 SVG */
@@ -3875,12 +3918,19 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   .csvg .cz{{stroke:#b9c0ca;stroke-dasharray:5 4}}
   .csvg .ce{{font-size:11px;font-weight:700;font-family:inherit}}
   /* 持仓色带（2026-10-29）：与上方净值曲线共用时间轴，紧贴图底 */
-  .bandwrap{{margin-top:-6px}}
+  /* 手机端才显示的提示（如「左右滑动」） */
+  .only-m{{display:none}}
+  @media(max-width:640px){{.only-m{{display:inline}}}}
+  /* 持仓色带（2026-10-30）：紧贴曲线下方、无边框背景；与曲线同宽同滚动容器 */
+  .cband{{background:transparent;border:none;border-radius:0;box-shadow:none;
+    margin:-4px 0 0}}
   .bandwrap .csvg{{min-width:560px;background:transparent;
     border:1px solid #e6e9ef;border-radius:8px;padding:2px 0}}
   .chip{{display:inline-flex;align-items:center;gap:5px;margin:0 12px 0 0;
     font-size:12px;color:#374151;white-space:nowrap}}
   .chip i{{display:inline-block;width:14px;height:3px;border-radius:2px}}
+  /* chip 里的说明文字（不能用 <i>，那是色块） */
+  .chip .cnote{{font-style:normal;font-size:11px;color:#8b93a1;white-space:nowrap}}
   /* 阶梯表压缩：单位省略 %、小字、紧凑内边距 */
   table.lad{{font-size:11.5px}}
   table.lad th,table.lad td{{padding:4px 4px}}
@@ -4014,6 +4064,11 @@ REFRESH_WIDGET = """
 <style>
 #rfFab{position:fixed;right:14px;bottom:14px;z-index:9999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
 #rfBtn{background:#3d57e5;color:#fff;border:none;border-radius:24px;padding:12px 18px;font-size:15px;font-weight:600;box-shadow:0 4px 14px rgba(61,87,229,.45);cursor:pointer}
+/* 手机端（2026-10-30）：收成 46px 圆形图标，尽量少压正文（文字用 CSS 隐藏、图标用 ::before 补） */
+@media(max-width:640px){#rfFab{right:12px;bottom:12px}
+#rfBtn{width:46px;height:46px;padding:0;border-radius:50%;font-size:0;
+box-shadow:0 3px 10px rgba(61,87,229,.38)}
+#rfBtn::before{content:"🔄";font-size:19px;line-height:1}}
 #rfPanel{display:none;position:fixed;right:14px;bottom:66px;z-index:9999;width:min(88vw,320px);background:#fff;border:1px solid #e2e5ea;border-radius:12px;padding:14px;box-shadow:0 8px 28px rgba(0,0,0,.18);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px;color:#202020;box-sizing:border-box}
 #rfPanel h4{margin:0 0 8px;font-size:14px;color:#3d57e5}
 #rfPanel p{margin:0 0 8px;line-height:1.5;color:#42474f}
