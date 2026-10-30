@@ -509,6 +509,50 @@ def _d3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     )
 
 
+def _win_stats(r, navs) -> Dict:
+    """四套胜率与盈亏比（2026-10-30 用户要求加进日报回测卡）。
+
+    口径与 make_compare_report.perf_stats 完全一致，避免两处数字打架：
+      · 交易胜率 = 盈利笔数 / 总笔数（每笔 = 一次换仓到下一次换仓，含持币段）
+      · 盈亏比   = 盈利笔收益总和 / |亏损笔收益总和|
+      · 月/年/日胜率 = 对应周期收益 > 0 的占比
+    ⚠️ 每笔收益由 trades[i].nav → trades[i+1].nav 推出（nav 已扣换仓成本）。
+    """
+    tr = (r or {}).get("trades") or []
+    rets = []
+    for i in range(len(tr) - 1):
+        try:
+            a, b = float(tr[i]["nav"]), float(tr[i + 1]["nav"])
+        except Exception:                        # noqa: BLE001
+            continue
+        if a:
+            rets.append((b / a - 1.0) * 100)
+    rets = np.array(rets) if rets else np.array([0.0])
+    _n = navs.copy()
+    if not isinstance(_n.index, pd.DatetimeIndex):
+        try:
+            _n.index = pd.to_datetime(_n.index)
+        except Exception:                        # noqa: BLE001
+            return {}
+    mret = _n.resample("ME").last().pct_change().dropna() * 100
+    yret = _n.resample("YE").last().pct_change().dropna() * 100
+    dret = _n.pct_change().dropna() * 100
+    npos = int((rets > 0).sum())
+    nneg = int((rets < 0).sum())
+    gain = float(rets[rets > 0].sum())
+    loss = abs(float(rets[rets < 0].sum()))
+    return dict(
+        n=int(len(rets)), n_win=npos, n_loss=nneg,
+        win=float((rets > 0).mean() * 100),
+        pf=(gain / loss if loss > 0 else float("nan")),
+        avg_gain=(gain / npos if npos else 0.0),
+        avg_loss=(loss / nneg if nneg else 0.0),
+        m_win=float((mret > 0).mean() * 100) if len(mret) else 0.0,
+        y_win=float((yret > 0).mean() * 100) if len(yret) else 0.0,
+        d_win=float((dret > 0).mean() * 100) if len(dret) else 0.0,
+    )
+
+
 def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_dev,
                enter_lead, exit_dev, exit_lead, min_def_days, cost, W, MA,
                value_engine, asof, base_navs, base_trades, d3_navs,
@@ -914,6 +958,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         asof=asof,
         navs=navs,          # 供「近 5 年净值曲线」直接画 D3+P3 曲线（同一次回测，不重算）
         yearly=bl.yearly(navs),   # 供「年度表现」三柱：现用策略 / D3 / D3+P3 逐年对比
+        wr=_win_stats(r, navs),   # 四套胜率（2026-10-30 用户要求进日报回测卡）
     )
 
 

@@ -235,6 +235,27 @@ def _combo_summary_html(recent):
             f'<td class="num">{_num(pk.get("calmar"), 2)}</td></tr>'
             for i, (nm, hn, cash, pk, hi) in enumerate(rows))
 
+        # ---- 历史胜率条（2026-10-30 用户要求加进回测卡）----
+        # 口径与 make_compare_report.perf_stats 完全一致（同一份 trades/navs 推出来）。
+        # 全部用中性色 —— 胜率/盈亏比是**非方向性指标**，不该染红绿。
+        _wr = (p3.get("wr") or {}) if p3.get("ok") else {}
+        _wr_html = ""
+        if _wr and _wr.get("n"):
+            _p1 = lambda v, d=1: f"{v:.{d}f}"
+            _pf = _wr.get("pf", float("nan"))
+            _wr_html = (
+                '<div class="cbwr">'
+                '<span class="k">历史胜率</span>'
+                f'<span class="v">交易 <b>{_p1(_wr["win"])}%</b>'
+                f'<i>{_wr["n_win"]} 胜 / {_wr["n_loss"]} 负 · 共 {_wr["n"]} 笔</i></span>'
+                + (f'<span class="v">盈亏比 <b>{_pf:.2f}</b>'
+                   f'<i>均赚 {_wr["avg_gain"]:.2f}% / 均亏 {_wr["avg_loss"]:.2f}%</i></span>'
+                   if _pf == _pf else '')
+                + f'<span class="v">月胜率 <b>{_p1(_wr["m_win"])}%</b></span>'
+                  f'<span class="v">年胜率 <b>{_p1(_wr["y_win"])}%</b></span>'
+                  f'<span class="v">日胜率 <b>{_p1(_wr["d_win"])}%</b></span>'
+                '</div>')
+
         # ---- 今日动作结论（以 D3+P3 为默认口径，其余作参照）----
         p3_hold_nm = p3.get("hold_name") if p3.get("ok") else None
         base_hold_nm = d3.get("base_hold_name")
@@ -294,6 +315,7 @@ def _combo_summary_html(recent):
 <div class="tblwrap"><table class="cbst"><thead><tr>
 <th>方案</th><th>今日应持</th><th class="num">净值</th><th class="num">最大回撤</th><th class="num">Calmar</th>
 </tr></thead><tbody>{body}</tbody></table></div>
+{_wr_html}
 <div class="cbsn">{concl}
 <span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；
 抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做）。
@@ -3628,6 +3650,13 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
   table.cbst tr.hi td{{background:#fdf2f7}}
   table.cbst td.hold{{font-weight:600}}
   table.cbst td.cash{{color:#b3351a;font-weight:700}}
+  .cbwr{{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 14px;
+    font-size:11.5px;color:#42474f;margin-top:6px;padding:5px 8px;
+    background:#f4f6fa;border-radius:5px}}
+  .cbwr .k{{font-weight:600;color:#5b6472;white-space:nowrap}}
+  .cbwr .v{{white-space:nowrap}}
+  .cbwr .v b{{color:#202020;font-weight:700}}
+  .cbwr .v i{{font-style:normal;color:#8b93a1;margin-left:4px;font-size:11px}}
   .cbsn{{font-size:11.5px;color:#42474f;line-height:1.6;margin-top:5px;
     white-space:normal}}
   .cbsn b{{color:#111}}
@@ -3916,6 +3945,7 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
     table.rtbl .tag.nowheld{{padding:0 3px;font-size:10px;margin-left:3px}}
     .hspan{{font-size:11px;padding:5px 8px;gap:2px 10px}}
     .hdetb .v,.hspan .v{{white-space:normal}}
+    .cbwr .v{{white-space:normal}}
     .hdet>summary{{font-size:10.5px}}
     /* 今日操作明细表：手机上允许换行，避免长名称撑宽 */
     .gsec table.gtbl{{font-size:11.5px}}
