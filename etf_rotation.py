@@ -1684,7 +1684,8 @@ def _span_word(pos: float) -> str:
 
 
 def _hspan_html(span, *, label: str = "近 1 年 MA200 偏离区间",
-                buy_label: str = "", alt=None, alt_label: str = "指数口径") -> str:
+                buy_label: str = "", alt=None, alt_label: str = "指数口径",
+                hold_stat=None) -> str:
     """渲染「历史参照」条带：近 1 年偏离极值 + 当前所处位置 + 买线下方天数 + 长窗口参照。
 
     与 512040 的暖色 action 条（.gidxbar）、512890 的冷色 action 条（.tvbar）
@@ -1729,6 +1730,18 @@ def _hspan_html(span, *, label: str = "近 1 年 MA200 偏离区间",
         body.append(
             f'<span class="v">{_bl}下方 <b>{span["n_below"]}/{span["n"]}</b> 日'
             f'（{span["below_pct"]:.1f}%）</span>')
+    # ★ 2026-10-30 用户要求：持仓时长（按交易日计）。与「买线下方天数」相邻，
+    #   因为两者是同一件事的两端：多久等到买点 → 买到后持多久。
+    if hold_stat and hold_stat.get("avg") is not None:
+        body.append(
+            f'<span class="v">平均持仓 <b>{hold_stat["avg"]:.0f}</b> 个交易日'
+            f'<i>{hold_stat.get("n") or 0} 笔已平仓</i></span>')
+    if hold_stat and hold_stat.get("last") is not None:
+        _lw = ("今天刚买入" if (hold_stat.get("live") and not hold_stat["last"])
+               else ("进行中" if hold_stat.get("live") else "上一次"))
+        body.append(
+            f'<span class="v">最近一次 <b>{hold_stat["last"]:.0f}</b> 个交易日'
+            f'<i>{_lw}</i></span>')
     if span.get("extra"):
         # 每个长窗口单独一格（不合并成一句）：单格文字短，flex-wrap 才能在各宽度下
         # 自然换行、不会撑出横向滚动条；合并成一长句在 600px 屏会超出容器。
@@ -1990,18 +2003,35 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
     # 口径：只统计**已平仓**的完整回合（BUY → 下一次 SELL），用净值比算该段收益
     # （零手续费口径，与卡片其余数字同源）；当前未平仓的那一笔不计入，避免虚高/虚低。
     _trips, _open_d = [], None
+    # ★ 2026-10-30 用户要求：两个策略都要显示「每次持仓大概多久」+「最近一次持仓多久」。
+    #   口径：按**交易日数**计（不是自然日），只统计已平仓回合；进行中的那笔单独给。
+    _dpos = {d: k for k, d in enumerate(w.index)}
+    _tdays, _open_i = [], None
     for _e in events:
         if _e["act"] == "BUY":
             _open_d = _e["date"]
+            _open_i = _dpos.get(_e["date"])
         elif _e["act"] == "SELL" and _open_d is not None:
             try:
                 _trips.append(float(navs.loc[_e["date"]]) / float(navs.loc[_open_d]) - 1.0)
             except Exception:                  # noqa: BLE001
                 pass
+            if _open_i is not None and _e["date"] in _dpos:
+                _tdays.append(_dpos[_e["date"]] - _open_i)
             _open_d = None
+            _open_i = None
     _n_tr = len(_trips)
     _win_rate = (sum(1 for _x in _trips if _x > 0) / _n_tr * 100) if _n_tr else None
     _trip_avg = (sum(_trips) / _n_tr * 100) if _n_tr else None
+    _avg_hd = (sum(_tdays) / len(_tdays)) if _tdays else None
+    # 最近一次持仓：当前仍持有 → 从最近一次买入算到窗口末日（进行中）；
+    #              否则 → 最后一次已平仓回合的时长。
+    _lb_d = next((e["date"] for e in reversed(events) if e["act"] == "BUY"), None)
+    _last_hd, _last_live = None, False
+    if bool(sw.iloc[-1]) and _lb_d is not None and _lb_d in _dpos:
+        _last_hd, _last_live = (len(w) - 1) - _dpos[_lb_d], True
+    elif _tdays:
+        _last_hd = _tdays[-1]
 
     yrs = (w.index[-1] - w.index[0]).days / 365.25
     mdd = float((navs / navs.cummax() - 1).min() * 100)
@@ -2020,6 +2050,8 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
         n_buy=sum(1 for e in events if e["act"] == "BUY"),
         n_sell=sum(1 for e in events if e["act"] == "SELL"),
         win_rate=_win_rate, trips_n=_n_tr, trip_avg=_trip_avg,
+        avg_hold_days=_avg_hd, hold_days_n=len(_tdays),
+        last_hold_days=_last_hd, last_hold_live=_last_live,
         bh_final=float(bh.iloc[-1]), bh_ret=(float(bh.iloc[-1]) - 1) * 100,
         bh_mdd=float((bh / bh.cummax() - 1).min() * 100),
         holding_now=bool(sw.iloc[-1]),
@@ -2686,7 +2718,12 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
             + '</div>'
             # 近 1 年偏离区间：判「今天 −4.38% 到底算便宜还是还在半山腰」的参照
             + _hspan_html(idx.get("f_span"), buy_label="−3% 买线",
-                          alt=idx.get("i_span"), alt_label="指数口径")
+                          alt=idx.get("i_span"), alt_label="指数口径",
+                          hold_stat=dict(
+                              avg=(ve_curve or {}).get("avg_hold_days"),
+                              n=(ve_curve or {}).get("hold_days_n", 0),
+                              last=(ve_curve or {}).get("last_hold_days"),
+                              live=(ve_curve or {}).get("last_hold_live", False)))
             + (f'<div class="gidxnote {_gtip_cls}">{_gtip}</div>' if _gtip else "")
             + "</td></tr>")
     else:
@@ -2767,7 +2804,12 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
                if (ve2_curve or {}).get("win_rate") is not None else "")
             + '</div>'
             # 近 1 年偏离区间：判「现在 +2.42% 该不该等回踩」的参照
-            + _hspan_html(_t.get("span"), buy_label="MA200 买线")
+            + _hspan_html(_t.get("span"), buy_label="MA200 买线",
+                          hold_stat=dict(
+                              avg=(ve2_curve or {}).get("avg_hold_days"),
+                              n=(ve2_curve or {}).get("hold_days_n", 0),
+                              last=(ve2_curve or {}).get("last_hold_days"),
+                              live=(ve2_curve or {}).get("last_hold_live", False)))
             + (f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>' if _tnote else "")
             + "</td></tr>")
 
