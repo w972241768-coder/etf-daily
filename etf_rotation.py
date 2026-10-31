@@ -57,7 +57,7 @@ GREEN = "#0f9d58"  # 跌 (绿跌)
 # 改为「蓝 / 橙 / 玫红」——色相分别约 225° / 36° / 336°，两两间隔足够大。
 # ⚠️ 年度柱状图、净值曲线、图例、注释文字必须全部引用这三个常量，不要再散写颜色。
 CLR_STRAT = "#3d57e5"   # 基础轮动（沿用报告主色蓝）
-CLR_D3 = "#e8890c"      # D3 单笔止损（橙）
+CLR_D3 = "#e8890c"      # 橙：曲线/柱状图的「D3+P3（不含抄底）」参照
 CLR_P3 = "#c2185b"      # D3+P3 止盈（玫红）
 CLR_BENCH_SH = "#9aa3b2"  # 上证指数（基准，灰）
 CLR_BENCH_NDX = "#00897b"  # 纳斯达克综合指数（基准，青）
@@ -2427,19 +2427,20 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                 mdd=(float(_m) * 100.0 if _m is not None and _m == _m else None))
         return out
 
-    _d3y = _yy(((recent or {}).get("d3") or {}).get("yearly"))
+    # 2026-10-31：第三条柱子由「D3 单笔止损」改为「D3+P3（不含抄底）」，
+    #   与净值曲线统一口径 —— 三根柱只差「抄底」与「风控」两层，逐看更清楚。
+    _dpy = _yy(((recent or {}).get("p3") or {}).get("dp_yearly"))
     _p3y = _yy(((recent or {}).get("p3") or {}).get("yearly"))
 
     # 三条序列：[(键, 显示名, 颜色, {year: ret}, {year: mdd})]
-    # ★ 第一根 = D3+P3 止盈（默认执行组合，2026-10-25 用户拍板升级为主口径）；
-    #   后两根「基础轮动 / D3 止损」降为参照。
+    # ★ 第一根 = D3+P3+抄底（默认执行组合）；后两根「基础轮动 / D3+P3（不含抄底）」为参照。
     _yseries = [
         ("p3", "D3+P3+抄底（默认）", CLR_P3, {k: v["ret"] for k, v in _p3y.items()},
          {k: v["mdd"] for k, v in _p3y.items()}),
         ("nv", "基础轮动", CLR_STRAT, {str(d["year"]): d.get("ret") for d in _yl},
          {str(d["year"]): d.get("mdd") for d in _yl}),
-        ("d3", "D3 止损",  CLR_D3, {k: v["ret"] for k, v in _d3y.items()},
-         {k: v["mdd"] for k, v in _d3y.items()}),
+        ("dp", "D3+P3（不含抄底）", CLR_D3, {k: v["ret"] for k, v in _dpy.items()},
+         {k: v["mdd"] for k, v in _dpy.items()}),
     ]
     _yv = [v for _k, _n, _c, rr, _m in _yseries for v in rr.values()
            if v is not None and v == v]
@@ -2570,7 +2571,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
 <div class="ytdfoot">每年收益（含换仓成本，单位 %）· <b>柱子颜色区分策略</b>：<span
 style="color:{CLR_P3};font-weight:700">D3+P3+抄底（默认口径）</span> / <span
 style="color:{CLR_STRAT};font-weight:700">基础轮动</span> / <span
-style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅作参照</b>）·
+style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两者<b>仅作参照</b>）·
 柱体<b>向上=盈利、向下=亏损</b>；柱上数字沿用 <span style="color:{RED}">红涨</span>
 <span style="color:{GREEN}">绿跌</span> · 同一刻度 · 悬停看当年最大回撤 · 前复权长历史回测
 <br><span class="ytdmdd">各年最大回撤（默认口径 D3+P3+抄底）：{_mdd_line}</span></div>

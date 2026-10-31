@@ -966,6 +966,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         asof=asof,
         navs=navs,          # 供「近 5 年净值曲线」直接画 D3+P3 曲线（同一次回测，不重算）
         dp_navs=rd["navs"],   # D3+P3（不含抄底），曲线上与主口径对比抄底贡献
+        dp_yearly=bl.yearly(rd["navs"]),   # 同上，供「年度表现」柱状图（2026-10-31 统一口径）
         yearly=bl.yearly(navs),   # 供「年度表现」三柱：现用策略 / D3 / D3+P3 逐年对比
         wr=_win_stats(r, navs),   # 四套胜率（2026-10-30 用户要求进日报回测卡）
     )
