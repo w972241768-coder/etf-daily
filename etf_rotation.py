@@ -2345,6 +2345,9 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         return float("nan")
 
     # 「切换至今」：该标的最近一次被系统买入 → 至今（或已换出）的价格涨跌。
+    # ⚠️ 2026-10-31：该列已从排名表**删除**（用户要求）—— 它对每只标的都显示
+    #   「最近一次被买入那一段」的历史收益，与实际只持一只的事实无关，容易被误读。
+    #   函数保留备用（日后若做「历史持仓复盘」可直接复用），当前无调用点。
     # ★ 2026-10-29 修复（用户审阅指出）：必须绑定**主口径 D3+P3+抄底**的交易序列。
     #   原来用基础轮动（since），抄底换持后仍显示「513100 持仓 18 日」，
     #   与 ② 节「10-26 已换出 → 588170」直接打架。since_live 由 recent_rotations
@@ -2403,7 +2406,6 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                 if (recent and not recent.get("error")) else None)
     _lock_code = str((_ws_lock or {}).get("code") or "") or None
     for i, r in enumerate(ranked, 1):
-        _sc, _scl, _stip, _scl2, _smob = _since_cell(r.code)
         _rcls = []
         # 锁定期内头名不是持仓 → 不再给 row-top1 蓝边，避免「第 1 行=你在拿的」错觉
         if i == 1 and not _lock_code:
@@ -2422,9 +2424,6 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             f'<td class="num c-m20" style="color:{_color(r.momentum[window])};font-weight:600">'
             f'{_fmt(r.momentum[window])}</td>'
             f'<td class="num c-dev" style="color:{_color(r.dev)}">{_fmt(r.dev)}</td>'
-            f'<td class="num c-since" title="{html.escape(_stip)}" '
-            f'style="color:{_scl};font-weight:600">{_sc}'
-            f'<small class="since-sub">{html.escape(_smob)}</small></td>'
             f'<td class="num c-px">{r.close:.3f}</td>'
             f'<td class="num c-chg" style="color:{_color(r.chg1)};font-weight:600">{_fmt(r.chg1)}</td>'
             f'<td class="num c-ma20">{_ma20(r):.3f}</td>'
@@ -2453,7 +2452,6 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                        f'<b style="color:{_cfd}">{_fdv:+.2f}%</b> ｜ '
                        f'指数{idx["code"]} <b style="color:{_cid}">{_idv:+.2f}%</b>'
                        f'（差 {idx["gap"]:+.2f}pp）</span>')
-        _sc2, _scl2, _stip2, _sstale2, _smob2 = _since_cell(r.code)
         rank_rows.append(
             "<tr class='def'>"
             f'<td class="num c-idx">—</td>'
@@ -2462,14 +2460,12 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             f'<span class="code-sub">{r.code}</span></td>'
             f'<td class="num c-m20" style="color:{_color(r.momentum[window])}">{_fmt(r.momentum[window])}</td>'
             f'<td class="num c-dev" style="color:{_color(r.dev)}">{_fmt(r.dev)}</td>'
-            f'<td class="num c-since" title="{html.escape(_stip2)}" style="color:{_scl2}">{_sc2}'
-            f'<small class="since-sub">{html.escape(_smob2)}</small></td>'
             f'<td class="num c-px">{r.close:.3f}</td>'
             f'<td class="num c-chg" style="color:{_color(r.chg1)}">{_fmt(r.chg1)}</td>'
             f'<td class="num c-ma20">{_ma20(r):.3f}</td>'
             "</tr>")
         rank_rows.append(
-            "<tr class='defsub'><td colspan='9'>"
+            "<tr class='defsub'><td colspan='8'>"
             f'<div class="defbar">{_ibadge}{_mark}</div>'
             "</td></tr>")
 
@@ -3865,7 +3861,8 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   .s2l{{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;min-height:0}}
   /* 年度卡 400px（原 300）：给图更多横向空间，同时把排名表自然压窄、
      列间距收紧，不再出现「表格被拉得很散」的观感 */
-  .s2r{{flex:0 0 400px;min-width:0;display:flex;flex-direction:column;min-height:0}}
+  /* 2026-10-31：删掉排名表「切换至今」列后，右侧年度柱状图从 400px 加宽到 480px */
+  .s2r{{flex:0 0 480px;min-width:0;display:flex;flex-direction:column;min-height:0}}
   /* min-height 防「排名表很矮时年度卡被压扁到看不见图」；两者底边仍由 stretch 齐平 */
   .s2r .ytdchart{{flex:1 1 auto;min-height:250px}}
   /* ===== ① 今日排名卡片（2026-10-25 补）=====
@@ -3970,9 +3967,9 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   @media (max-width:1320px){{
     .rwrap{{flex-direction:column}}
   }}
-  /* 中等窗口：年度卡收窄到 300px（400px 在 ≤1050 太占宽），把宽度让给 9 列排名表 */
+  /* 中等窗口：年度卡收窄到 340px，把宽度让给排名表（2026-10-31 删列后 8 列） */
   @media (max-width:1050px){{
-    .s2r{{flex:0 0 300px}}
+    .s2r{{flex:0 0 340px}}
   }}
   /* ===== 并排断点 760px（2026-10-25 修）=====
      ⚠️ 原来断点是 1320px，导致「内嵌预览面板 / 未最大化窗口」等实际渲染宽度
@@ -4008,9 +4005,8 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
            且「切换至今」的持仓信息只写在 title 里，触屏无 hover 完全看不到。
      方案：① 代码并入名称列（名称在上、代码灰色小字在下）
            ② 隐藏 现价 / MA20 —— 乖离 = P/MA20−1，已完整包含这两列的信息
-           ③ 「切换至今」把持仓状态+天数渲染成单元格内小字
-           ④ 条带内 nowrap 改 normal，避免长文本撑出横向滚动
-     结果：9 列 → 6 列，375px 下每列约 62px，无需左右拖动。 */
+           ③ 条带内 nowrap 改 normal，避免长文本撑出横向滚动
+     结果：8 列 → 5 列（2026-10-31 删掉「切换至今」列后），375px 下无需左右拖动。 */
   .code-sub,.since-sub{{display:none}}
   @media (max-width:640px){{
     table.rtbl{{font-size:11.5px}}
@@ -4114,10 +4110,11 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
 
 <div class="lead">以下为主选池结论（第 ① ~ ⑤ 节），备选观察池在报告末尾第 ⑥ 节、与主选池完全独立。
 <details class="lgd"><summary>📖 表格字段与图例说明</summary>
-<div class="lgdb"><span class="dimtxt">① 「切换至今」= 该标的最近一次被系统买入 → 至今（已换出）的
-<span style="color:{RED}">价格</span>涨跌，与 ② 节同源同口径，悬停看起止日与持仓天数；
-<span class="stale">淡色虚线下划线</span> = 买入日距今已超 120 个交易日（半年前的老仓位，非近期表现）；
-「—」= 回测区间内从未被买入。</span></div>
+<div class="lgdb"><span class="dimtxt">① 排名表按 <b>动横{window}</b> 降序；
+<span style="color:{RED}">红</span>为涨、<span style="color:{GREEN}">绿</span>为跌；
+「👈 当前持仓」标记模型口径今天应持的那只。
+<span style="color:#98a1ad">（原「切换至今」列已于 2026-10-31 按用户要求删除 —— 它显示的是各标的
+「最近一次被买入那一段」的历史收益，与当前持仓无关，容易被误读成实时盈亏。）</span></span></div>
 </details></div>
 
 <div class="split2">
@@ -4128,7 +4125,6 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
 <div class="rtblwrap2">
 <table class="rtbl"><thead><tr><th class="c-idx">#</th><th class="c-code">代码</th>
 <th class="c-nm">名称</th><th class="c-m20">动横{window}</th><th class="c-dev">乖离</th>
-<th class="c-since" title="该标的最近一次被系统买入 → 至今（或已换出）的价格涨跌，口径与 ② 节一致">切换至今</th>
 <th class="c-px">现价</th><th class="c-chg">今日涨跌</th><th class="c-ma20">MA20</th></tr></thead><tbody>
 {''.join(rank_rows)}
 </tbody></table>
