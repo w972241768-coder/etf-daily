@@ -388,7 +388,8 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
     # 用**主口径**（D3+P3+抄底）的换仓序列铺成逐日持仓，供曲线下方色带使用。
     _cv = _build_curve(navs, panel, asof, bench, CURVE_DAYS, trades,
                        d3_navs=(d3.get("navs") if d3.get("ok") else None),
-                       p3_navs=(p3.get("navs") if p3 and p3.get("ok") else None))
+                       p3_navs=(p3.get("navs") if p3 and p3.get("ok") else None),
+                       dp_navs=(p3.get("dp_navs") if p3 and p3.get("ok") else None))
     if _cv:
         try:
             _cv["holds"] = _hold_band(
@@ -592,6 +593,13 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                      roc_q=P3_Q, roc_days=P3_DAYS, roc_n=P3_N,
                      roc_min_periods=P3_MINP, **kw)
     si = bl.stats(ri["navs"])
+    # 参照：**D3+P3（不含抄底）** —— 2026-10-31 用户要求。
+    #   净值曲线上用它替代「D3 单笔止损」，这样两条线只差「抄底」一个变量，
+    #   抄底到底贡献了多少一眼就能看出来。
+    rd = bl.backtest(panel, dates, start_i, end_i, pool, defensive,
+                     loss_cool=D3_THR, loss_days=D3_DAYS,
+                     roc_q=P3_Q, roc_days=P3_DAYS, roc_n=P3_N,
+                     roc_min_periods=P3_MINP, **kw)
     sb = bl.stats(base_navs)         # 现用策略（基线）
     sd = bl.stats(d3_navs)           # D3 单独
 
@@ -957,6 +965,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                     roc_days_total=int(sum(c["days"] for c in rci))),
         asof=asof,
         navs=navs,          # 供「近 5 年净值曲线」直接画 D3+P3 曲线（同一次回测，不重算）
+        dp_navs=rd["navs"],   # D3+P3（不含抄底），曲线上与主口径对比抄底贡献
         yearly=bl.yearly(navs),   # 供「年度表现」三柱：现用策略 / D3 / D3+P3 逐年对比
         wr=_win_stats(r, navs),   # 四套胜率（2026-10-30 用户要求进日报回测卡）
     )
@@ -966,7 +975,7 @@ CURVE_DAYS = 1826         # 兼容保留（旧签名参数）；窗口实际固�
 
 
 def _build_curve(navs, panel, asof: str, bench: str, days: int = CURVE_DAYS,
-                 trades=None, d3_navs=None, p3_navs=None):
+                 trades=None, d3_navs=None, p3_navs=None, dp_navs=None):
     """近 ~5 年净值曲线数据: 策略净值 vs 上证指数 vs 纳斯达克综合指数。
 
     策略净值与上证来自回测所用的同一份前复权长历史(口径与第 ② 节完全一致)；
@@ -1023,14 +1032,16 @@ def _build_curve(navs, panel, asof: str, bench: str, days: int = CURVE_DAYS,
     dates = nv.index
     out = dict(nv=nv.values.astype(float))
 
-    # D3 单笔止损影子组合（与策略同起点、同成本，只多「亏≥3% 空仓5日」一条）
-    if d3_navs is not None:
+    # D3+P3（**不含抄底**）参照组合 —— 2026-10-31 用户要求替代原「D3 单笔止损」曲线。
+    #   与主口径（D3+P3+抄底）只差「抄底」一个变量，抄底贡献一眼可见。
+    _ref = dp_navs if dp_navs is not None else d3_navs
+    if _ref is not None:
         try:
-            dz = d3_navs.copy()
+            dz = _ref.copy()
             dz.index = pd.to_datetime(dz.index)
             dz = dz.reindex(dates).ffill().bfill()
             if int(dz.notna().sum()) >= 8:
-                out["d3"] = dz.values.astype(float)
+                out["dp"] = dz.values.astype(float)
         except Exception:                          # noqa: BLE001
             pass
 

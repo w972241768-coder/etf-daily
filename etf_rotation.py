@@ -1011,15 +1011,15 @@ ZOOM_DAYS = 62            # 「近 2 个月」放大窗口（自然日）
 
 CURVE_SERIES = [
     ("nv",  "策略净值（规则复算）",  CLR_STRAT, 2.4),
-    ("d3",  "D3 单笔止损（若切换）", CLR_D3, 1.9),
+    ("dp",  "D3+P3（不含抄底）",     CLR_D3, 1.9),
     ("p3",  "D3+P3+抄底（默认口径）", CLR_P3, 1.9),
     ("sh",  "上证指数",              CLR_BENCH_SH, 1.4),
     ("ndx", "纳斯达克综合指数",      CLR_BENCH_NDX, 1.4),
 ]
-CURVE_LEGEND = ("nv", "d3", "p3", "sh", "ndx")          # 图例/光标顺序
+CURVE_LEGEND = ("nv", "dp", "p3", "sh", "ndx")          # 图例/光标顺序
 # 末端标注用短名（全名在图例里，末端太长会压住折线）
-CURVE_SHORT = {"nv": "策略", "d3": "D3", "p3": "主口径", "sh": "上证", "ndx": "纳指"}
-CURVE_Z = {"sh": 0, "ndx": 1, "nv": 2, "d3": 3, "p3": 4}   # 绘制叠放顺序（数值大者画在上层）
+CURVE_SHORT = {"nv": "策略", "dp": "D3+P3", "p3": "主口径", "sh": "上证", "ndx": "纳指"}
+CURVE_Z = {"sh": 0, "ndx": 1, "nv": 2, "dp": 3, "p3": 4}   # 绘制叠放顺序（数值大者画在上层）
 
 _CV_CSS = """
 .cvbox{position:relative;width:100%;min-width:0}
@@ -1577,24 +1577,25 @@ def _curve_block(curve):
  if _zband else ""}
 """
 
-    d3_note = ("；<b style=\"color:" + CLR_D3 + "\">D3 单笔止损</b>是参照组合"
-               "（任一笔换出时亏 ≥3% 就空仓 5 日，不改卖出条件），与「② 近期换仓复盘」"
-               "里的 D3 卡片同源，<b>仅作参照</b>，非默认口径") \
-        if "d3" in pct else ""
-    p3_note = ("；<b style=\"color:#c2185b\">D3+P3 止盈</b>是<b>当前的默认执行组合</b>"
-               "（D3「换出时亏≥3% 空仓 5 日」+ P3「头名 ROC60 进自身 95 分位空仓 20 日」"
-               "两条独立规则叠加），与 ② 里的 D3+P3 卡片同源") \
+    dp_note = ("；<b style=\"color:" + CLR_D3 + "\">D3+P3（不含抄底）</b>是参照组合"
+               "（D3「换出时亏≥3% 空仓 5 日」+ P3「头名 ROC60 进自身 95 分位空仓 20 日」，"
+               "<b>不含抄底模块</b>），与主口径只差「抄底」一个变量 —— "
+               "两条线的差距就是抄底的实际贡献") \
+        if "dp" in pct else ""
+    p3_note = ("；<b style=\"color:#c2185b\">D3+P3+抄底</b>是<b>当前的默认执行组合</b>"
+               "（在 D3+P3 之上再叠加「主选池动横20 全为负时换持末位」），"
+               "与 ② 里的卡片同源") \
         if "p3" in pct else ""
 
     return f"""<style>{_CV_CSS}</style>
 {zoom_block}
-<h3 class="sph3" style="margin-top:20px">📈 净值曲线 2020 年至今（策略 / D3 单笔止损 / D3+P3 止盈 vs 上证指数 · 纳斯达克综合指数）</h3>
+<h3 class="sph3" style="margin-top:20px">📈 净值曲线 2020 年至今（策略 / D3+P3 / D3+P3+抄底 vs 上证指数 · 纳斯达克综合指数）</h3>
 <div class="note" style="margin-bottom:8px;padding:9px 12px">
 {chips_html}
 <span class="chip"><i style="background:{RED};width:8px;height:8px;border-radius:50%"></i>正向轮动切换</span>
 <span class="chip"><i style="background:{GREEN};width:8px;height:8px;border-radius:50%"></i>防守切换</span>
 <span class="dimtxt">　{html.escape(curve.get("info", ""))}。全部序列以窗口首个交易日 = 1.0 归一化，
-纵轴为自该日起的累计涨跌；策略净值与「② 近期换仓复盘」同源同口径（前复权长历史 + 同一套规则复算）{d3_note}{p3_note}。</span>
+纵轴为自该日起的累计涨跌；策略净值与「② 近期换仓复盘」同源同口径（前复权长历史 + 同一套规则复算）{dp_note}{p3_note}。</span>
 </div>
 {big["html"]}
 <div class="sub" style="margin-top:8px">注：纳斯达克综合指数为美股日线，按公历日与 A 股交易日对齐（休市日沿用前值），
@@ -4075,19 +4076,12 @@ style="color:{CLR_D3};font-weight:700">D3 单笔止损</span>（后两者<b>仅�
 
 {_mine_block_html(recent.get("mine") if recent else None)}
 
-<h2>④ 逐列头名与换仓日 · 主选池</h2>
-<div class="tblwrap"><table><thead><tr><th>第几日</th><th>列</th><th>头名</th><th>名称</th><th>动横值</th>
-<th>次名</th><th>领先</th><th>距换仓</th><th>建议持仓</th><th>状态</th></tr></thead><tbody>
-{''.join(step_rows)}
-</tbody></table></div>
-<div class="sub" style="margin-top:8px">
-「距换仓」= 该列还需再拉开多少领先度才够 <b>{sticky:.1f}pp</b> 门槛（<span class="good">已达标</span> = 该列可直接换）；
-「建议持仓」= 该列经粘性带过滤后的有效头名（<b>未叠加过热熔断</b>，最终建议见上方"今日操作指引"）。</div>
+
 
 {def_guide_card}
 {_ve2_card}
 
-<h2>⑤ 数据体检 · 主选池</h2>
+<h2>④ 数据体检 · 主选池</h2>
 <div class="note">{info_txt}</div>
 {watch_block}
 
