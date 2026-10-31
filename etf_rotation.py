@@ -164,6 +164,25 @@ def _wstate_html(ws) -> str:
                     f'（{html.escape(str(ws.get("entry_date") or ""))}）'
                     f' → 现价 <b>{(ws.get("px") or 0):.3f}</b> '
                     f'<b style="color:{pc}">{pnl:+.2f}%</b></div>')
+    # ④ 波动率（2026-10-31 接入 weak_max_vol 闸门后新增）
+    #   只在「抄底持仓中」显示，一行讲清两件事：当前波动率是多少、它跟闸门什么关系。
+    #   超闸门用琥珀色而非红色 —— 这是口径提示，不是亏损告警。
+    _vol_row = ""
+    _v = ws.get("vol")
+    _vl = ws.get("vol_lim") or 0
+    if _v is not None:
+        if _vl and _v > _vl:
+            _vol_row = (
+                '<div class="wvol over">60 日波动率 '
+                f'<b>{_v:.1f}%</b> ＞ 闸门 {_vl:.0f}%'
+                ' · <b>新口径不会买入本笔</b>，按你的决定继续持到满 '
+                f'{lim or 10} 日</div>')
+        else:
+            _vol_row = (
+                '<div class="wvol">60 日波动率 <b>'
+                f'{_v:.1f}%</b>'
+                + (f' ≤ 闸门 {_vl:.0f}%' if _vl else '')
+                + ' · 符合入场条件</div>')
     return (
         '<div class="wstate">'
         '<div class="whd"><span class="wbadge">🎯 抄底持仓中</span>'
@@ -172,9 +191,48 @@ def _wstate_html(ws) -> str:
         '<span class="wtip">锁定期内 D3 / P3 都不介入</span></div>'
         f'{"".join(rows)}'
         f'{_pnl_row}'
+        f'{_vol_row}'
         '<div class="wnote">满足任一出口即换回当日第 1 名；'
         '这是 2026-10-28 起的新口径（旧口径为「亏 3% 由 D3 止损」）。</div>'
         '</div>')
+
+
+def _wskip_html(p3, asof: str) -> str:
+    """波动率闸门提示条（2026-10-31 接入 weak_max_vol 后新增）。
+
+    只在「模型口径当前没有抄底持仓」时作为替代显示，且仅限最近 14 个自然日内
+    有被拦记录 —— 过期自动消失，不在首屏长期占位。
+    这一条存在的意义：新口径下抄底持仓条常年为空，用户就看不到波动率这条规则了。
+    """
+    try:
+        sk = (p3 or {}).get("weak_skip_last")
+        lim = float((p3 or {}).get("weak_max_vol") or 0)
+        if not sk or not lim or not asof:
+            return ""
+        d = str(sk.get("date") or "")
+        if not d:
+            return ""
+        if (pd.Timestamp(asof) - pd.Timestamp(d)).days > 14:
+            return ""
+        v = sk.get("vol")
+        hold = (p3 or {}).get("hold")
+        hname = (p3 or {}).get("hold_name") or hold or "—"
+        _v = f"{v:.1f}%" if isinstance(v, (int, float)) else "—"
+        _n = int(sk.get("n") or 1)
+        _dtxt = f"{html.escape(d)}" + (f" 起连续 {_n} 日" if _n > 1 else "")
+        tail = (f" · 按头名持 <b>{html.escape(str(hname))}</b>"
+                if hold and hold != "CASH" else "")
+        return (
+            '<div class="wstate skip">'
+            '<div class="whd"><span class="wbadge skipb">⛔ 波动率闸门</span>'
+            f'<b>{_dtxt} · {html.escape(str(sk.get("code") or ""))} '
+            f'{html.escape(str(sk.get("name") or ""))}</b>'
+            f'<span class="wtip">闸门 ≤{lim:.0f}%</span></div>'
+            f'<div class="wvol over">60 日波动率 <b>{_v}</b> ＞ {lim:.0f}%'
+            f' · 末位不抄底{tail}</div>'
+            '</div>')
+    except Exception:                          # noqa: BLE001
+        return ""
 
 
 def _combo_summary_html(recent):
@@ -193,22 +251,26 @@ def _combo_summary_html(recent):
             return ""
         base_pack = d3.get("base") or {}
 
-        # ---- 口径变更提示（2026-10-28 E3 接入，过渡期显示）----
+        # ---- 口径变更提示（过渡期显示，默认折叠）----
         # ★ 2026-10-29（用户要求「把首屏最顶端的位置彻底腾出来」）：
-        #   这条提示从**顶部 4 行橙框**改为**底部折叠条目**（默认收起），
-        #   且只在 10-28 ~ 10-30 三个交易日内出现，之后自动消失。
+        #   这条提示从**顶部 4 行橙框**改为**底部折叠条目**（默认收起），过期自动消失。
+        # ★ 2026-10-31：内容换成「抄底加波动率闸门 45%」，显示至 11-06。
         _migrate_html = ""
         _asof_s = str(recent.get("asof") or "")
-        if "2026-10-28" <= _asof_s <= "2026-10-30":
+        if "2026-10-30" <= _asof_s <= "2026-11-06":
             _migrate_html = (
-                '<details class="migrdet"><summary>⚠ 10-28 口径变更说明'
-                '（抄底持仓改为锁定期）</summary>'
+                '<details class="migrdet"><summary>⚠ 10-31 口径变更'
+                '（抄底加波动率闸门 45%）</summary>'
                 '<div class="migr">'
-                '自 2026-10-28 起，抄底持仓改为<b>锁定期</b> —— 期内 D3 / P3 不再介入，'
-                '满足「<b>回 MA20 上方</b>」或「<b>满 10 个交易日</b>」任一条件'
-                '才换回当日第 1 名。'
-                '若你在 10-27 已按旧口径（D3 止损）清仓，<b>需按新口径买回</b>；'
-                '页面「当前持 X」是按模型口径推算的，与你的实际账户可能不同，'
+                '自 2026-10-31 起，抄底触发前多一道检查：末位标的'
+                '<b>60 日年化波动率须 ≤ 45%</b>，超过就不抄底。'
+                '理由是「跌得最狠的往往就是波动最大的」，'
+                '历史上 17 笔抄底里只有 1 笔被这道闸门拦下'
+                '（2026-10-26 的 588170，波动率 58.5%），'
+                '而它正好是唯一造成两位数亏损的那笔 —— '
+                '近 10 年 Calmar <b>1.07 → 2.03</b>、最大回撤 <b>−31.01% → −17.92%</b>。<br>'
+                '你手上这笔 588170 按 10-31 的决定<b>继续持到满 10 日</b>'
+                '（新口径本来不会买入它），页面「当前持 X」是模型口径，'
                 '<b>请以实际持仓为准</b>。</div></details>')
 
         def _hold_cell(name, is_cash):
@@ -308,7 +370,12 @@ def _combo_summary_html(recent):
             pill += (f'<span class="pillcal">　历史 Calmar <b>{_cal:.2f}</b></span>')
         _det_open = ""      # 2026-10-29：回测对比表一律默认折叠（用户要求），不再按口径自动展开
 
+        # 抄底状态条：处于锁定期显示进度；不处于锁定期但近期有「被闸门拦下」的记录，
+        # 就换成闸门提示条 —— 否则新口径下这段永远空白，用户看不到波动率这条新规则。
         _wstate_bar = _wstate_html(((recent.get("p3") or {}).get("weak_state")))
+        if not _wstate_bar:
+            _wstate_bar = _wskip_html(((recent.get("p3") or {})),
+                                      str(recent.get("asof") or ""))
         return f"""<div class="cbsum {pill_cls}">
 <div class="cbpill">{pill}
 <details class="cbdet"{_det_open}><summary>回测对比 · 规则</summary>
@@ -318,7 +385,7 @@ def _combo_summary_html(recent):
 {_wr_html}
 <div class="cbsn">{concl}
 <span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；
-抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做）。
+抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做{(("、末位 60 日波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0)) + "%") if bl.LIVE_COMPOSITE.get("weak_max_vol", 0) else "")}）。
 三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
 </div>
@@ -3300,7 +3367,10 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
                     f'<td class="num" style="color:{_color(_b)}">{_bench_cell}</td>'
                     f'<td class="num" style="color:{_color(_a)};font-weight:600">'
                     f'{_alpha_cell}</td>'
-                    f'<td class="rs" style="min-width:150px">{html.escape(rw["reason"])}</td>'
+                    f'<td class="rs" style="min-width:150px">{html.escape(rw["reason"])}'
+                    + (f'<span class="rvol">波动 {rw["vol"]:.1f}%</span>'
+                       if rw.get("vol") is not None else "")
+                    + '</td>'
                     "</tr>")
             # ★ 2026-10-28：Σ 行必须与**上面这张表**同源（明细已改主口径），
             #   否则「与上表严格自洽」是假话。这里按 _rows_src 自行连乘。
@@ -3618,6 +3688,14 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   .wrest{{font-size:11.5px;color:#5b6472;white-space:nowrap}}
   .wpnl{{margin-top:6px;padding-top:6px;border-top:1px dashed #ece4d9;font-size:12px;
     color:#42474f}}
+  /* 波动率行（2026-10-31 接入 weak_max_vol）：一行说清「多少 / 跟闸门什么关系」 */
+  .wvol{{margin-top:3px;font-size:11.5px;color:#6c717f}}
+  .wvol b{{color:#42474f;font-variant-numeric:tabular-nums}}
+  .wvol.over{{color:#8a5312}}
+  .wvol.over b{{color:#8a5312}}
+  /* 波动率闸门提示条：冷色系，和「抄底持仓中」的暖色区分开 */
+  .wstate.skip{{background:#f7f9fc;border-color:#dfe6ef;border-left-color:#7b8ea8}}
+  .skipb{{background:#eef2f8;border-color:#d7e0ec;color:#4a5c72}}
   .wnote{{margin-top:4px;font-size:10.5px;color:#9aa3ae}}
   @media(max-width:640px){{.wrow{{grid-template-columns:1fr auto;gap:2px 8px}}
     .wbar{{grid-column:1 / -1}} .wrest{{grid-column:1 / -1;font-size:11px}}}}
@@ -3677,6 +3755,9 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   .dgnote{{font-size:12.5px;line-height:1.85;color:#374151;background:#f7f9fb;
     border:1px dashed #d8dee6;border-radius:9px;padding:10px 12px}}
   .rs{{color:#5b6470;font-size:12.5px;white-space:normal;min-width:260px}}
+  /* 抄底那笔的入场波动率（2026-10-31）：小灰标，跟在原因后面不抢眼 */
+  .rvol{{display:inline-block;margin-left:6px;padding:0 5px;border-radius:4px;
+    background:#f1f4f9;color:#5b6472;font-size:11px;white-space:nowrap}}
   h3{{font-size:14px;font-weight:600;margin:24px 0 8px;color:#202020}}
   .good{{color:{GREEN};font-weight:600}} .warn{{color:#b26a00;font-weight:600}}
   .bad{{color:{RED};font-weight:700}}
@@ -4579,6 +4660,9 @@ def main():
             # 抄底模块：weak_active=今日持仓由抄底产生；weak_n=窗口内触发总次数
             weak_active=bool(_p3.get("weak_active")),
             weak_n=_p3.get("weak_n"),
+            # 波动率闸门（2026-10-31 接入）：阈值 + 窗口内被拦次数
+            weak_max_vol=_p3.get("weak_max_vol"),
+            weak_skip_n=_p3.get("weak_skip_n"),
             nav_default=_p3.get("final"),
             calmar_default=_p3.get("calmar"),
             # 防守位（512040）MA200 偏离与买线（%，买线 = (VE_BUY−1)×100 = −3.0）

@@ -1,15 +1,15 @@
 {
  "asof": "2026-10-30",
- "calmar_default": 1.0808835472391998,
+ "calmar_default": 1.9939157869696642,
  "def_buy_pct": -3.0,
  "def_code": "512040",
  "def_dev": -2.929421943883659,
- "gen": "2026-10-31 10:49",
+ "gen": "2026-10-31 23:44",
  "hold_base": "561700",
  "hold_base_name": "电力ETF博时",
- "hold_default": "588170",
- "hold_default_name": "科创半导体ETF华夏",
- "nav_default": 7.6845778347084766,
+ "hold_default": "561700",
+ "hold_default_name": "电力ETF博时",
+ "nav_default": 9.284128157146586,
  "overheat": false,
  "p3_active": false,
  "p3_back": null,
@@ -19,6 +19,8 @@
  "ve2_dev": 5.8845577211394495,
  "ve2_holding": true,
  "ve2_zone": "mid",
- "weak_active": true,
- "weak_n": 16
+ "weak_active": false,
+ "weak_max_vol": 45.0,
+ "weak_n": 15,
+ "weak_skip_n": 3
 }

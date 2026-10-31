@@ -105,6 +105,23 @@ LIVE_COMPOSITE = dict(
     # 改回旧口径：删掉下面两行即可（weak_exit_days / weak_exit_ma20）。
     weak_exit_ma20=True,
     weak_exit_days=10,
+    # ---- 抄底「波动率闸门」（2026-10-31 用户拍板接入）----
+    # 触发前多问一句：末位标的的 60 日年化波动率是否 <= weak_max_vol(%)？超了就不抄底。
+    # 动机：抄底买「跌最狠的那只」，往往就是「波动最大的那只」——
+    #   17 笔抄底里 588170（2026-10-26）60 日波动率 58.5%，是唯一 >50% 的一笔，
+    #   也是唯一造成两位数亏损的一笔（10-30 已 -15.93%）。
+    # 实测（单边万一，四窗口 Calmar）：13.3年 关抄底1.56/现行0.92/<=40%1.63/<=45%1.69；
+    #   12.8年 1.61/0.95/1.69/1.75；8年 2.29/1.36/2.43/2.54；10年 1.81/1.07/1.92/2.00。
+    #   MDD：关抄底/<=40%/<=45% 全部 -17.92%；现行 -31.01%。
+    # ★ 43%~58% 是同一片高原（15pp 宽）—— 只有 588170(58.5%) 超过 50%，
+    #   次高是 2021-03-29 的 45.0%，所以 45 不是拟合出来的尖点。
+    # ★ IS 段（2016-10~2021-10）与不设闸门**逐位相同**（Calmar 1.58=1.58，抄底 10 次=10 次），
+    #   只作用于 OOS 那一笔（OOS 2021-11~2026-10：1.32 -> 2.58）。
+    #   ⚠️「IS 零影响」是**从未被检验**，不是通过检验。
+    # ★ 交叉验证：改用相对口径「标的波动率/当日池内中位数」，588170 是 2.77 倍
+    #   （17 笔唯一 >2.0，次高 1.95）⇒ 绝对 45% 与相对 2.0 倍给出同一取舍。
+    # 关掉：删掉本行即可（默认 0 = 关闭，逐位等价已验证 maxdiff 0.0）。
+    weak_max_vol=45.0,
 )
 
 
@@ -267,6 +284,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              weak_delay: int = 0, weak_cd: int = 0, weak_min_pool: int = 0,
              weak_first_d3: bool = False,
              weak_ma20_entry: bool = False,
+             weak_max_vol: float = 0.0,
 
              weak_exit_ma20: bool = False, weak_exit_days: int = 0,
              weak_exit_pos: bool = False,
@@ -309,6 +327,15 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     pos_w = 1.0                          # 当前实际投入比例（仅 pos_frac 开启时可能 <1）
     pending_weak: Optional[str] = None    # 抄底模型的「次日买入」待执行标的
     weak_events: List[dict] = []          # 抄底触发明细（研究用）
+    weak_skips: List[dict] = []           # 被波动率闸门拦下的抄底（日报展示用，2026-10-31）
+    # 波动率闸门（2026-10-31）：仅在开启时预计算 60 日年化波动率矩阵，默认零开销。
+    _vol60 = None
+    if weak_max_vol and weak_max_vol > 0:
+        try:
+            _vol60 = (panel[pool].pct_change(fill_method=None).rolling(60).std()
+                      * (252 ** 0.5) * 100)
+        except Exception:                      # noqa: BLE001
+            _vol60 = None
     weak_cd_map: dict = {}                # 标的 -> 上次抄底日索引（冷却用）
     # 抄底「持仓锁定」状态（2026-10-28 研究）：建仓后锁定该标的，
     # 直到 weak_exit_ma20 / weak_exit_days / weak_exit_pos 任一成立才释放。
@@ -545,6 +572,14 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 #   样本 1 次，属运气而非规律。
                 _val_ok = True
                 _roc_ok = True
+                # 波动率闸门：末位 60 日年化波动率须 <= weak_max_vol
+                _vol_ok = True
+                if _vol60 is not None and _weak is not None:
+                    try:
+                        _vv = _vol60.at[dates[i], _weak]
+                        _vol_ok = bool(pd.notna(_vv) and float(_vv) <= weak_max_vol)
+                    except Exception:              # noqa: BLE001
+                        _vol_ok = False
                 if pending_weak is not None:
                     if target != "CASH":
                         target = pending_weak
@@ -561,11 +596,20 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                         except (TypeError, ValueError):
                             _trig = False
                     if (_trig and _weak and target != "CASH" and _cd_ok
-                            and _pool_ok and _ma_ok and _roc_ok and _val_ok):
+                            and _pool_ok and _ma_ok and _roc_ok and _val_ok
+                            and _vol_ok):
+                        _vev = None
+                        if _vol60 is not None:
+                            try:
+                                _vev = float(_vol60.at[dates[i], _weak])
+                            except Exception:        # noqa: BLE001
+                                _vev = None
                         weak_events.append(dict(
                             date=str(dates[i].date()), code=_weak,
                             name=NAMES.get(_weak, _weak),
-                            m=round(float(sig["m"][_weak]), 2)))
+                            m=round(float(sig["m"][_weak]), 2),
+                            vol=(round(_vev, 1)
+                                 if (_vev is not None and _vev == _vev) else None)))
                         weak_cd_map[_weak] = i
                         if weak_delay == 0:
                             target = _weak
@@ -585,6 +629,23 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                             note_cool = ((note_cool + f" | 池内转弱→空仓,次日买{_weak}")
                                          if note_cool else
                                          f" | 池内转弱→空仓,次日买{_weak}")
+                    elif (_trig and _weak and weak_max_vol and weak_max_vol > 0
+                          and not _vol_ok and _cd_ok and _pool_ok and _ma_ok
+                          and _roc_ok and _val_ok):
+                        # 波动率闸门拦下（2026-10-31）：记录以便日报说明「今天为什么没抄」
+                        _vskip = None
+                        if _vol60 is not None:
+                            try:
+                                _vskip = float(_vol60.at[dates[i], _weak])
+                            except Exception:        # noqa: BLE001
+                                _vskip = None
+                        weak_skips.append(dict(
+                            date=str(dates[i].date()), code=_weak,
+                            name=NAMES.get(_weak, _weak),
+                            vol=(round(_vskip, 1)
+                                 if (_vskip is not None and _vskip == _vskip)
+                                 else None),
+                            limit=float(weak_max_vol)))
             # ⚠️ 2026-10-27 已实测并删除「抄底持仓的独立止损/止盈」：
             #   · 独立止损 8%/10%/12%/15% ⇒ 净值与基线**完全一致**（换仓笔数也一样），
             #     因为 D3 的 3% 换出检查已经先一步拦下，更宽的止损永远轮不到触发；
@@ -663,7 +724,8 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 # 显示抄底现在处在什么状态（第几天 / 距离场还差什么）。
                 weak_hold=weak_hold, weak_hold_i=int(weak_hold_i),
                 weak_entry_px=weak_entry_px,
-                gate_days=gate_days_n, gate_trig=gate_trig_n)
+                gate_days=gate_days_n, gate_trig=gate_trig_n,
+                weak_skips=weak_skips)
 
 
 def bench_curve(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int,

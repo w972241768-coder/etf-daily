@@ -585,6 +585,9 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                     # 抄底离场（2026-10-28 E3 接入）：锁定期 + 满N日/回MA20
                     weak_exit_ma20=bl.LIVE_COMPOSITE.get("weak_exit_ma20", False),
                     weak_exit_days=bl.LIVE_COMPOSITE.get("weak_exit_days", 0),
+                    # 抄底波动率闸门（2026-10-31 接入）：⚠️ 逐项传参必须同步，
+                    #   否则 LIVE_COMPOSITE 改了这里不生效、日报静默退回旧口径。
+                    weak_max_vol=bl.LIVE_COMPOSITE.get("weak_max_vol", 0),
                     **kw)
     navs = r["navs"]
     st = bl.stats(navs)
@@ -677,6 +680,16 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             if len(_win) == MA and not _win.isna().any() and _px:
                 _dev = (_px / float(_win.mean()) - 1.0) * 100
             _lim = int(bl.LIVE_COMPOSITE.get("weak_exit_days", 0) or 0)
+            # 60 日年化波动率（2026-10-31 接入波动率闸门后，抄底持仓必须显示它）
+            _v60 = None
+            try:
+                _s = panel[_wh].pct_change(fill_method=None)
+                _sd = _s.iloc[max(0, _i1 - 59):_i1 + 1].std()
+                if _sd == _sd:
+                    _v60 = float(_sd) * (252 ** 0.5) * 100
+            except Exception:                      # noqa: BLE001
+                _v60 = None
+            _vlim = float(bl.LIVE_COMPOSITE.get("weak_max_vol", 0) or 0)
             weak_state = dict(
                 code=_wh, name=bl.NAMES.get(_wh, _wh),
                 entry_date=str(dates[_i0].date()),
@@ -687,6 +700,8 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                 px=_px, entry_px=(float(_ep) if _ep else None),
                 pnl=(round((_px / float(_ep) - 1.0) * 100, 2)
                      if (_px and _ep) else None),
+                vol=(round(_v60, 1) if _v60 is not None else None),
+                vol_lim=_vlim,
                 use_ma20=bool(bl.LIVE_COMPOSITE.get("weak_exit_ma20")))
         except Exception:                          # noqa: BLE001
             weak_state = None
@@ -715,6 +730,10 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
 
     _sel = (r["trades"] or [])[-max(1, n_rows):]
     p3_rows = []
+    # 抄底买入当日的 60 日年化波动率（2026-10-31 接入闸门后新增）：
+    #   复盘表里给「抄底」那一笔标出来，方便日后回看「这笔当时波动多大」。
+    _volmap = {(e.get("date"), e.get("code")): e.get("vol")
+               for e in (r.get("weak_events") or [])}
     for _k, _t in enumerate(_sel):
         _d0 = _t["date"]
         if _k < len(_sel) - 1:
@@ -753,6 +772,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             to_name=_t.get("to_name") or _t.get("to"),
             ret=_ret, bench=_br, alpha=_al, cash=_is_cash,
             reason=_t.get("reason") or "",
+            vol=_volmap.get((_d0, _t.get("to"))),
             open=(_k == len(_sel) - 1)))
 
     # 昨日持仓（= 今天开盘时手里实际有的）：
@@ -764,6 +784,23 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         prev_hold = _pv[-1].get("to")
     # ---- 抄底模块（2026-10-26 接入）：当前持仓是否由抄底产生 + 最近几次触发 ----
     _we = r.get("weak_events") or []
+    _ws = r.get("weak_skips") or []
+    # 最近一段「连续被闸门拦下」的摘要：取末条往前回溯同标的、日期相近的记录。
+    # 直接取 _ws[-1] 会显示成 10-28，让人误以为 10-28 才是信号日（实际 10-26 起）。
+    _wsk = None
+    if _ws:
+        _last = _ws[-1]
+        _seg = [_last]
+        for _x in reversed(_ws[:-1]):
+            if (_x.get("code") == _last.get("code")
+                    and (pd.Timestamp(_seg[0]["date"])
+                         - pd.Timestamp(_x["date"])).days <= 12):
+                _seg.insert(0, _x)
+            else:
+                break
+        _wsk = dict(_seg[0])
+        _wsk["n"] = len(_seg)
+        _wsk["last"] = _seg[-1]["date"]
     _lt = None
     for _x in r["trades"]:
         if _x["date"] <= asof:
@@ -937,8 +974,11 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         same_base=(hold == base_hold), active=bool(active),
         remain=remain, back=back,
         # 抄底模块：weak_active=今天这笔持仓是否由抄底规则产生；
-        # weak_last=最近一次抄底（date/code/name/m）；weak_n=窗口内总触发次数
+        # weak_last=最近一次抄底（date/code/name/m/**vol**）；weak_n=窗口内总触发次数
+        # weak_skips=被「波动率闸门」拦下的次数（2026-10-31 接入 weak_max_vol）
         weak_active=weak_active, weak_last=weak_last, weak_n=len(_we),
+        weak_skip_n=len(_ws), weak_skip_last=_wsk,
+        weak_max_vol=bl.LIVE_COMPOSITE.get("weak_max_vol", 0),
         weak_cd=bl.LIVE_COMPOSITE.get("weak_cd", 0),
         weak_min_pool=bl.LIVE_COMPOSITE.get("weak_min_pool", 0),
         cash_days=cash_days, rows=p3_rows,
