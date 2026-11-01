@@ -416,6 +416,15 @@ def _p3_card_html(p3, recent, cost):
         def col(v):
             return RED if v > 0 else GREEN
 
+        # 「口径」行里抄底那一截（2026-11-01 补）：卡片标题写着「D3+P3+抄底」，
+        # 但口径行原先只列了 D3 / P3 两条，漏掉抄底与波动率闸门，页面自相矛盾。
+        _weak_meta = ""
+        if bl.LIVE_COMPOSITE.get("weak_mode"):
+            _vmv = float(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0)
+            _weak_meta = (" + 抄底（全池动横20 全负→末位"
+                          + (f"，波动率≤{_vmv:.0f}%" if _vmv > 0 else "")
+                          + "）")
+
         IMP, WOR = "#3d57e5", "#b3351a"
         base = p3.get("base") or {}
         d3 = p3.get("d3") or {}
@@ -563,9 +572,13 @@ def _p3_card_html(p3, recent, cost):
   ① <b>D3 单笔止损</b>（看盈亏）：某笔在换出时相对建仓价亏损 ≥3% ⇒ 空仓 5 个交易日；<br>
   ② <b>P3 追高止盈</b>（不看盈亏）：<b>头名的 60 日动量（ROC60）冲进它自身历史的 95 分位</b>
   ——即已涨到「历史极高位」、动量透支 ⇒ 空仓 20 个交易日；<br>
-  ③ <b>抄底</b>（零参数）：主选池 <b>全部</b> 标的动横20 都为负 ⇒ 当日换持<b>排名最后一名</b>
+  ③ <b>抄底</b>（三道前置条件）：主选池 <b>全部</b> 标的动横20 都为负 ⇒ 当日换持<b>排名最后一名</b>
   （不是倒数第二）；{("同一标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 个交易日内不重复抄底；") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}
-  池内可用标的少于 {bl.LIVE_COMPOSITE.get('weak_min_pool', 0)} 只时不做（小池子最弱恒为同一只，会连买暴跌品）。<br>
+  池内可用标的少于 {bl.LIVE_COMPOSITE.get('weak_min_pool', 0)} 只时不做（小池子最弱恒为同一只，会连买暴跌品）；
+  {(("<b>末位标的 60 日年化波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0))
+     + "%</b>，超过则不抄底 —— 抄底买「跌最狠的」，往往就是「波动最大的」，"
+     "历史上 17 笔里仅 588170（58.5%）被此闸门拦下，而它正是唯一两位数亏损那笔。")
+    if bl.LIVE_COMPOSITE.get("weak_max_vol", 0) else "")}<br>
   {_weak_exit_txt}
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
   <span class="dimtxt">三条规则互不替代；下表即为现行口径在该窗口的历史表现。</span></div>
@@ -586,7 +599,7 @@ def _p3_card_html(p3, recent, cost):
     <span>P3 触发 <b>{p3['roc_n']}</b> 次</span>
     <span>P3 累计空仓 <b>{p3['roc_days_total']}</b> 个交易日</span>
     <span>换仓 <b>{p3['trades_n']}</b> 笔</span>
-    <span>口径 <b>D3 亏≥{int(p3.get('thr', 0.03) * 100)}% 空仓 5 日 + ROC{p3['n']} 滚动 {p3['q']*100:.0f} 分位 空仓 {p3['days']} 日</b></span>
+    <span>口径 <b>D3 亏≥{int(p3.get('thr', 0.03) * 100)}% 空仓 5 日 + ROC{p3['n']} 滚动 {p3['q']*100:.0f} 分位 空仓 {p3['days']} 日{_weak_meta}</b></span>
   </div>
   <div class="d3last">
     <div class="cap">最近 {len(p3.get('last') or [])} 次追高止盈事件</div>
