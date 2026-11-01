@@ -136,13 +136,16 @@ def read_pools() -> tuple:
     return rot, deff, watch
 
 
-def read_panel(path: str) -> pd.DataFrame:
+def read_panel(path: str, field: str = "close") -> pd.DataFrame:
+    """读长表 CSV → 宽表面板。field 可选 close / open（2026-11-01 加 open，供成交时点审计）。"""
     df = pd.read_csv(path, dtype={"code": str})
     df["date"] = pd.to_datetime(df["date"].astype(str), format="%Y%m%d")
+    if field not in df.columns:
+        raise KeyError(f"CSV 无 {field} 列（现有列：{list(df.columns)}）")
     frames = OrderedDict()
     for code, g in df.groupby("code"):
         g = g.sort_values("date").drop_duplicates("date", keep="last")
-        frames[code] = g.set_index("date")["close"].astype(float)
+        frames[code] = g.set_index("date")[field].astype(float)
     panel = pd.DataFrame(frames).sort_index()
     return panel
 
@@ -289,7 +292,11 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              weak_exit_ma20: bool = False, weak_exit_days: int = 0,
              weak_exit_pos: bool = False,
              pos_frac: Optional[float] = None,
-             add_drop: float = 0.01) -> dict:
+             add_drop: float = 0.01,
+             # 成交时点审计（2026-11-01 专家第四轮）：
+             #   None/False = 现状「T 日收盘出信号、T 日收盘成交」（close→close）
+             #   传 open 面板 = 「T 日收盘出信号、T+1 开盘成交」（open[i+1]→close[i+1]）
+             panel_open: Optional[pd.DataFrame] = None) -> dict:
     """策略B 状态机 (ROT / DEF)。value_engine=True 时防守期叠加价值引擎择时,
     不满足条件则持币 CASH —— 这会打破策略B「始终满仓」的设计, 属设计变更非缺陷。
 
@@ -712,7 +719,15 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                      else 1.0)
         ret = 0.0
         if target in panel.columns:
-            p0, p1 = panel[target].iloc[i], panel[target].iloc[i + 1]
+            # ★ 成交时点（2026-11-01）：换仓当日若按「次日开盘」成交，
+            #   收益起点是 open[i+1] 而非 close[i] —— 差额就是隔夜跳空。
+            _use_open = (panel_open is not None and switched
+                         and target in panel_open.columns)
+            if _use_open:
+                p0 = panel_open[target].iloc[i + 1]
+            else:
+                p0 = panel[target].iloc[i]
+            p1 = panel[target].iloc[i + 1]
             if not pd.isna(p0) and not pd.isna(p1) and p0 != 0:
                 ret = p1 / p0 - 1.0
         # 半仓补仓（可选·研究用）：持仓期收盘跌破建仓价 add_drop ⇒ 次日补满
