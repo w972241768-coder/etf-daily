@@ -62,6 +62,11 @@ class SnapRow:
 #   'watch'    -> 备选观察池 (绝不参与调仓判定, 只在报告末尾单独列示)
 ROLE_DEFENSIVE = "defensive"
 ROLE_WATCH = "watch"
+# 空仓期替代载体（2026-11-01）：只提供数据，不参与任何排名/分组。
+# 由 etf_backtest_long.backtest(cash_proxy=...) 在 CASH 段读取其日收益。
+ROLE_CASH = "cash"
+# 不参与主选池排名的角色集合（唯一事实来源）
+_ROLE_OFF_RANK = (ROLE_DEFENSIVE, ROLE_WATCH, ROLE_CASH)
 
 VE_MA = 200
 VE_BUY_F = 0.97      # 收盘 < MA200×0.97 -> 干(买)
@@ -109,7 +114,7 @@ def split_pools(snap: List[SnapRow]):
     这是"主选池 vs 备选池"分组的唯一事实来源 —— 任何调用方都不要自己写
     `role != 'defensive'` 这类过滤, 否则会把 watch 标的混进排名与换仓判定。
     """
-    rot = [r for r in snap if r.role not in (ROLE_DEFENSIVE, ROLE_WATCH)]
+    rot = [r for r in snap if r.role not in _ROLE_OFF_RANK]
     dfn = [r for r in snap if r.role == ROLE_DEFENSIVE]
     wat = [r for r in snap if r.role == ROLE_WATCH]
     return rot, dfn, wat
@@ -175,7 +180,7 @@ def build_snapshot(df: pd.DataFrame,
     # 顺序: 主选池(按 动横20 降序) -> 防守 -> 备选观察池(按 动横20 降序)
     # 注意: 'watch' 绝不进入主选池排名, 否则会污染头名/换仓日判定。
     key = (lambda r: r.momentum.get(window, -9e9))
-    ranked = sorted([r for r in rows if r.role not in (ROLE_DEFENSIVE, ROLE_WATCH)],
+    ranked = sorted([r for r in rows if r.role not in _ROLE_OFF_RANK],
                     key=key, reverse=True)
     defended = [r for r in rows if r.role == ROLE_DEFENSIVE]
     watched = sorted([r for r in rows if r.role == ROLE_WATCH],

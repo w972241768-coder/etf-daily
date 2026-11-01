@@ -119,7 +119,10 @@ def main():
     # ⚠️ 必须带 000001（上证指数）：② 节「同期上证 / 超额」要用它。
     #    2026-11-01 用户指出：之前只补 pool 里的 ETF，导致 000001 停在 10-28，
     #    10-29 / 10-30 两行的上证与超额变成「-」「—」。
-    codes = list(dict.fromkeys(list(rot) + list(deff) + list(watch) + ["000001"]))
+    # ⚠️ 2026-11-01：必须带 511010（空仓期计息载体）。read_pools() 只返回
+    #   rot/deff/watch，role=cash 不在其中 ⇒ 不显式加会漏补，导致 cash_proxy 静默失效。
+    codes = list(dict.fromkeys(list(rot) + list(deff) + list(watch)
+                               + ["000001", "511010"]))
     for name in ("tdx_adj_long_2014_2026.csv", "tdx_adj_long_2019_2026.csv"):
         p = os.path.join(HERE, name)
         if os.path.exists(p):

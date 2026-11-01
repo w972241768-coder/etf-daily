@@ -52,6 +52,13 @@ FEISHU_USER = "ou_137e56eb64ada250b5f52fd691f8ec2e"
 RED = "#d4380d"    # 涨 (中国习惯: 红涨)
 GREEN = "#0f9d58"  # 跌 (绿跌)
 
+# ---- 空仓期替代载体（2026-11-01 接入 LIVE_COMPOSITE.cash_proxy）----
+# 回测里 CASH 段按该标的日收益计息（实测 +6.2%~+8.2%），页面上要如实告诉用户
+# 「空仓」不是躺着不动，而是换持国债。三处文案统一引用，别再散写。
+CASH_PROXY = bl.LIVE_COMPOSITE.get("cash_proxy")
+CASH_LABEL = (f"空仓·持 {CASH_PROXY} 国债" if CASH_PROXY else "空仓持币")
+CASH_SHORT = (f"国债{CASH_PROXY}" if CASH_PROXY else "空仓")
+
 # ---- 三条策略序列的统一配色（2026-10-25 改）----
 # 旧版「红 / 紫 / 品红」三种色相太近（紫 #7b3fe4 与品红 #c2185b 几乎分不开），
 # 改为「蓝 / 橙 / 玫红」——色相分别约 225° / 36° / 336°，两两间隔足够大。
@@ -329,13 +336,14 @@ def _combo_summary_html(recent):
         elif p3.get("hold") == d3.get("base_hold"):
             # ⚠️ 2026-11-01：_same 原本自带 <b></b>，外层又套一层 <b>{_same}</b>
             #   ⇒ 渲染出 <b><b>电力ETF博时</b></b>。改为只在外层加粗。
-            _same = ("空仓" if p3.get("hold") == "CASH"
+            _same = (CASH_LABEL if p3.get("hold") == "CASH"
                      else html.escape(str(p3_hold_nm)))
             concl = (f"今日持仓 <b>{_same}</b> → <b>无需任何操作</b>。")
             tone = "ok"
         elif p3.get("hold") == "CASH":
-            concl = ("<b>今日空仓</b>（D3 止损 或 P3 追高触发）→ "
-                     "<b>卖出清仓</b>。")
+            concl = (f"<b>今日空仓</b>（D3 止损 或 P3 追高触发）→ "
+                     f"<b>卖出换持 {CASH_PROXY} 国债</b>。" if CASH_PROXY else
+                     "<b>今日空仓</b>（D3 止损 或 P3 追高触发）→ <b>卖出清仓</b>。")
             tone = "diff"
         else:
             concl = (f"<b>今日调整为 {html.escape(str(p3_hold_nm))}</b>"
@@ -347,7 +355,7 @@ def _combo_summary_html(recent):
         #    只是收进 <details>：一致时默认收起（多数日子），
         #    口径不一致时默认展开（那天必须看细节对比）。
         _h_p3, _h_base = p3.get("hold"), d3.get("base_hold")
-        _h_disp = ("空仓持币" if _h_p3 == "CASH"
+        _h_disp = (CASH_LABEL if _h_p3 == "CASH"
                    else html.escape(f"{_h_p3 or ''} {p3_hold_nm or ''}".strip()))
         _weak = bool(p3.get("weak_active"))
         if not p3.get("ok"):
@@ -1564,7 +1572,7 @@ def _hold_band_svg(dates, holds, names=None, *, W=920.0, H=34.0):
         fill, tc = _HOLD_COLORS.get(code, ("#9aa3ae", "#ffffff"))
         parts.append(f'<rect x="{x0:.1f}" y="3" width="{w:.1f}" height="{H - 11:.1f}" '
                      f'rx="2" fill="{fill}"/>')
-        lab = ("空仓" if code == "CASH"
+        lab = (CASH_SHORT if code == "CASH"
                else _short_hold((names or {}).get(code) or code))
         if w >= 34 and lab:
             parts.append(f'<text x="{x0 + w / 2:.1f}" y="{H / 2 + 2:.1f}" font-size="9.5" '
@@ -2707,7 +2715,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     # def_code / def_nm / ve_state / ve_ok / def_now_txt 已在上方（排名表前）算好，此处直接复用。
     if overheated:
         if ve_state == "数据不足":
-            final_code, final_nm = "CASH", "持币"
+            final_code, final_nm = "CASH", CASH_LABEL
             final_note = ("头名已触发过热熔断，但防守位 200 日线数据不足，"
                           "价值引擎无法判定 → 持币")
         elif ve_ok:
@@ -2716,7 +2724,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
                           f"价值引擎对防守位判定为「{ve_state}」"
                           f"（偏离 MA200 {ve_ratio:+.2f}%）→ 建议切到防守位")
         else:
-            final_code, final_nm = "CASH", "持币"
+            final_code, final_nm = "CASH", CASH_LABEL
             final_note = (f"头名已触发过热熔断（乖离 {head1.dev:+.2f}% 或 领先 {lead:+.2f}pp 触线）；"
                           f"但价值引擎对防守位判定为「{ve_state}」"
                           f"（偏离 MA200 {ve_ratio:+.2f}%，已涨破 +6% 卖出线）→ 防守期持币，不买防守位")
@@ -2935,7 +2943,9 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
                      or nm_by_code.get(_held_disp, _held_disp))
     if _need_switch:
         _act_txt = (f"<b class='good'>买入 {final_code}</b>"
-                    if final_code != "CASH" else "<b class='warn'>卖出清仓</b>")
+                    if final_code != "CASH" else
+                    (f"<b class='warn'>卖出换持 {CASH_PROXY} 国债</b>" if CASH_PROXY
+                     else "<b class='warn'>卖出清仓</b>"))
         _tag = ("<span class='tag weakb'>抄底买入</span>" if _weak_active
                 else "<span class='tag rot'>今日建议持仓</span>")
         _why_txt = (f"当前持 {_held_disp} {html.escape(str(_held_disp_nm or ''))}"

@@ -186,7 +186,8 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
                         sticky=sticky, enter_dev=enter_dev, enter_lead=enter_lead,
                         exit_dev=exit_dev, exit_lead=exit_lead,
                         min_def_days=min_def_days, buy=cost / 2.0, sell=cost / 2.0,
-                        W=W, MA=MA, value_engine=value_engine)
+                        W=W, MA=MA, value_engine=value_engine,
+                        cash_proxy=bl.LIVE_COMPOSITE.get("cash_proxy"))
     except Exception as e:                     # noqa: BLE001
         return dict(error=f"回测复算失败（{type(e).__name__}: {e}）")
 
@@ -452,7 +453,8 @@ def _d3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                     sticky=sticky, enter_dev=enter_dev, enter_lead=enter_lead,
                     exit_dev=exit_dev, exit_lead=exit_lead, min_def_days=min_def_days,
                     buy=cost / 2.0, sell=cost / 2.0, W=W, MA=MA,
-                    value_engine=value_engine, loss_cool=D3_THR, loss_days=D3_DAYS)
+                    value_engine=value_engine, loss_cool=D3_THR, loss_days=D3_DAYS,
+                    cash_proxy=bl.LIVE_COMPOSITE.get("cash_proxy"))
     navs = r["navs"]
     st = bl.stats(navs)
     sb = bl.stats(base_navs)
@@ -571,7 +573,10 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     kw = dict(sticky=sticky, enter_dev=enter_dev, enter_lead=enter_lead,
               exit_dev=exit_dev, exit_lead=exit_lead, min_def_days=min_def_days,
               buy=cost / 2.0, sell=cost / 2.0, W=W, MA=MA,
-              value_engine=value_engine)
+              value_engine=value_engine,
+              # ★ 2026-11-01：空仓期持国债必须进 kw，否则「仅P3 / D3+P3」等参照线
+              #   仍是现金口径，与主口径的净值曲线不可比。
+              cash_proxy=bl.LIVE_COMPOSITE.get("cash_proxy"))
     # 主口径：D3 + P3 叠加 + 抄底模块（抄底参数同样来自 LIVE_COMPOSITE，唯一事实源）
     r = bl.backtest(panel, dates, start_i, end_i, pool, defensive,
                     loss_cool=D3_THR, loss_days=D3_DAYS,
@@ -588,6 +593,8 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                     # 抄底波动率闸门（2026-10-31 接入）：⚠️ 逐项传参必须同步，
                     #   否则 LIVE_COMPOSITE 改了这里不生效、日报静默退回旧口径。
                     weak_max_vol=bl.LIVE_COMPOSITE.get("weak_max_vol", 0),
+                    # 空仓期持国债（2026-11-01 接入）：已并入上面的 kw，此处不再重复传，
+                    #   否则 Python 会因重复关键字参数报 TypeError。
                     **kw)
     navs = r["navs"]
     st = bl.stats(navs)
