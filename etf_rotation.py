@@ -327,8 +327,10 @@ def _combo_summary_html(recent):
                      "（详见下方 ② 的 D3 卡片）")
             tone = "warn"
         elif p3.get("hold") == d3.get("base_hold"):
+            # ⚠️ 2026-11-01：_same 原本自带 <b></b>，外层又套一层 <b>{_same}</b>
+            #   ⇒ 渲染出 <b><b>电力ETF博时</b></b>。改为只在外层加粗。
             _same = ("空仓" if p3.get("hold") == "CASH"
-                     else f"<b>{html.escape(str(p3_hold_nm))}</b>")
+                     else html.escape(str(p3_hold_nm)))
             concl = (f"今日持仓 <b>{_same}</b> → <b>无需任何操作</b>。")
             tone = "ok"
         elif p3.get("hold") == "CASH":
@@ -2465,22 +2467,12 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                        f'<b style="color:{_cfd}">{_fdv:+.2f}%</b> ｜ '
                        f'指数{idx["code"]} <b style="color:{_cid}">{_idv:+.2f}%</b>'
                        f'（差 {idx["gap"]:+.2f}pp）</span>')
-        rank_rows.append(
-            "<tr class='def'>"
-            f'<td class="num c-idx">—</td>'
-            f'<td class="mono c-code">{r.code}</td>'
-            f'<td class="c-nm">{html.escape(r.name)} (防守)'
-            f'<span class="code-sub">{r.code}</span></td>'
-            f'<td class="num c-m20" style="color:{_color(r.momentum[window])}">{_fmt(r.momentum[window])}</td>'
-            f'<td class="num c-dev" style="color:{_color(r.dev)}">{_fmt(r.dev)}</td>'
-            f'<td class="num c-px">{r.close:.3f}</td>'
-            f'<td class="num c-chg" style="color:{_color(r.chg1)}">{_fmt(r.chg1)}</td>'
-            f'<td class="num c-ma20">{_ma20(r):.3f}</td>'
-            "</tr>")
-        rank_rows.append(
-            "<tr class='defsub'><td colspan='8'>"
-            f'<div class="defbar">{_ibadge}{_mark}</div>'
-            "</td></tr>")
+        # ⚠️ 2026-11-01（用户要求）：防守位 512040 及其 MA200 偏离子行**不再进排名表**。
+        #   理由：① 它不参与动横20 排名（MEMORY.md 明确写着），列在这里本身自相矛盾；
+        #   ② 它的全部数据（MA200 偏离 / 买线距离 / 历史胜率）已在下方
+        #      「🛡 防守位操作指南」折叠框里完整展示，这里是重复。
+        #   排名表从此只展示 1~9 名轮动标的，视觉更干净。
+        _ = _ibadge  # 保留计算（下方折叠框仍用），此处不再渲染
 
     # ---- 年度表现（近 6 年，每年三根竖柱：基础轮动 / D3 单笔止损 / P3 追高止盈）----
     # yearly: [{year, ret, mdd, ...}] 来自长历史回测，ret/mdd 均为小数(0.5=50%)。
@@ -2846,8 +2838,25 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
             _tact = f"<b class='warn'>{_t['action']}</b>"
             _tact_cls = "tvsell"
         else:
-            _tact = f"<b>{_t['action']}</b>"
-            _tact_cls = "tvmid"
+            # ★ 2026-11-01（用户要求）：临界预警 —— 距买线/卖线 < 0.5pp 时升级为橙色提示。
+            #   痛点：今天 512890 持有 197 天、浮盈近 10%、距 +6% 卖线只差 0.12pp，
+            #   却只显示「继续持有」埋在表格小字里，临门一脚最容易漏单。
+            _NEAR = 0.5
+            _tsell = _t.get("to_sell")
+            _tbuy = _t.get("to_buy")
+            if isinstance(_tsell, (int, float)) and 0 <= _tsell < _NEAR:
+                _tact = (f"<b class='warn'>继续持有</b>"
+                         f"<span class='near'>⚠ 距 +6% 卖线仅差 "
+                         f"{_tsell:.2f}pp，留意挂单止盈</span>")
+                _tact_cls = "tvnear"
+            elif isinstance(_tbuy, (int, float)) and 0 <= _tbuy < _NEAR:
+                _tact = (f"<b class='warn'>继续持有</b>"
+                         f"<span class='near'>⚠ 距 MA200 买线仅差 "
+                         f"{_tbuy:.2f}pp，留意回踩买点</span>")
+                _tact_cls = "tvnear"
+            else:
+                _tact = f"<b>{_t['action']}</b>"
+                _tact_cls = "tvmid"
         # 距两条线的距离（只在有意义时给出提示方向）
         if _tdev < 0:
             _tbuy_txt = f"已破 <b>{-_tdev:.2f}pp</b>"
@@ -2951,6 +2960,13 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
         f"<td class='rs'>{_why_txt}</td></tr>",
     ]
     _def_fold = []          # 未过热时收进折叠框的防守位/策略二参考行（2026-10-29）
+    # ★ 2026-11-01（用户要求）：512890 策略二提到 512040 防守位**之前**。
+    #   理由：512890 是独立策略、随时可能触发买卖（今天距 +6% 卖线仅 0.12pp）；
+    #   512040 只在头名过热熔断时才启用，平时 95% 时间都是陪跑，排在前面只是占位。
+    _tv_mid = str((ve_track or {}).get("zone") or "") == "mid"
+    _tv_infold = bool(_trow) and (not overheated) and _tv_mid
+    if _tv_infold:
+        _def_fold.append(_trow)
     # ---- 防守位行：只有真进入防守期（过热熔断）才给出"应该持有/应该持币"的强指令 ----
     if overheated:
         if ve_ok:
@@ -2996,18 +3012,12 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
             f"<td><b class='good'>买入 {def_code}</b></td>"
             f"<td class='rs'>价值引擎判定「{ve_state}」（偏离 MA200 {ve_ratio:+.2f}%），"
             f"防守期应持有防守位而非持币</td></tr>")
-    # ★ 512890 策略二：紧跟在 512040 防守位之后（用户要求「在 512040 策略的下面」）
-    # 2026-10-29：未过热且无动作（zone=mid）时一并收进折叠框；有买卖信号时仍平铺在表里。
-    _tv_mid = str((ve_track or {}).get("zone") or "") == "mid"
-    if _trow:
-        if (not overheated) and _tv_mid:
-            _def_fold.append(_trow)
-        else:
-            guide_rows.append(_trow)
-    guide_rows.append(
-        f"<tr><td>其他</td><td class='nm2'>既非今日建议持仓、也非防守位</td>"
-        f"<td>换到 <span class='mono'>{final_code}</span> {html.escape(final_nm)}</td>"
-        f"<td class='rs'>换仓成本按双边约 0.2% 估算</td></tr>")
+    # ★ 512890 策略二：未过热且 zone=mid 时已在上面**提前插入** _def_fold（排在 512040 之前）；
+    #   有买卖信号（zone=buy/sell）时仍平铺在主表里 —— 强指令不能藏进折叠框。
+    if _trow and not _tv_infold:
+        guide_rows.append(_trow)
+    # ⚠️ 2026-11-01 已删除固定行「其他 | 既非今日建议持仓、也非防守位 → 换到 X」：
+    #   顶部胶囊已硕大写「✓ 今日持 X → 无需动作」，这行是每天固定占位的重复说明。
 
     # ---- 防守位 / 策略二分组框（2026-10-29 用户要求「藏绿勾」→ 同日改为**默认展开**）----
     # ⚠️ 用户实际持有 512040 与 512890 两只基金，需要每次打开页面就能看到它们的
@@ -3202,9 +3212,21 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
                       f'<b class="warn">已涨破卖线但空仓 → 保持持币，不追高</b>')
                 _zcls = "hot"
             else:
+                # ★ 2026-11-01（用户要求）：临界预警 —— 与折叠面板里的跟踪行口径一致。
+                #   距卖线/买线 < 0.5pp 时不再只说「继续持有」，而是把临门一脚喊出来。
+                _near2 = ""
+                _ts2 = _t.get("to_sell")
+                _tb2 = _t.get("to_buy")
+                if isinstance(_ts2, (int, float)) and 0 <= _ts2 < 0.5:
+                    _near2 = (f'　<span class="near">⚠ 距 +6% 卖线仅差 '
+                              f'{_ts2:.2f}pp，留意挂单止盈</span>')
+                elif isinstance(_tb2, (int, float)) and 0 <= _tb2 < 0.5:
+                    _near2 = (f'　<span class="near">⚠ 距 MA200 买线仅差 '
+                              f'{_tb2:.2f}pp，留意回踩买点</span>')
                 _z = (f'介于两条线之间 → 沿用状态机记忆：<b>继续持有</b>，不动作'
                       if _t["holding"] else
                       f'介于两条线之间且当前空仓 → <b>不追高</b>，等回踩 MA200 才买')
+                _z = _z + _near2
                 _zcls = ""
             _today = f"""
   <div class="dgstate {'hold' if _t['holding'] else 'cash'}">
@@ -3752,6 +3774,11 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   tr.tvmk.tvbuy td{{background:#f4fbf7}}
   tr.tvmk.tvsell td{{background:#fff8f3}}
   tr.tvmk.tvmid td{{background:#fbfcfd}}
+  /* 临界预警（2026-11-01）：距买线/卖线 <0.5pp ⇒ 橙色行底 + 醒目副标 */
+  tr.tvmk.tvnear td{{background:#fffaf2}}
+  tr.tvmk.tvnear td:first-child{{box-shadow:inset 3px 0 0 #d99a4e}}
+  .near{{display:block;margin-top:2px;font-size:11.5px;font-weight:700;
+    color:#8a5312;white-space:normal;line-height:1.5}}
   .tvbar{{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 14px;
     padding:7px 10px;border:1px solid #d3dced;border-radius:8px;background:#f7f9fe;
     font-size:11.5px;line-height:1.65;color:#3a4560;min-width:0}}
