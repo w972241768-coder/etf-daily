@@ -266,16 +266,23 @@ def _combo_summary_html(recent):
         _asof_s = str(recent.get("asof") or "")
         if "2026-10-30" <= _asof_s <= "2026-11-06":
             _migrate_html = (
-                '<details class="migrdet"><summary>⚠ 10-31 口径变更'
-                '（抄底加波动率闸门 45%）</summary>'
+                '<details class="migrdet"><summary>⚠ 10-31 / 11-01 口径升级'
+                '（波动率闸门 45% + 空仓持 511010 国债）</summary>'
                 '<div class="migr">'
-                '自 2026-10-31 起，抄底触发前多一道检查：末位标的'
+                '<b>① 10-31：抄底加波动率闸门</b> —— 抄底触发前多一道检查：末位标的'
                 '<b>60 日年化波动率须 ≤ 45%</b>，超过就不抄底。'
                 '理由是「跌得最狠的往往就是波动最大的」，'
                 '历史上 17 笔抄底里只有 1 笔被这道闸门拦下'
                 '（2026-10-26 的 588170，波动率 58.5%），'
                 '而它正好是唯一造成两位数亏损的那笔 —— '
                 '近 10 年 Calmar <b>1.07 → 2.03</b>、最大回撤 <b>−31.01% → −17.92%</b>。<br>'
+                '<b>② 11-01：空仓期改持 511010 国债ETF</b>（原来现金 0 收益）—— '
+                '全样本 545 日（17.5%）空仓期不再闲置，'
+                '主窗净值 <b>13.8259 → 14.6901（+6.25%）</b>、Calmar <b>2.64 → 2.70</b>。<br>'
+                '⚠️ 因此本页「胜率」会明显高于 10-31 版：'
+                '空仓段（220 笔里的 36 笔）过去收益恒为 0（不算胜），'
+                '现在其中 <b>14 笔</b>拿到国债正收益 ⇒ 交易胜率 <b>45.0% → 51.4%</b>、'
+                '日胜率 <b>40.0% → 51.6%</b>。<b>不是统计 bug，是资金真的在生息。</b><br>'
                 '你手上这笔 588170 按 10-31 的决定<b>继续持到满 10 日</b>'
                 '（新口径本来不会买入它），页面「当前持 X」是模型口径，'
                 '<b>请以实际持仓为准</b>。</div></details>')
@@ -394,7 +401,7 @@ def _combo_summary_html(recent):
 </tr></thead><tbody>{body}</tbody></table></div>
 {_wr_html}
 <div class="cbsn">{concl}
-<span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；
+<span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；{(f"<b>空仓期均自动转持 {CASH_PROXY} 国债ETF</b>（2026-11-01 起，不再是现金 0 收益）；") if CASH_PROXY else ""}
 抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做{(("、末位 60 日波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0)) + "%") if bl.LIVE_COMPOSITE.get("weak_max_vol", 0) else "")}）。
 三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
@@ -622,17 +629,18 @@ def _p3_card_html(p3, recent, cost):
       <th class="num" title="被止盈那一笔的持仓段收益（策略净值口径，已含双边成本）">本次持仓</th>
       <th class="num" title="与该笔持仓完全同窗口的上证指数涨跌">同期上证</th>
       <th class="num" title="本次持仓 − 同期上证">超额</th>
-      <th class="num" title="空仓交易日数；下方小字为这 20 天上证的涨跌（空仓期策略收益为 0）">空仓</th>
+      <th class="num" title="空仓交易日数；下方小字为这 20 天上证的涨跌（空仓期转持 {CASH_PROXY} 国债，收益≈国债涨幅）">空仓</th>
       <th>回场日</th></tr></thead>
       <tbody>{rows_last}</tbody></table></div>
     <div class="sub" style="margin-top:6px;font-size:11px;line-height:1.6">
     <b>三件事别混</b>：①「触发依据 · 当日头名」= 当天动横20 排名第 1 名，P3 判定的是<b>它的</b> ROC60 有没有进自身历史 95 分位；
     ②「当日卖出」= 你那时<b>实际持有的</b>那只 —— 因为冷却/未换仓，它可能不是当日头名，两者不同是正常的；
-    ③ <b>触发日＝清仓日</b>：当天收盘判定、当天收盘清仓，次日起空仓；<b>回场日</b> = 空仓满 {p3['days']} 个交易日后那天，按当日动横20 第 1 名买回。
+    ③ <b>触发日＝清仓日</b>：当天收盘判定、当天收盘清仓，次日起空仓{(f"（<b>空仓期转持 {CASH_PROXY} 国债</b>，2026-11-01 起）") if CASH_PROXY else ""}；<b>回场日</b> = 空仓满 {p3['days']} 个交易日后那天，按当日动横20 第 1 名买回。
     <br>「自身历史分位」= 该值在该标的自身扩张历史里排第几（0~100），触发线固定 95，所以必然 ≥95；越接近 100 说明当时涨得越极端。
     <br>「本次持仓 / 同期上证 / 超额」= 被止盈那一笔从建仓到清仓的收益、同一窗口的上证涨跌、两者之差
     （策略收益含双边成本 {cost*100:.1f}%）；「空仓」格里的小字是<b>空仓期</b>的上证涨跌 ——
-    空仓期策略收益为 0，所以它为正 = 这 20 天躲过了上涨（代价），为负 = 躲过了下跌（收益）。</div>
+    空仓期{(f"转持 {CASH_PROXY} 国债，只拿≈国债涨幅" ) if CASH_PROXY else "收益为 0"}，
+    所以上证为正 = 这 20 天躲过了上涨（代价），为负 = 躲过了下跌（收益）。</div>
   </div>
   <div class="d3sw">{act}</div>
   <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 {cost*100:.1f}%，
@@ -1798,7 +1806,7 @@ def _span_word(pos: float) -> str:
 
 def _hspan_html(span, *, label: str = "近 1 年 MA200 偏离区间",
                 buy_label: str = "", alt=None, alt_label: str = "指数口径",
-                hold_stat=None) -> str:
+                hold_stat=None, fi=None) -> str:
     """渲染「历史参照」条带：近 1 年偏离极值 + 当前所处位置 + 买线下方天数 + 长窗口参照。
 
     与 512040 的暖色 action 条（.gidxbar）、512890 的冷色 action 条（.tvbar）
@@ -1855,6 +1863,12 @@ def _hspan_html(span, *, label: str = "近 1 年 MA200 偏离区间",
         body.append(
             f'<span class="v">最近一次 <b>{hold_stat["last"]:.0f}</b> 个交易日'
             f'<i>{_lw}</i></span>')
+    # ★ 2026-11-01 专家第九轮建议 1：固收+徽章（空仓期接国债后的真实年化）。
+    #   不画曲线、不占版面，只用 20 来个字符说明这笔底仓的真实复利水平。
+    if fi and fi.get("ann") is not None:
+        body.append(
+            f'<span class="v">固收+口径 年化 <b>{fi["ann"]:.2f}%</b>'
+            f'<i>空仓接 {CASH_PROXY} · MDD {fi["mdd"]:.1f}% · {fi["years"]:.1f} 年</i></span>')
     if span.get("extra"):
         # 每个长窗口单独一格（不合并成一句）：单格文字短，flex-wrap 才能在各宽度下
         # 自然换行、不会撑出横向滚动条；合并成一长句在 600px 屏会超出容器。
@@ -1991,7 +2005,8 @@ def _ve_merged_series(df, code, ma=200):
     return s, notes
 
 
-def build_ve_track(df, code, *, ma=200, buy=1.00, sell=1.06, name=""):
+def build_ve_track(df, code, *, ma=200, buy=1.00, sell=1.06, name="",
+                   cash_code=None):
     """单标的「价值引擎」每日跟踪快照（给 512890 这类第二条策略用）。
 
     规则与 `build_ve_curve` 同一状态机，但只取**最新一根**的状态与操作提示：
@@ -2050,7 +2065,39 @@ def build_ve_track(df, code, *, ma=200, buy=1.00, sell=1.06, name=""):
         # 例 512890 回踩即买 → 0.0；512040 跌 3% 买 → −3.0。
         span=_ma_dev_span((s / mav - 1.0) * 100.0,
                           buy_line=(buy - 1.0) * 100.0),
+        # 固收+口径（2026-11-01 专家第九轮建议 1）：空仓期改持 cash_code 后的真实年化。
+        # 只做展示徽章，不参与任何信号计算。
+        fi=_ve_fixed_income(s, st, df, cash_code),
     )
+
+
+def _ve_fixed_income(s, st, df, cash_code):
+    """策略二「固收+」口径：持仓期吃标的收益、空仓期吃 cash_code 收益。
+
+    返回 dict(ann, mdd, years) 或 None。口径 = 前复权、零手续费、信号当日成交
+    （与 build_ve_curve 一致）。⚠️ 仅供页面徽章展示，不参与调仓。
+    """
+    if not cash_code or df is None or "code" not in getattr(df, "columns", []):
+        return None
+    try:
+        sub = (df[df["code"].astype(str) == str(cash_code)]
+               .drop_duplicates("date").set_index("date")["close"]
+               .astype(float).sort_index())
+        if len(sub) < 100:
+            return None
+        cash = sub.reindex(s.index).ffill().bfill()
+        r_hold = s.pct_change(fill_method=None).fillna(0.0)
+        r_cash = cash.pct_change(fill_method=None).fillna(0.0)
+        r = r_hold.where(st, r_cash)
+        nav = (1.0 + r).cumprod()
+        yrs = (s.index[-1] - s.index[0]).days / 365.25
+        if yrs <= 0 or nav.iloc[-1] <= 0:
+            return None
+        ann = (float(nav.iloc[-1]) ** (1.0 / yrs) - 1.0) * 100.0
+        mdd = float((nav / nav.cummax() - 1.0).min()) * 100.0
+        return dict(ann=ann, mdd=mdd, years=yrs)
+    except Exception:                            # noqa: BLE001
+        return None
 
 
 def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
@@ -2926,7 +2973,9 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
                               avg=(ve2_curve or {}).get("avg_hold_days"),
                               n=(ve2_curve or {}).get("hold_days_n", 0),
                               last=(ve2_curve or {}).get("last_hold_days"),
-                              live=(ve2_curve or {}).get("last_hold_live", False)))
+                              live=(ve2_curve or {}).get("last_hold_live", False)),
+                          # 固收+徽章（2026-11-01 专家第九轮建议 1）
+                          fi=_t.get("fi"))
             + (f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>' if _tnote else "")
             + "</td></tr>")
 
@@ -4605,7 +4654,9 @@ def main():
     try:
         ve_track = build_ve_track(
             df, VE_TRACK_CODE,
-            buy=VE_TRACK_BUY, sell=VE_TRACK_SELL, name=VE_TRACK_NAME)
+            buy=VE_TRACK_BUY, sell=VE_TRACK_SELL, name=VE_TRACK_NAME,
+            # 固收+徽章（2026-11-01）：空仓期改持国债后的真实年化，仅展示用。
+            cash_code=CASH_PROXY)
     except Exception as e:                      # noqa: BLE001
         info_main.append(f"[VE2] {VE_TRACK_CODE} 每日跟踪计算异常: "
                          f"{type(e).__name__}: {e}")
