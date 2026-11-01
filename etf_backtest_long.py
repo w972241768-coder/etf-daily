@@ -718,15 +718,27 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             pos_w = (pos_frac if (pos_frac is not None and target != "CASH")
                      else 1.0)
         ret = 0.0
-        if target in panel.columns:
-            # ★ 成交时点（2026-11-01）：换仓当日若按「次日开盘」成交，
-            #   收益起点是 open[i+1] 而非 close[i] —— 差额就是隔夜跳空。
-            _use_open = (panel_open is not None and switched
-                         and target in panel_open.columns)
-            if _use_open:
+        # ★★ 成交时点（2026-11-01 二次修正）：买卖必须同一时刻。
+        # 旧实现只算新仓 open_T1→close_T1，漏了旧仓 close_T→open_T1 的隔夜跳空
+        # ⇒ 等于「用昨日收盘卖旧、今日开盘买新」，时间穿越，虚增收益（曾误报 +12%）。
+        # 正确：旧仓先持到 open_T1（吃隔夜跳空），再换新仓；换到 CASH 时只剩隔夜段。
+        if panel_open is not None and switched:
+            _rs = 0.0
+            if held != "CASH" and held in panel.columns \
+                    and held in panel_open.columns:
+                _po = panel_open[held].iloc[i + 1]
+                _pc = panel[held].iloc[i]
+                if not pd.isna(_po) and not pd.isna(_pc) and _pc != 0:
+                    _rs = _po / _pc - 1.0
+            ret = _rs
+            if target != "CASH" and target in panel.columns \
+                    and target in panel_open.columns:
                 p0 = panel_open[target].iloc[i + 1]
-            else:
-                p0 = panel[target].iloc[i]
+                p1 = panel[target].iloc[i + 1]
+                if not pd.isna(p0) and not pd.isna(p1) and p0 != 0:
+                    ret = (1.0 + _rs) * (p1 / p0) - 1.0
+        elif target in panel.columns:
+            p0 = panel[target].iloc[i]
             p1 = panel[target].iloc[i + 1]
             if not pd.isna(p0) and not pd.isna(p1) and p0 != 0:
                 ret = p1 / p0 - 1.0
