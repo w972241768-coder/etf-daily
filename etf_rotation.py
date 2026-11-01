@@ -2096,7 +2096,8 @@ def _ve_fixed_income(s, st, df, cash_code):
         return None
 
 
-def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
+def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5,
+                   cash_code=None):
     """512040 价值引擎「买入 / 持有 / 卖出」状态机的近 N 年回测净值。
 
     规则与报告里「防守位操作指南」表格完全一致：
@@ -2105,6 +2106,10 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
       · 中间区间            → 维持上一状态
       · 未满足买点          → 持币（不追高）
     口径：**前复权**、**零手续费**、初始净值 = 1。
+
+    cash_code（2026-11-01 用户要求）：**空仓期改持该标的**（生产为 511010 国债ETF），
+    而不是零收益现金。传入后净值曲线即「固收+」真实账户口径；
+    默认 None ⇒ 空仓期收益 0（向后兼容，512040 防守位曲线不受影响）。
 
     收益归属：用 **k-1 日收盘后的状态** 决定 k-1→k 的收益（信号当日成交、次日才吃涨跌），
     与 `etf_backtest_long.backtest()` 同口径，不含未来函数。
@@ -2136,8 +2141,23 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
         state.append(hold)
     st = pd.Series(state, index=s.index, dtype=bool)
 
+    # 空仓期载体序列（2026-11-01）：与标的同源取「长历史 CSV + 在线补尾」，
+    # 再对齐到标的的交易日索引（国债数据比 512890 上市早，ffill 足够）。
+    cs, cw = None, None
+    if cash_code:
+        try:
+            cs, _cnotes = _ve_merged_series(df, str(cash_code), ma=ma)
+            if cs is not None and len(cs) >= 100:
+                cs = cs.reindex(s.index).ffill()
+            else:
+                cs = None
+        except Exception:                      # noqa: BLE001
+            cs = None
+
     cut = s.index[-1] - pd.DateOffset(years=years)
     w, sw = s[s.index >= cut], st[s.index >= cut]
+    if cs is not None:
+        cw = cs[cs.index >= cut]
     if len(w) < 60:
         return None
 
@@ -2145,9 +2165,15 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
     if bool(sw.iloc[0]):
         events.append(dict(date=w.index[0], act="HOLD",
                            note="窗口首日已处于持有状态（买点发生在窗口之前）"))
+    _cash_ret = 1.0                                    # 空仓段累计（国债）收益
     for i in range(1, len(w)):
         if bool(sw.iloc[i - 1]):                       # k-1 持仓 → 吃 k-1→k 的涨跌
             nav *= float(w.iloc[i]) / float(w.iloc[i - 1])
+        elif cw is not None:                           # k-1 空仓 → 吃国债涨跌
+            _c0, _c1 = float(cw.iloc[i - 1]), float(cw.iloc[i])
+            if _c0 == _c0 and _c1 == _c1 and _c0 > 0:
+                nav *= _c1 / _c0
+                _cash_ret *= _c1 / _c0
         navs.append(nav)
         if bool(sw.iloc[i]) != bool(sw.iloc[i - 1]):
             events.append(dict(date=w.index[i], act="BUY" if bool(sw.iloc[i]) else "SELL",
@@ -2213,6 +2239,9 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
         holding_now=bool(sw.iloc[-1]),
         last_buy=next((e["date"] for e in reversed(events) if e["act"] == "BUY"), None),
         notes=notes,
+        # 空仓期载体（2026-11-01）：供页面标注「空仓期持 511010 国债」
+        cash_code=(str(cash_code) if (cash_code and cw is not None) else None),
+        cash_ret=(_cash_ret - 1.0) * 100,
     )
 
 
@@ -2334,8 +2363,12 @@ def _ve_curve_block(vc, fi=None):
         f'<b style="color:{_cc(vc["bh_ret"])}">{vc["bh_ret"]:+.2f}%</b></span>'
         f'<span class="chip">最大回撤 <b style="color:{GREEN}">{vc["mdd"]:.2f}%</b>'
         f'（买入持有 {vc["bh_mdd"]:.2f}%）</span>'
-        f'<span class="chip">年化 <b style="color:{_cc(vc["cagr"])}">{vc["cagr"]:+.2f}%</b></span>'
-        f'<span class="chip">持仓 <b>{vc["hold_rate"]:.1f}%</b> 交易日</span>'
+        f'<span class="chip">近 {vc["years"]:.0f} 年年化 '
+        f'<b style="color:{_cc(vc["cagr"])}">{vc["cagr"]:+.2f}%</b></span>'
+        + (f'<span class="chip">空仓期持 <b>{vc["cash_code"]}</b>'
+           f'<span class="cnote">（本窗口贡献 {vc["cash_ret"]:+.2f}%）</span></span>'
+           if vc.get("cash_code") else "")
+        + f'<span class="chip">持仓 <b>{vc["hold_rate"]:.1f}%</b> 交易日</span>'
         f'<span class="chip">买卖 <b>{vc["n_buy"]}</b> 买 / <b>{vc["n_sell"]}</b> 卖</span>'
         # 胜率：非方向性指标，按页面规范用中性色（不用红涨绿跌）
         # ⚠️ 注释文字必须用 .cnote，不能再用 <i>：`.chip i` 是图例色块（14×3px），
@@ -2345,10 +2378,12 @@ def _ve_curve_block(vc, fi=None):
            if vc.get("win_rate") is not None else "")
         # ★ 固收+徽章（2026-11-01）：从「极值·长窗口」折叠区提到常显 chips，
         #   紧挨胜率右侧。空仓期接国债后的真实复利水平，一眼可见。
-        + (f'<span class="chip">固收+ 年化 <b style="color:#42474f">{fi["ann"]:.2f}%</b>'
+        # ⚠️ 与上面「近 5 年年化」是**两个不同窗口**：这里是标的上市至今（约 7.8 年），
+        #   上面是近 5 年。两个数字必然不同，标签必须写明窗口，否则会被误读成矛盾。
+        + (f'<span class="chip">全历史固收+ 年化 <b style="color:#42474f">{fi["ann"]:.2f}%</b>'
            f'<span class="cnote">（空仓接 {CASH_PROXY} · MDD {fi["mdd"]:.1f}% · {fi["years"]:.1f} 年）</span></span>'
            if fi and fi.get("ann") is not None else "")
-        + f'<span class="chip">当前 <b>{"持仓中" if vc["holding_now"] else "持币中"}</b>'
+        + f'<span class="chip">当前 <b>{"持仓中" if vc["holding_now"] else (("空仓 · 持 " + vc["cash_code"] + " 国债") if vc.get("cash_code") else "持币中")}</b>'
         + (f'（{vc["last_buy"]:%m-%d} 买入）'
            if vc["holding_now"] and vc["last_buy"] is not None else "")
         + '</span>'
@@ -2364,15 +2399,19 @@ def _ve_curve_block(vc, fi=None):
                   f'故胜率天然接近 100%；真正区分度看<b>平均每笔</b>与<b>持仓天数</b>。')
 
     return f"""
-<h3 class="sph3" style="margin-top:22px">📉 {vc['code']} 价值引擎 · 近 {vc['years']} 年回测净值曲线</h3>
+<h3 class="sph3" style="margin-top:22px">📉 {vc['code']} 价值引擎 · 近 {vc['years']:.0f} 年回测净值曲线{(f"（固收+口径 · 空仓持 {vc['cash_code']} 国债）") if vc.get("cash_code") else ""}</h3>
 <div class="note" style="margin-bottom:8px;padding:9px 12px">
 {chips}
 <div class="dimtxt" style="margin-top:6px;line-height:1.75">
 口径：<b>前复权</b>收盘价 · <b>零手续费</b> · 初始净值 <b>1.00</b> ·
 窗口 {vc['d0']:%Y-%m-%d} ~ {vc['d1']:%Y-%m-%d}（{vc['n']} 个交易日 / {vc['yrs']:.2f} 年）。
+{(f"<b>空仓期转持 {vc['cash_code']} 国债ETF</b>（2026-11-01 起，原来空仓期零收益）——"
+  f"曲线蓝线的空仓段不再是水平线，而是跟着国债小幅上行；"
+  f"本窗口空仓段国债累计贡献 <b>{vc['cash_ret']:+.2f}%</b>。") if vc.get("cash_code") else ""}
 规则：收盘 &lt; MA{vc['ma']}×{vc['buy']:.2f} 买入 → 收盘 &gt; MA{vc['ma']}×{vc['sell']:.2f} 卖出 →
-中间区间维持上一状态，未达买点持币。收益按「前一日收盘后的状态」结算，信号当日成交、次日才计入涨跌，无未来函数。
-<b>▲ 红 = 买入　▼ 绿 = 卖出</b>，底部色带 = 持有 512040 的区间（空白即持币）。
+中间区间维持上一状态，未达买点{("空仓（持 " + vc["cash_code"] + " 国债）") if vc.get("cash_code") else "持币"}。收益按「前一日收盘后的状态」结算，信号当日成交、次日才计入涨跌，无未来函数。
+<b>▲ 红 = 买入　▼ 绿 = 卖出</b>，底部色带 = 持有 {vc['code']} 的区间
+（空白即空仓{(f"，此时持 {vc['cash_code']} 国债" ) if vc.get("cash_code") else "（持币）"}）。
 {notes}
 </div>
 </div>
@@ -2959,7 +2998,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
         _trow += (
             f"<tr class='tvx'><td colspan='4'>"
             f'<div class="tvbar">'
-            f'<span class="k">规则：回踩 MA200 买 / 超 +6% 卖</span>'
+            f'<span class="k">规则：回踩 MA200 买 / 超 +6% 卖 · 空仓持 {CASH_PROXY} 国债</span>'
             f'<span class="v">买线 <b>{_t["buy_line"]:.4f}</b>'
             f'<i>{_tbuy_txt}</i></span>'
             f'<span class="v">卖线 <b>{_t["sell_line"]:.4f}</b>'
@@ -3314,24 +3353,32 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
             跌破 −3% 的天数只占约 4%，用 −3% 买线会长期打不到、大段时间空仓。
             <b>买入后进入持有状态。</b></td></tr>
     <tr><td>收盘 <b>&gt; MA200×1.06</b><br><span class="dimtxt">高于 200 日线 6 个点</span></td>
-        <td class="warn"><b>跑 → 卖出 / 转为持币</b></td>
-        <td>与 512040 完全一致。<b>卖出后不会自动买回</b>，必须重新回踩到 MA200 才可再买。</td></tr>
+        <td class="warn"><b>跑 → 卖出 / 转为空仓</b></td>
+        <td>与 512040 完全一致。<b>卖出后不会自动买回</b>，必须重新回踩到 MA200 才可再买。
+            卖出所得资金<b>转入 {CASH_PROXY} 国债ETF 生息</b>（2026-11-01 起），不再是零收益现金。</td></tr>
     <tr><td>收盘 介于 <b>MA200 ~ 1.06×MA200</b></td>
         <td><b>维持上一状态</b></td>
         <td>状态机逻辑，判定是"记忆性"的，取决于之前是买还是卖。</td></tr>
     <tr><td>未回踩到 MA200</td>
-        <td class="warn"><b>持币（空仓）</b></td>
-        <td>没到买点就不买，<b>宁可空仓也不追高</b>。</td></tr>
+        <td class="warn"><b>空仓 · 持 {CASH_PROXY} 国债</b></td>
+        <td>没到买点就不买，<b>宁可空仓也不追高</b>；但空仓不等于闲置 ——
+            这笔钱放在 <b>{CASH_PROXY} 国债ETF</b> 里吃票息（年化约 2.5%），
+            等回踩 MA200 再卖出换股。</td></tr>
   </table>
   <div class="dgnote">
     <b>这条策略和 512040 是什么关系</b>：<b>互不替代、可并行</b>。
     512040 是轮动策略的<b>防守位</b>（只在头名过热熔断时启用）；
     {VE_TRACK_CODE} 是<b>独立策略二</b>，不参与轮动排名、不受过热熔断控制，
     每天都在跑，按自己的 MA200 偏离决定买卖。<br>
-    <b>买线为什么定 1.00 而不是 0.97</b>：这是实测结论 —— 同 5 年窗口、
-    卖出线同为 +6% 的条件下，回踩买（×1.00）净值 2.1220、跑赢 −3% 买（×0.97）的 1.7102
-    约 41pp，也跑赢 512040 同期的 2.0122。若把卖出线收紧到 +3%，净值反而掉到 1.6628
-    （交易翻倍但每笔只赚 3~6%）→ <b>买入线该放宽，卖出线不该收紧</b>。
+    <b>空仓期资金去哪了（2026-11-01 起）</b>：本策略约 <b>59%</b> 的交易日空仓，
+    过去这部分资金零收益。现改为<b>空仓期转持 {CASH_PROXY} 国债ETF</b>，
+    于是整条策略变成「<b>大部分时间吃债券票息 + 偶尔回踩抄底红利低波</b>」的<b>固收+</b>结构：
+    同 5 年窗口净值 <b>2.1745 → 2.3981</b>（+22.4pp），最大回撤<b>完全不变（−11.82%）</b>，
+    年化 <b>16.83% → 19.14%</b>。下方净值曲线的<b>蓝色空仓段因此不再是水平线</b>。<br>
+    <b>买线为什么定 1.00 而不是 0.97</b>：这是实测结论 —— 同 5 年窗口、卖出线同为 +6%、
+    且都按固收+口径的条件下，回踩买（×1.00）净值 <b>2.3981</b>、跑赢 −3% 买（×0.97）的
+    <b>2.0405</b> 约 <b>+35.8pp</b>，也跑赢 512040 同期的 2.2641。若把卖出线收紧到 +3%，
+    净值反而掉到 <b>1.8599</b>（交易翻倍但每笔只赚 3~6%）→ <b>买入线该放宽，卖出线不该收紧</b>。
   </div>
 </div>
 {_ve_curve_block(ve2_curve, fi=(ve_track or {}).get("fi"))}
@@ -4675,7 +4722,10 @@ def main():
     ve2_curve = None
     try:
         ve2_curve = build_ve_curve(
-            df, VE_TRACK_CODE, buy=VE_TRACK_BUY, sell=VE_TRACK_SELL, years=5)
+            df, VE_TRACK_CODE, buy=VE_TRACK_BUY, sell=VE_TRACK_SELL, years=5,
+            # ★ 2026-11-01 用户要求：策略二曲线改「固收+」口径 —— 空仓期持国债，
+            #   否则曲线在 90% 的空仓时间里是水平线，与真实账户（空仓吃国债）不符。
+            cash_code=CASH_PROXY)
     except Exception as e:                      # noqa: BLE001
         info_main.append(f"[VE2] {VE_TRACK_CODE} 净值曲线计算异常: "
                          f"{type(e).__name__}: {e}")
