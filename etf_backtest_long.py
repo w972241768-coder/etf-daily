@@ -152,7 +152,12 @@ def read_panel(path: str, field: str = "close") -> pd.DataFrame:
 
 def compute_signal(panel: pd.DataFrame, pool: List[str], i: int,
                    W: int = 20, MA: int = 20) -> Optional[dict]:
-    """第 i 日收盘信号。上市不足 / 数据缺失的标的自动被跳过 (动态池)。"""
+    """第 i 日收盘信号。上市不足 / 数据缺失的标的自动被跳过 (动态池)。
+
+    ⛔ 2026-11-01 已证伪并删除的变体：排名改用「20日对数价格斜率×R²」或
+    「动横×胜率」。实测四窗口终值 −55%~−70%、Calmar 腰斩、大肉少 5~6 笔
+    （44→39）—— R² 惩罚的正是脉冲式暴涨，而那是大肉的唯一来源。勿再实现。
+    """
     if i - W < 0 or i - MA + 1 < 0:
         return None
     m: Dict[str, float] = {}
@@ -296,7 +301,11 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              # 成交时点审计（2026-11-01 专家第四轮）：
              #   None/False = 现状「T 日收盘出信号、T 日收盘成交」（close→close）
              #   传 open 面板 = 「T 日收盘出信号、T+1 开盘成交」（open[i+1]→close[i+1]）
-             panel_open: Optional[pd.DataFrame] = None) -> dict:
+             panel_open: Optional[pd.DataFrame] = None,
+             # 空仓期替代载体（2026-11-01 研究用）：None = 现金零收益（现状）。
+             # 传标的代码（如 "511010" 国债 / "511880" 货基）⇒ target=="CASH" 时
+             # 按该标的日收益计息。默认 None ⇒ 逐位等价。
+             cash_proxy: Optional[str] = None) -> dict:
     """策略B 状态机 (ROT / DEF)。value_engine=True 时防守期叠加价值引擎择时,
     不满足条件则持币 CASH —— 这会打破策略B「始终满仓」的设计, 属设计变更非缺陷。
 
@@ -698,6 +707,11 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
         switched = (target != held)
         if switched:
             c = buy + sell                       # 每次换仓按双边计 (2026 版口径)
+            # ⓘ 关于 cash_proxy 的成本口径（2026-11-01 核实，勿再改）：
+            #   引擎对「换入/换出 CASH」都扣 buy+sell。
+            #   · 国债口径：卖股票(sell)+买国债(buy) = 准确；
+            #   · 现金口径：实际只需 sell，被高估了一次 buy ⇒ 基线偏保守。
+            #   两者用同一假设 ⇒ 对比公平，且国债结果含真实成本，不需要额外补扣。
             nav *= (1.0 - c)
             trades.append(dict(date=str(dates[i].date()), frm=held, to=target,
                                frm_name=("空仓" if held == "CASH"
@@ -740,6 +754,13 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
         elif target in panel.columns:
             p0 = panel[target].iloc[i]
             p1 = panel[target].iloc[i + 1]
+            if not pd.isna(p0) and not pd.isna(p1) and p0 != 0:
+                ret = p1 / p0 - 1.0
+        elif cash_proxy and cash_proxy in panel.columns:
+            # ★ 空仓期改持替代载体（2026-11-01 研究用）：CASH 段按该标的日收益计息。
+            #   默认 cash_proxy=None ⇒ 不进此分支，ret 保持 0（与旧版逐位一致）。
+            p0 = panel[cash_proxy].iloc[i]
+            p1 = panel[cash_proxy].iloc[i + 1]
             if not pd.isna(p0) and not pd.isna(p1) and p0 != 0:
                 ret = p1 / p0 - 1.0
         # 半仓补仓（可选·研究用）：持仓期收盘跌破建仓价 add_drop ⇒ 次日补满
