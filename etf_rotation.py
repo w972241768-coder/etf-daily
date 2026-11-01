@@ -4139,7 +4139,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
 <section class="gsec">
 <div class="ghead">
   <h2 class="gh2">🎯 今日操作<span class="gtip">按你当前持仓对号入座</span></h2>
-  <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准</span>
+  <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准 ｜ 需换仓时：<b>次日 9:32~9:35</b> 执行（勿抢 9:25 竞价；跨境标的先看 IOPV 溢价 ≤2% 再买）</span>
 </div>
 {_combo_summary_html(recent)}
 {('<div class="note" style="margin-bottom:8px">' + guide_note + '</div>') if guide_note else ''}
