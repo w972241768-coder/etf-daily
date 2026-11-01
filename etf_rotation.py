@@ -586,9 +586,9 @@ def _p3_card_html(p3, recent, cost):
   <details class="d3rd"><summary>规则定义（D3 / P3 / 抄底）</summary>
   <div class="d3rule">主口径 = <b>三条独立规则</b>（各判各的、独立计时，
   目标持仓优先级 D3 &gt; P3 &gt; 抄底；<b>抄底锁定期内 D3 / P3 让位</b>）：<br>
-  ① <b>D3 单笔止损</b>（看盈亏）：某笔在换出时相对建仓价亏损 ≥3% ⇒ 空仓 5 个交易日；<br>
+  ① <b>D3 单笔止损</b>（看盈亏）：某笔在换出时相对建仓价亏损 ≥3% ⇒ 空仓 5 个交易日{(f"（<b>空仓期均转持 {CASH_PROXY} 国债ETF</b>）") if CASH_PROXY else ""}；<br>
   ② <b>P3 追高止盈</b>（不看盈亏）：<b>头名的 60 日动量（ROC60）冲进它自身历史的 95 分位</b>
-  ——即已涨到「历史极高位」、动量透支 ⇒ 空仓 20 个交易日；<br>
+  ——即已涨到「历史极高位」、动量透支 ⇒ 空仓 20 个交易日{(f"（<b>同上，空仓期同样转持 {CASH_PROXY} 国债ETF</b>）") if CASH_PROXY else ""}；<br>
   ③ <b>抄底</b>（三道前置条件）：主选池 <b>全部</b> 标的动横20 都为负 ⇒ 当日换持<b>排名最后一名</b>
   （不是倒数第二）；{("同一标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 个交易日内不重复抄底；") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}
   池内可用标的少于 {bl.LIVE_COMPOSITE.get('weak_min_pool', 0)} 只时不做（小池子最弱恒为同一只，会连买暴跌品）；
@@ -1806,7 +1806,7 @@ def _span_word(pos: float) -> str:
 
 def _hspan_html(span, *, label: str = "近 1 年 MA200 偏离区间",
                 buy_label: str = "", alt=None, alt_label: str = "指数口径",
-                hold_stat=None, fi=None) -> str:
+                hold_stat=None) -> str:
     """渲染「历史参照」条带：近 1 年偏离极值 + 当前所处位置 + 买线下方天数 + 长窗口参照。
 
     与 512040 的暖色 action 条（.gidxbar）、512890 的冷色 action 条（.tvbar）
@@ -1863,12 +1863,8 @@ def _hspan_html(span, *, label: str = "近 1 年 MA200 偏离区间",
         body.append(
             f'<span class="v">最近一次 <b>{hold_stat["last"]:.0f}</b> 个交易日'
             f'<i>{_lw}</i></span>')
-    # ★ 2026-11-01 专家第九轮建议 1：固收+徽章（空仓期接国债后的真实年化）。
-    #   不画曲线、不占版面，只用 20 来个字符说明这笔底仓的真实复利水平。
-    if fi and fi.get("ann") is not None:
-        body.append(
-            f'<span class="v">固收+口径 年化 <b>{fi["ann"]:.2f}%</b>'
-            f'<i>空仓接 {CASH_PROXY} · MDD {fi["mdd"]:.1f}% · {fi["years"]:.1f} 年</i></span>')
+    # ⓘ 固收+徽章已于 2026-11-01 移到「价值引擎策略」顶部 chips（紧挨胜率右侧），
+    #   因为它原本在这个折叠区里，默认状态下看不到。此处不再渲染。
     if span.get("extra"):
         # 每个长窗口单独一格（不合并成一句）：单格文字短，flex-wrap 才能在各宽度下
         # 自然换行、不会撑出横向滚动条；合并成一长句在 600px 屏会超出容器。
@@ -2220,8 +2216,11 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5):
     )
 
 
-def _ve_curve_block(vc):
-    """把 build_ve_curve 的结果渲染成内联 SVG（净值曲线 + 持仓色带 + 买卖点）。"""
+def _ve_curve_block(vc, fi=None):
+    """把 build_ve_curve 的结果渲染成内联 SVG（净值曲线 + 持仓色带 + 买卖点）。
+
+    fi：策略二「固收+」口径数据（2026-11-01），仅用于顶部 chips 徽章，不参与绘图。
+    """
     if not vc:
         return ""
     nav = vc["nav"]
@@ -2344,6 +2343,11 @@ def _ve_curve_block(vc):
         + (f'<span class="chip">胜率 <b style="color:#42474f">{vc["win_rate"]:.0f}%</b>'
            f'<span class="cnote">（{vc["trips_n"]} 笔已平仓，均 {vc["trip_avg"]:+.2f}%）</span></span>'
            if vc.get("win_rate") is not None else "")
+        # ★ 固收+徽章（2026-11-01）：从「极值·长窗口」折叠区提到常显 chips，
+        #   紧挨胜率右侧。空仓期接国债后的真实复利水平，一眼可见。
+        + (f'<span class="chip">固收+ 年化 <b style="color:#42474f">{fi["ann"]:.2f}%</b>'
+           f'<span class="cnote">（空仓接 {CASH_PROXY} · MDD {fi["mdd"]:.1f}% · {fi["years"]:.1f} 年）</span></span>'
+           if fi and fi.get("ann") is not None else "")
         + f'<span class="chip">当前 <b>{"持仓中" if vc["holding_now"] else "持币中"}</b>'
         + (f'（{vc["last_buy"]:%m-%d} 买入）'
            if vc["holding_now"] and vc["last_buy"] is not None else "")
@@ -2973,9 +2977,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
                               avg=(ve2_curve or {}).get("avg_hold_days"),
                               n=(ve2_curve or {}).get("hold_days_n", 0),
                               last=(ve2_curve or {}).get("last_hold_days"),
-                              live=(ve2_curve or {}).get("last_hold_live", False)),
-                          # 固收+徽章（2026-11-01 专家第九轮建议 1）
-                          fi=_t.get("fi"))
+                              live=(ve2_curve or {}).get("last_hold_live", False)))
             + (f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>' if _tnote else "")
             + "</td></tr>")
 
@@ -3332,7 +3334,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     （交易翻倍但每笔只赚 3~6%）→ <b>买入线该放宽，卖出线不该收紧</b>。
   </div>
 </div>
-{_ve_curve_block(ve2_curve)}
+{_ve_curve_block(ve2_curve, fi=(ve_track or {}).get("fi"))}
 """
 
     # ---------- 备选观察池（独立分组，渲染在报告最后，不干扰主选池筛选） ----------
