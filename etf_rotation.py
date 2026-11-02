@@ -242,7 +242,7 @@ def _wskip_html(p3, asof: str) -> str:
         return ""
 
 
-def _combo_summary_html(recent):
+def _combo_summary_html(recent, sub_html=""):
     """【今日操作指引】顶部的一眼可见摘要：基础轮动 / D3 / D3+P3 止盈 三方案今日对照。
 
     用户 2026-10-25 要求：把叠加组合的简要信息提到操作指引里，不用往下翻到 ② 才看到。
@@ -406,6 +406,7 @@ def _combo_summary_html(recent):
 三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
 </div>
+{sub_html}
 {_wstate_bar}{_migrate_html}"""
     except Exception:                          # noqa: BLE001
         return ""
@@ -2072,19 +2073,56 @@ def _ve_fixed_income(s, st, df, cash_code):
 
     返回 dict(ann, mdd, years) 或 None。口径 = 前复权、零手续费、信号当日成交
     （与 build_ve_curve 一致）。⚠️ 仅供页面徽章展示，不参与调仓。
+
+    ★ 2026-11-02 修复：原来只从本次 `df`（在线数据）里取 cash_code 序列，
+      盘中补数若该标的缺失/行数不足（`len(sub) < 100`）就直接返回 None，
+      徽章静默消失（用户 11-02 14:07 版撞上）。现改为三级取数：
+        ① 长历史 CSV 打底 + 在线补尾（与净值曲线同源，最稳）
+        ② 直接读长历史 CSV
+        ③ 只用 df 里的序列
     """
-    if not cash_code or df is None or "code" not in getattr(df, "columns", []):
+    if not cash_code:
         return None
     try:
-        sub = (df[df["code"].astype(str) == str(cash_code)]
-               .drop_duplicates("date").set_index("date")["close"]
-               .astype(float).sort_index())
-        if len(sub) < 100:
+        cash = None
+        # ① 与净值曲线同源：长历史打底 + 本次在线补尾
+        if df is not None:
+            try:
+                cs, _ = _ve_merged_series(df, str(cash_code), ma=200)
+                if cs is not None and len(cs) >= 100:
+                    cash = cs
+            except Exception:                  # noqa: BLE001
+                cash = None
+        # ② 退路：直接读长历史 CSV
+        if cash is None:
+            try:
+                import online_data as od
+                path = od.find_adj_csv()[0]
+                hist = pd.read_csv(path, parse_dates=["date"])
+                h = hist[hist["code"].astype(str).str.zfill(6) == str(cash_code)]
+                if not h.empty:
+                    cash = (h.sort_values("date").set_index("date")["close"].astype(float)
+                            .pipe(lambda x: x[~x.index.duplicated(keep="last")]).sort_index())
+            except Exception:                  # noqa: BLE001
+                cash = None
+        # ③ 最后退路：df 里的在线序列
+        if cash is None and df is not None and "code" in getattr(df, "columns", []):
+            sub = (df[df["code"].astype(str).str.zfill(6) == str(cash_code)]
+                   .drop_duplicates("date").set_index("date")["close"]
+                   .astype(float).sort_index())
+            if len(sub):
+                cash = sub
+        if cash is None or len(cash) < 20:
             return None
-        cash = sub.reindex(s.index).ffill().bfill()
+
+        cash = cash.reindex(s.index).ffill().bfill()
         r_hold = s.pct_change(fill_method=None).fillna(0.0)
         r_cash = cash.pct_change(fill_method=None).fillna(0.0)
-        r = r_hold.where(st, r_cash)
+        # ★ 2026-11-02 修前视/后视错配：状态必须用**前一日**收盘后确定的那个，
+        #   才与本文件的净值曲线（build_ve_curve：`if sw[i-1]: nav *= w[i]/w[i-1]`）同口径。
+        #   原来用同日 `st`（当天收盘才知的状态去结算当天涨跌），会系统性低估：
+        #   实测 512890 全历史 8.71% vs 正确 16.07%（近 5 年 2.3999 与曲线卡 2.3981 对齐验证）。
+        r = r_hold.where(st.shift(1, fill_value=False), r_cash)
         nav = (1.0 + r).cumprod()
         yrs = (s.index[-1] - s.index[0]).days / 365.25
         if yrs <= 0 or nav.iloc[-1] <= 0:
@@ -3598,7 +3636,29 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     #   异常（抓取失败 / 非最新交易日）时改为 hero 之外的整宽醒目横幅 —— 异常必须刺眼。
     _fresh_ok = (_lv_on and not _fs_stale
                  and "⚠" not in _lv_txt and "失败" not in _lv_txt)
-    if _fresh_ok:
+    # ★ 2026-11-02 用户要求：盘中状态也做成**单行胶囊**，长解释收进 <details>。
+    #   原来盘中会在页头下方顶出 3~4 行整宽横幅（数据源 / 最后一根 / 26 只 / 收盘后请重跑），
+    #   与「今日操作」副标题「数字随盘中波动」完全重复，白占手机首屏 3 行。
+    _is_live = bool(_lv_on and "盘中" in str(_lv_txt or ""))
+    _live_n = ""
+    _t = str(_lv_txt or "")
+    _i = _t.find("成功 ")
+    if _i >= 0:
+        _tok = _t[_i + 3:_i + 3 + 14].split("只")[0].strip()
+        if "/" in _tok:
+            _live_n = _tok
+    # 截至时间用**北京时间**（本机在南非 SAST，直接取 now 会差 6 小时，A 股语境下会看错）
+    _now_short = (datetime.now(timezone.utc) + timedelta(hours=8)).strftime("%m-%d %H:%M")
+    if _is_live:
+        # 文案刻意压到一行能放下（390px 实测）：「说明」用 ⓘ 图标代替，省 ~40px
+        fresh_inline = (
+            f'<div class="fdot fdot-live"><span class="fdot-i"></span>⚡ 盘中快照'
+            f' · 截至 <b>{_now_short}</b>'
+            f'{(" · " + _live_n + " 正常") if _live_n else ""}'
+            f'<details class="fdet"><summary>ⓘ</summary>'
+            f'<div class="fdetb">{_lv_txt}</div></details></div>')
+        fresh_alert = ""
+    elif _fresh_ok:
         fresh_inline = (
             f'<div class="fdot"><span class="fdot-i"></span>数据正常 · 截至 '
             f'<b>{html.escape(str(pivot))}</b>'
@@ -3674,6 +3734,29 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     # 保留 _all_neg 供后续可能的复用，不再渲染。
     _all_neg = bool(ranked) and all(r.momentum[window] < 0 for r in ranked)
     _weak_html = ""
+
+    # ---- 「无需动作日」的极简呈现（2026-11-02 用户要求 2 + 3）----
+    # 用户实测：一年 250 个交易日里 220+ 天是「继续持有」，此时
+    #   ① 标题栏常驻两行挂单 SOP（尾盘 14:50~14:57 / 次日 9:32~9:35）纯属噪音；
+    #   ② 上面绿色胶囊已说「今日持 X → 无需动作」，下面那张只剩 1 行的表 100% 重复。
+    # 故：无需动作日 → 不出 SOP、不出表格，只留胶囊 + 一行「依据」副标题；
+    #     真换仓日 → SOP 升格为表格正上方的琥珀色高亮条（平时隐身、用时跳出）。
+    _plain_hold = (not _need_switch) and (not overheated)
+    _sop_bar = ""
+    if _need_switch:
+        _sop_bar = (
+            '<div class="sopbar">⏱ <b>今日需换仓</b>：当日尾盘 '
+            '<b>14:50~14:57</b> 执行最优；只能次日则 <b>9:32~9:35</b> 开盘'
+            '（勿抢 9:25 竞价，跨境标的先看 IOPV 溢价 ≤2%）。</div>')
+    _guide_table_html = ""
+    _guide_sub = ""
+    if _plain_hold:
+        _guide_sub = f'<div class="gsub">{_why_txt}</div>'
+    else:
+        _guide_table_html = (
+            '<table class="gtbl"><thead><tr><th>代码</th><th>标的</th>'
+            '<th>今日动作</th><th>依据</th></tr></thead>'
+            f'<tbody>{"".join(guide_rows)}</tbody></table>')
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
@@ -3930,6 +4013,13 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   .hero .fdot{{margin:7px 0 0;color:rgba(255,255,255,.9);font-size:11.5px}}
   .hero .fdot b{{color:#fff}}
   .hero .fdot .fdot-i{{background:#7fe3a9;box-shadow:0 0 0 3px rgba(127,227,169,.22)}}
+  /* 盘中胶囊（2026-11-02）：半透明白底小药丸，一眼区分「盘中快照」与「收盘数据」 */
+  .hero .fdot.fdot-live{{background:rgba(255,255,255,.16);
+    border:1px solid rgba(255,255,255,.3);border-radius:20px;
+    padding:3px 11px;width:fit-content;margin:8px 0 0}}
+  .hero .fdot.fdot-live .fdot-i{{background:#ffd166;
+    box-shadow:0 0 0 3px rgba(255,209,102,.3)}}
+  .hero .fdot.fdot-live .fdetb{{color:#fff;background:rgba(0,0,0,.18)}}
   .hero .fdet>summary{{color:#fff;text-decoration:underline;text-underline-offset:2px}}
   .hero .fdetb{{background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.28);
     color:#fff}}
@@ -3993,8 +4083,8 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
      并把「执行时点」拆成 .gsop 独立段：桌面用「｜」接在同一行，手机换行显示。 */
   .gdate{{margin-left:auto;font-size:12px;color:var(--mut);
     white-space:normal;line-height:1.62;text-align:right}}
-  .gdate .gsop::before{{content:" ｜ ";color:#c8cdd6}}
-  .gdate .gsop{{color:#8b93a1}}
+  /* .gsop（执行时点 SOP）已于 2026-11-02 移出标题栏 —— 改为「真换仓日」才在
+     操作表上方出现的 .sopbar 高亮条，无需动作日完全不渲染。 */
   .gsec table.gtbl{{font-size:12.5px;width:100%;table-layout:fixed;
     border:none;border-radius:0;box-shadow:none;background:transparent}}
   /* ⚠️ 全局 table 自带 border+圆角+阴影（卡片样式）；放进 .gsec 白卡片里会变成
@@ -4010,6 +4100,13 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   .gsec table.gtbl tbody tr:last-child td{{border-bottom:none}}
   /* 白卡片里的说明块改成浅灰底，避免「白上白」看不出层次 */
   .gsec .note{{background:#f7f9fb;box-shadow:none;border-color:#e2e5ea}}
+  /* 无需动作日的「依据」副标题（2026-11-02）：替代原来那行 1 行的操作表 */
+  .gsub{{margin:-4px 0 10px;font-size:11.5px;color:#6c717f;line-height:1.6}}
+  /* 换仓日的执行时点 SOP 高亮条（2026-11-02）：平时不渲染，真换仓才出现 */
+  .sopbar{{margin:0 0 9px;padding:8px 12px;border-radius:9px;
+    background:#fff8e6;border:1px solid #ffe0a3;border-left:3px solid #f0a020;
+    font-size:11.5px;line-height:1.65;color:#7a5217}}
+  .sopbar b{{color:#8a5a00}}
   /* 排名表 + 年度卡：并排、等高（年度卡被拉伸到排名表高度，底边齐平） */
   .split2{{display:flex;gap:14px;align-items:stretch;margin:14px 0 0}}
   .s2l{{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;min-height:0}}
@@ -4152,10 +4249,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     .gsec table.gtbl th:nth-child(3){{width:auto}}
     .ghead{{gap:6px}}
     .gdate{{margin-left:0;width:100%;text-align:left;font-size:11.5px}}
-    /* 手机上「执行时点」单独成段，用虚线分隔，避免一大坨灰字 */
-    .gdate .gsop{{display:block;margin-top:5px;padding-top:5px;
-      border-top:1px dashed #e6e9ef}}
-    .gdate .gsop::before{{content:""}}
+
   }}
 
   /* ===== 手机竖屏（≤640px）排名表瘦身（2026-10-25）=====
@@ -4259,12 +4353,12 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
 <section class="gsec">
 <div class="ghead">
   <h2 class="gh2">🎯 今日操作<span class="gtip">按你当前持仓对号入座</span></h2>
-  <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准<span class="gsop">需换仓时：<b>当日尾盘 14:50~14:57</b> 执行最优；只能次日则 <b>9:32~9:35</b> 开盘（勿抢 9:25 竞价，跨境标的先看 IOPV 溢价 ≤2%）</span></span>
+  <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准</span>
 </div>
-{_combo_summary_html(recent)}
+{_combo_summary_html(recent, _guide_sub)}
 {('<div class="note" style="margin-bottom:8px">' + guide_note + '</div>') if guide_note else ''}
-<table class="gtbl"><thead><tr><th>代码</th><th>标的</th><th>今日动作</th><th>依据</th></tr></thead>
-<tbody>{''.join(guide_rows)}</tbody></table>
+{_sop_bar}
+{_guide_table_html}
 {_def_fold_html}
 </section>
 
@@ -4630,6 +4724,27 @@ def main():
         _bdf = od.fetch_sina_kline_sh000001(datalen=90)
         if _bdf is not None and len(_bdf):
             _bench_live = _bdf
+            # ★ 2026-11-02：指数日线在盘中、以及收盘后到 16:00 前后都**没有当日 K 线**
+            #   （ETF 有 sina_quotes_ex 快照兜底，指数没有）⇒ ② 最后一段「同期上证」恒为 -。
+            #   这里用 sh000001 实时快照补最后一根，日期必须与锚定日一致才补。
+            try:
+                _blast = pd.to_datetime(_bdf["date"]).max().strftime("%Y-%m-%d")
+            except Exception:                  # noqa: BLE001
+                _blast = ""
+            if str(pivot) > _blast:
+                _q = od.fetch_sina_quote_sh000001()
+                if _q and _q[1] and _q[1] > 0 and str(_q[0]) == str(pivot):
+                    _bench_live = pd.concat(
+                        [_bdf,
+                         pd.DataFrame([(pd.Timestamp(str(pivot)), "000001", float(_q[1]))],
+                                      columns=["date", "code", "close"])],
+                        ignore_index=True)
+                    info.append(f"[BENCH] 上证指数用实时快照补 {pivot}（{_q[1]:.2f}）")
+                else:
+                    info.append(f"[BENCH] 上证指数当日快照不可用（日线止于 {_blast}），"
+                                f"② 最后一段「同期上证」将为 -")
+        else:
+            info.append("[BENCH] 上证指数日线取数失败，② 的「同期上证」只算到长历史末日")
     except Exception as e:                     # noqa: BLE001
         info.append(f"[BENCH] 上证指数在线补数失败（{type(e).__name__}: {e}），"
                     f"② 的「同期上证」将只算到长历史末日")

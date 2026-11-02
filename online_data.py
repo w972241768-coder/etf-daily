@@ -141,6 +141,35 @@ def fetch_sina_kline_sh000001(datalen: int = 90):
     return fetch_tencent_kline_sh000001(datalen)
 
 
+def fetch_sina_quote_sh000001():
+    """上证指数**实时快照** → (日期字符串, 最新点位)；失败返回 None。
+
+    ★ 2026-11-02 为什么需要它：指数日线在盘中、以及收盘后到 16:00 前后都拿不到当日 K 线
+      （实测 15:00 时 sh000001 日线最后一根仍是 10-30）。而 ETF 有 `sina_quotes_ex` 快照兜底，
+      指数没有 ⇒ ② 表最后一段「同期上证」永远是「-」。
+      ⚠️ 不能用 `sina_quotes_ex(["000001"])`：它按首位数字判市场，会取到 **sz000001 平安银行**。
+    """
+    try:
+        txt = _http_get(f"{SINA_QUOTE}sh000001", gbk=True)
+        for line in txt.split("\n"):
+            if "sh000001" not in line or '"' not in line:
+                continue
+            val = line.split("=", 1)[1].strip().strip(";").strip('"')
+            p = val.split(",")
+            if len(p) < 4:
+                continue
+            try:
+                px = float(p[3])
+            except (TypeError, ValueError):
+                continue
+            if px > 0:
+                d = str(p[30])[:10] if len(p) > 30 else ""
+                return d, px
+    except Exception as e:                       # noqa: BLE001
+        print(f"[ONLINE] sh000001 实时快照失败: {type(e).__name__}: {e}")
+    return None
+
+
 def sina_quotes_ex(codes):
     """新浪实时行情快照（GBK）。返回 {code: dict(px=最新价, date=行情日期, prev=昨收)}。
 
