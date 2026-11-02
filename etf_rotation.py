@@ -1142,6 +1142,9 @@ CURVE_Z = {"sh": 0, "ndx": 1, "nv": 2, "dp": 3, "p3": 4}   # 绘制叠放顺序�
 _CV_CSS = """
 .cvbox{position:relative;width:100%;min-width:0}
 .cvhint{color:#98a1ad;font-size:11.5px;margin-top:3px;line-height:1.6}
+/* 图例 chips 与说明文字：说明必须另起一段，否则手机上会和 chips 挤成一坨（2026-11-02） */
+.cvdesc{margin-top:6px;line-height:1.65}
+.cvdesc .dimtxt{font-size:11.5px}
 .cvbox.cvlk .cvhint{color:#3d57e5;font-weight:600}
 .cvtip{position:fixed;z-index:99;pointer-events:none;display:none;background:#fff;
   border:1px solid #dfe3e8;border-radius:8px;box-shadow:0 6px 18px rgba(16,24,40,.16);
@@ -1169,7 +1172,7 @@ _CV_JS = """
     for(s=0;s<d.ser.length;s++){ dots.push(document.getElementById(id+'-d'+s)); }
     var tip=document.createElement('div');
     tip.className='cvtip'; document.body.appendChild(tip);
-    var locked=false;
+    var locked=false, hideTimer=null, lastTouch=0;
     function pt(e){
       return (e.touches && e.touches.length) ? e.touches[0] : e;
     }
@@ -1204,17 +1207,47 @@ _CV_JS = """
       if(ly+th>window.innerHeight-8){ ly=window.innerHeight-th-8; }
       tip.style.left=lx+'px'; tip.style.top=ly+'px';
     }
-    function leave(){
-      if(locked) return;                 // 单击锁定后移出也不消失
+    function clearTip(){
       g.style.opacity=0; tip.style.display='none';
       for(var k=0;k<dots.length;k++){ if(dots[k]) dots[k].style.opacity=0; }
     }
+    function leave(){
+      if(locked) return;                 // 桌面端单击锁定后移出也不消失
+      clearTip();
+    }
+    // ★ 2026-11-02 手机端修复：原来 touchstart 会 move()、随后浏览器补发一个 click
+    //   → locked 被置 true，而触屏没有 mouseleave ⇒ 浮窗永久钉在屏幕上无法消除。
+    //   现在：触屏一律**不锁定**，抬手后 3.2 秒自动消失；点图表外 / 滚动页面立即消失。
+    function scheduleHide(ms){
+      if(hideTimer){ clearTimeout(hideTimer); }
+      hideTimer=setTimeout(function(){ if(!locked) clearTip(); }, ms);
+    }
     svg.addEventListener('mousemove',move);
     svg.addEventListener('mouseleave',leave);
-    svg.addEventListener('touchstart',function(e){ move(e); },{passive:true});
-    svg.addEventListener('touchmove',function(e){ move(e); },{passive:true});
+    svg.addEventListener('touchstart',function(e){
+      lastTouch=Date.now(); if(hideTimer){ clearTimeout(hideTimer); }
+      move(e);
+    },{passive:true});
+    svg.addEventListener('touchmove',function(e){
+      lastTouch=Date.now(); move(e);
+    },{passive:true});
+    svg.addEventListener('touchend',function(){ scheduleHide(3200); },{passive:true});
     svg.addEventListener('click',function(e){
+      // 触屏点按后浏览器会补发 click：此时只续时，不锁定
+      if(Date.now()-lastTouch<900){ move(e); scheduleHide(3200); return; }
       locked=!locked; box.classList.toggle('cvlk',locked); move(e);
+    });
+    // 点图表以外的地方（含正文空白）→ 立即收起并解锁
+    document.addEventListener('pointerdown',function(e){
+      if(box.contains(e.target)) return;
+      locked=false; box.classList.remove('cvlk');
+      if(hideTimer){ clearTimeout(hideTimer); }
+      clearTip();
+    },true);
+    // 页面滚动时浮窗位置会与图脱节（position:fixed）→ 未锁定时直接收起
+    window.addEventListener('scroll',function(){ if(!locked) clearTip(); },{passive:true});
+    document.addEventListener('keydown',function(e){
+      if(e.key==='Escape'){ locked=false; box.classList.remove('cvlk'); clearTip(); }
     });
   }
   function boot(){
@@ -1402,8 +1435,10 @@ def _svg_chart(dates, pct, switches=None, *, W=920.0, H=300.0, uid="cv1",
            f'class="csvg" role="img" aria-label="净值曲线 {uid}">'
            f'{grid_svg}{xt_svg}{"".join(lines)}{ends_svg}{mark_svg}{cursor_svg}'
            f'</svg>{tail_html}{after_svg}</div>'
-           f'<div class="cvhint">鼠标在图上移动 → 竖线与高亮点跟随，浮窗显示当日各序列的累计涨跌；'
-           f'<b>单击可锁定/解锁</b>，方便对着某一天慢慢看（触屏可拖动）。</div>'
+           f'<div class="cvhint"><span class="only-d">鼠标在图上移动 → 竖线与高亮点跟随，'
+           f'浮窗显示当日各序列的累计涨跌；<b>单击可锁定/解锁</b>，方便对着某一天慢慢看。</span>'
+           f'<span class="only-m">👆 点一下图表看当日数值（3 秒后自动消失）；'
+           f'按住拖动可连续查看，点空白处立即收起。</span></div>'
            f'</div>')
 
     data = dict(w=W, pl=pl, iw=iw, pt=pt, ih=ih, lo=lo, span=span, n=n,
@@ -1556,6 +1591,9 @@ _HOLD_COLORS = {
     "512040": ("#4b5563", "#ffffff"),   # 防守位
     "512890": ("#7b8ea8", "#ffffff"),   # 策略二
     "CASH":   ("#d5dae1", "#4b5563"),   # 空仓
+    # 保险项（2026-11-02）：若引擎直接以 cash_proxy 代码（511010）作为持仓段，
+    # 也给同色，避免冒出没配色的灰块。
+    "511010": ("#d5dae1", "#4b5563"),   # 空仓期持国债
 }
 
 
@@ -1684,13 +1722,13 @@ def _curve_block(curve):
 <h3 class="sph3" style="margin-top:18px">🔍 近 2 个月放大（{zoom_from} 起 = 1.0）</h3>
 <div class="note" style="margin-bottom:8px;padding:9px 12px">
 {zchips_html}
-<span class="dimtxt">　把上面同一批序列截到最近 {ZOOM_DAYS} 个自然日，并把<b>区间首日重定为 1.0</b>，
+<div class="cvdesc"><span class="dimtxt">把上面同一批序列截到最近 {ZOOM_DAYS} 个自然日，并把<b>区间首日重定为 1.0</b>，
 便于看清最近两个月的相对强弱；纵轴仍是自该日以来的累计涨跌，光标用法相同。
-<span class="only-m">📱 手机上<b>左右滑动</b>可看完整区间（图与下方色带同步滚动）。</span></span>
+<span class="only-m">📱 手机上<b>左右滑动</b>可看完整区间（图与下方色带同步滚动）。</span></span></div>
 </div>
 {small["html"]}
 {('<div class="sub" style="margin-top:6px">底条 = 每个交易日实际持有的标的'
-  '（按主口径 D3+P3+抄底 复算），<b>灰块 = 空仓</b>；与上方曲线共用同一时间轴，'
+  '（按主口径 D3+P3+抄底 复算），<b>灰块 = 空仓（持 511010 国债）</b>；与上方曲线共用同一时间轴，'
   '手机上可左右滑动查看。</div>')
  if _zband else ""}
 """
@@ -1707,13 +1745,13 @@ def _curve_block(curve):
 
     return f"""<style>{_CV_CSS}</style>
 {zoom_block}
-<h3 class="sph3" style="margin-top:20px">📈 净值曲线 2020 年至今（策略 / D3+P3 / D3+P3+抄底 vs 上证指数 · 纳斯达克综合指数）</h3>
+<h3 class="sph3" style="margin-top:20px">📈 净值曲线 2020 年至今<span class="only-d">（策略 / D3+P3 / D3+P3+抄底 vs 上证指数 · 纳斯达克综合指数）</span></h3>
 <div class="note" style="margin-bottom:8px;padding:9px 12px">
 {chips_html}
 <span class="chip"><i style="background:{RED};width:8px;height:8px;border-radius:50%"></i>正向轮动切换</span>
 <span class="chip"><i style="background:{GREEN};width:8px;height:8px;border-radius:50%"></i>防守切换</span>
-<span class="dimtxt">　{html.escape(curve.get("info", ""))}。全部序列以窗口首个交易日 = 1.0 归一化，
-纵轴为自该日起的累计涨跌；策略净值与「② 近期换仓复盘」同源同口径（前复权长历史 + 同一套规则复算）{dp_note}{p3_note}。</span>
+<div class="cvdesc"><span class="dimtxt">{html.escape(curve.get("info", ""))}。全部序列以窗口首个交易日 = 1.0 归一化，
+纵轴为自该日起的累计涨跌；策略净值与「② 近期换仓复盘」同源同口径（前复权长历史 + 同一套规则复算）{dp_note}{p3_note}。</span></div>
 </div>
 {big["html"]}
 <div class="sub" style="margin-top:8px">注：纳斯达克综合指数为美股日线，按公历日与 A 股交易日对齐（休市日沿用前值），
@@ -4328,6 +4366,11 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
       border:none;border-radius:0;padding:0;margin:-2px 0 8px}}
     .gsec table.gtbl tr.defx td,.gsec table.gtbl tr.tvx td{{padding:0}}
     details.defcol table.gtbl tr{{background:#f8fafc;border-color:#e6e9ef}}
+    /* 防守位/策略二「触发条件表」：内联 190px+150px 定宽在 340px 屏上会把「说明」压成
+       一字一行 → 取消定宽、退回自动布局（2026-11-02） */
+    table.dgtbl{{width:100%;table-layout:auto;font-size:11.5px}}
+    table.dgtbl th,table.dgtbl td{{padding:5px 4px}}
+    table.dgtbl th[style]{{width:auto !important}}
     /* 底部留白：给固定定位的「刷新日报」按钮让位，避免压住最后一张卡片 */
     body{{padding:14px 12px 86px}}
     .wrap{{max-width:100%}}
@@ -4343,6 +4386,8 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   /* 持仓色带（2026-10-29）：与上方净值曲线共用时间轴，紧贴图底 */
   /* 手机端才显示的提示（如「左右滑动」） */
   .only-m{{display:none}}
+  .only-d{{display:inline}}
+  @media(max-width:640px){{.only-d{{display:none}}}}
   @media(max-width:640px){{.only-m{{display:inline}}}}
   /* 持仓色带（2026-10-30）：紧贴曲线下方、无边框背景；与曲线同宽同滚动容器 */
   .cband{{background:transparent;border:none;border-radius:0;box-shadow:none;
