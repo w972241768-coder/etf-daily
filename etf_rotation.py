@@ -3988,7 +3988,13 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     padding-left:10px;border-left:4px solid;
     border-image:linear-gradient(180deg,#3d57e5,#566de7) 1}}
   .gh2 .gtip{{font-size:12px;font-weight:400;color:var(--mut);margin-left:8px}}
-  .gdate{{margin-left:auto;font-size:12px;color:var(--mut);white-space:nowrap}}
+  /* 2026-11-02：原来 white-space:nowrap，加上 SOP 执行时点后内容宽 971px，
+     390px 手机上把整页撑宽 610px（能一直右滑）。改为可换行，
+     并把「执行时点」拆成 .gsop 独立段：桌面用「｜」接在同一行，手机换行显示。 */
+  .gdate{{margin-left:auto;font-size:12px;color:var(--mut);
+    white-space:normal;line-height:1.62;text-align:right}}
+  .gdate .gsop::before{{content:" ｜ ";color:#c8cdd6}}
+  .gdate .gsop{{color:#8b93a1}}
   .gsec table.gtbl{{font-size:12.5px;width:100%;table-layout:fixed;
     border:none;border-radius:0;box-shadow:none;background:transparent}}
   /* ⚠️ 全局 table 自带 border+圆角+阴影（卡片样式）；放进 .gsec 白卡片里会变成
@@ -4145,7 +4151,11 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     .gsec table.gtbl th:nth-child(2),
     .gsec table.gtbl th:nth-child(3){{width:auto}}
     .ghead{{gap:6px}}
-    .gdate{{margin-left:0;width:100%}}
+    .gdate{{margin-left:0;width:100%;text-align:left;font-size:11.5px}}
+    /* 手机上「执行时点」单独成段，用虚线分隔，避免一大坨灰字 */
+    .gdate .gsop{{display:block;margin-top:5px;padding-top:5px;
+      border-top:1px dashed #e6e9ef}}
+    .gdate .gsop::before{{content:""}}
   }}
 
   /* ===== 手机竖屏（≤640px）排名表瘦身（2026-10-25）=====
@@ -4229,7 +4239,9 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     font-size:12px;color:#374151;white-space:nowrap}}
   .chip i{{display:inline-block;width:14px;height:3px;border-radius:2px}}
   /* chip 里的说明文字（不能用 <i>，那是色块） */
-  .chip .cnote{{font-style:normal;font-size:11px;color:#8b93a1;white-space:nowrap}}
+  /* 允许折行：320px 屏上「胜率 100%（5 笔已平仓，均 +14.28%）」整条 340px，
+     继承 .chip 的 nowrap 会把页面撑宽（2026-11-02） */
+  .chip .cnote{{font-style:normal;font-size:11px;color:#8b93a1;white-space:normal}}
   /* 阶梯表压缩：单位省略 %、小字、紧凑内边距 */
   table.lad{{font-size:11.5px}}
   table.lad th,table.lad td{{padding:4px 4px}}
@@ -4247,7 +4259,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
 <section class="gsec">
 <div class="ghead">
   <h2 class="gh2">🎯 今日操作<span class="gtip">按你当前持仓对号入座</span></h2>
-  <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准 ｜ 需换仓时：<b>当日尾盘 14:50~14:57</b> 执行最优；只能次日则 <b>9:32~9:35</b> 开盘（勿抢 9:25 竞价，跨境标的先看 IOPV 溢价 ≤2%）</span>
+  <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准<span class="gsop">需换仓时：<b>当日尾盘 14:50~14:57</b> 执行最优；只能次日则 <b>9:32~9:35</b> 开盘（勿抢 9:25 竞价，跨境标的先看 IOPV 溢价 ≤2%）</span></span>
 </div>
 {_combo_summary_html(recent)}
 {('<div class="note" style="margin-bottom:8px">' + guide_note + '</div>') if guide_note else ''}
