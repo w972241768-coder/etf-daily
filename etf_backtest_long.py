@@ -767,8 +767,14 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             if not pd.isna(p0) and not pd.isna(p1) and p0 != 0:
                 ret = p1 / p0 - 1.0
         elif cash_proxy and cash_proxy in panel.columns:
-            # ★ 空仓期改持替代载体（2026-11-01 研究用）：CASH 段按该标的日收益计息。
+            # ★ 空仓期改持替代载体（2026-11-01）：CASH 段按该标的日收益计息。
             #   默认 cash_proxy=None ⇒ 不进此分支，ret 保持 0（与旧版逐位一致）。
+            # ⛔ 2026-11-02 已证伪并删除：「J(T) 超阈值 ⇒ 当日不持国债」闸门。
+            #   实测（主窗，单边万1）：J<=70/80/85/90/95 全部负（−0.76%~−2.80%）；
+            #   只有 J<=100/105 微正（+0.21%/+0.47%），但 **IS 正、OOS 负**（近3年 −0.33%），
+            #   且 7 年只拦下 25~54 天，扣掉换手成本后归零。勿再实现。
+            #   机制：国债大跌日的 J 中位只有 21~31（J>80 占 0%），**闸门根本挡不住大跌**；
+            #   全历史 J>100 的 191 天日均 +0.0644%/胜率 83.8%，J 越高反而越好（趋势性）。
             p0 = panel[cash_proxy].iloc[i]
             p1 = panel[cash_proxy].iloc[i + 1]
             if not pd.isna(p0) and not pd.isna(p1) and p0 != 0:
