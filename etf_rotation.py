@@ -238,30 +238,72 @@ def _wskip_html(p3, asof: str) -> str:
         else:
             _dtxt = html.escape(d)
         _days = sk.get("days") or []
-        _days_html = ""
+        # ★ 2026-11-02（用户要求第 3 点）：原来 3 行（起止/波动率/被拦日流水账）
+        #   压成「1 行主文 + 1 个折叠明细」，首屏只留结论。
+        _tail = (f" → 维持头名 <b>{html.escape(str(hname))}</b>"
+                 if hold and hold != "CASH" else "")
+        # 前缀加「· 」：手机折行时文字紧贴上一句会黏在一起（2026-11-02 实测）
+        _cnt = (f"· 近 {_span} 个交易日拦 {_n} 次"
+                if (isinstance(_span, int) and _span > 1) else
+                (f"· 累计拦 {_n} 次" if _n > 1 else ""))
+        _detail = (f"{html.escape(d)} 起 · 已 {_span} 个交易日 · 其中 {_n} 日被拦"
+                   if isinstance(_span, int) and _span > _n else _dtxt)
         if _days:
-            _gap = (isinstance(_span, int) and _span > _n)
-            _days_html = ('<div class="wskipd">被拦日 '
-                          + " / ".join(html.escape(str(x)) for x in _days)
-                          + ("（其余交易日未触发抄底条件）" if _gap else "")
-                          + '</div>')
-        tail = (f" · 按头名持 <b>{html.escape(str(hname))}</b>"
-                if hold and hold != "CASH" else "")
+            _detail += ("　｜　被拦日 " + " / ".join(html.escape(str(x)) for x in _days)
+                        + ("（其余交易日未触发抄底条件）"
+                           if (isinstance(_span, int) and _span > _n) else ""))
         return (
-            '<div class="wstate skip">'
-            '<div class="whd"><span class="wbadge skipb">⛔ 波动率闸门</span>'
-            f'<b>{_dtxt} · {html.escape(str(sk.get("code") or ""))} '
-            f'{html.escape(str(sk.get("name") or ""))}</b>'
-            f'<span class="wtip">闸门 ≤{lim:.0f}%</span></div>'
-            f'<div class="wvol over">60 日波动率 <b>{_v}</b> ＞ {lim:.0f}%'
-            f' · 末位不抄底{tail}</div>'
-            f'{_days_html}'
-            '</div>')
+            '<div class="wstate skip"><div class="whd">'
+            '<span class="wbadge skipb">⛔ 波动率闸门</span>'
+            f'<b>末位 {html.escape(str(sk.get("code") or ""))} '
+            f'波动率 {_v} ＞ {lim:.0f}% 不抄底{_tail}</b>'
+            + (f'<span class="wtip">{_cnt}</span>' if _cnt else "")
+            + f'<details class="wskd"><summary>明细</summary>'
+              f'<div class="wskipd">{_detail}</div></details>'
+            '</div></div>')
     except Exception:                          # noqa: BLE001
         return ""
 
 
-def _combo_summary_html(recent, sub_html=""):
+def _migrate_note_html(recent):
+    """口径升级提示（折叠条）：2026-11-02 从 cbsum 内部移到【今日操作】最底部。
+
+    用户要求：首屏只留「主卡 → 闸门 → 支线卡」，历史口径说明统一沉到底部折叠。
+    """
+    if not recent or recent.get("error"):
+        return ""
+    # ---- 口径变更提示（过渡期显示，默认折叠）----
+    # ★ 2026-10-29（用户要求「把首屏最顶端的位置彻底腾出来」）：
+    #   这条提示从**顶部 4 行橙框**改为**底部折叠条目**（默认收起），过期自动消失。
+    # ★ 2026-10-31：内容换成「抄底加波动率闸门 45%」，显示至 11-06。
+    _migrate_html = ""
+    _asof_s = str(recent.get("asof") or "")
+    if "2026-10-30" <= _asof_s <= "2026-11-06":
+        _migrate_html = (
+            '<details class="migrdet"><summary>⚠ 10-31 / 11-01 口径升级'
+            '（波动率闸门 45% + 空仓持 511010 国债）</summary>'
+            '<div class="migr">'
+            '<b>① 10-31：抄底加波动率闸门</b> —— 抄底触发前多一道检查：末位标的'
+            '<b>60 日年化波动率须 ≤ 45%</b>，超过就不抄底。'
+            '理由是「跌得最狠的往往就是波动最大的」，'
+            '历史上 17 笔抄底里只有 1 笔被这道闸门拦下'
+            '（2026-10-26 的 588170，波动率 58.5%），'
+            '而它正好是唯一造成两位数亏损的那笔 —— '
+            '近 10 年 Calmar <b>1.07 → 2.03</b>、最大回撤 <b>−31.01% → −17.92%</b>。<br>'
+            '<b>② 11-01：空仓期改持 511010 国债ETF</b>（原来现金 0 收益）—— '
+            '全样本 545 日（17.5%）空仓期不再闲置，'
+            '主窗净值 <b>13.8259 → 14.6901（+6.25%）</b>、Calmar <b>2.64 → 2.70</b>。<br>'
+            '⚠️ 因此本页「胜率」会明显高于 10-31 版：'
+            '空仓段（220 笔里的 36 笔）过去收益恒为 0（不算胜），'
+            '现在其中 <b>14 笔</b>拿到国债正收益 ⇒ 交易胜率 <b>45.0% → 51.4%</b>、'
+            '日胜率 <b>40.0% → 51.6%</b>。<b>不是统计 bug，是资金真的在生息。</b><br>'
+            '你手上这笔 588170 按 10-31 的决定<b>继续持到满 10 日</b>'
+            '（新口径本来不会买入它），页面「当前持 X」是模型口径，'
+            '<b>请以实际持仓为准</b>。</div></details>')
+    return _migrate_html
+
+
+def _combo_summary_html(recent, sub_html="", overheated=False):
     """【今日操作指引】顶部的一眼可见摘要：基础轮动 / D3 / D3+P3 止盈 三方案今日对照。
 
     用户 2026-10-25 要求：把叠加组合的简要信息提到操作指引里，不用往下翻到 ② 才看到。
@@ -277,34 +319,7 @@ def _combo_summary_html(recent, sub_html=""):
             return ""
         base_pack = d3.get("base") or {}
 
-        # ---- 口径变更提示（过渡期显示，默认折叠）----
-        # ★ 2026-10-29（用户要求「把首屏最顶端的位置彻底腾出来」）：
-        #   这条提示从**顶部 4 行橙框**改为**底部折叠条目**（默认收起），过期自动消失。
-        # ★ 2026-10-31：内容换成「抄底加波动率闸门 45%」，显示至 11-06。
-        _migrate_html = ""
-        _asof_s = str(recent.get("asof") or "")
-        if "2026-10-30" <= _asof_s <= "2026-11-06":
-            _migrate_html = (
-                '<details class="migrdet"><summary>⚠ 10-31 / 11-01 口径升级'
-                '（波动率闸门 45% + 空仓持 511010 国债）</summary>'
-                '<div class="migr">'
-                '<b>① 10-31：抄底加波动率闸门</b> —— 抄底触发前多一道检查：末位标的'
-                '<b>60 日年化波动率须 ≤ 45%</b>，超过就不抄底。'
-                '理由是「跌得最狠的往往就是波动最大的」，'
-                '历史上 17 笔抄底里只有 1 笔被这道闸门拦下'
-                '（2026-10-26 的 588170，波动率 58.5%），'
-                '而它正好是唯一造成两位数亏损的那笔 —— '
-                '近 10 年 Calmar <b>1.07 → 2.03</b>、最大回撤 <b>−31.01% → −17.92%</b>。<br>'
-                '<b>② 11-01：空仓期改持 511010 国债ETF</b>（原来现金 0 收益）—— '
-                '全样本 545 日（17.5%）空仓期不再闲置，'
-                '主窗净值 <b>13.8259 → 14.6901（+6.25%）</b>、Calmar <b>2.64 → 2.70</b>。<br>'
-                '⚠️ 因此本页「胜率」会明显高于 10-31 版：'
-                '空仓段（220 笔里的 36 笔）过去收益恒为 0（不算胜），'
-                '现在其中 <b>14 笔</b>拿到国债正收益 ⇒ 交易胜率 <b>45.0% → 51.4%</b>、'
-                '日胜率 <b>40.0% → 51.6%</b>。<b>不是统计 bug，是资金真的在生息。</b><br>'
-                '你手上这笔 588170 按 10-31 的决定<b>继续持到满 10 日</b>'
-                '（新口径本来不会买入它），页面「当前持 X」是模型口径，'
-                '<b>请以实际持仓为准</b>。</div></details>')
+        _migrate_html = ""   # 2026-11-02：已移出 cbsum，改由 _migrate_note_html 渲染到区块末尾
 
         def _hold_cell(name, is_cash):
             cls = "cash" if is_cash else "hold"
@@ -403,7 +418,15 @@ def _combo_summary_html(recent, sub_html=""):
             pill = f"⚠ <b>今日调整为 {_h_disp}</b>（D3 / P3 / 抄底 叠加）"
         _cal = (p3.get("calmar") if p3.get("ok") else None) or base_pack.get("calmar")
         if _cal:
-            pill += (f'<span class="pillcal">　历史 Calmar <b>{_cal:.2f}</b></span>')
+            # ★ 2026-11-02（用户要求第 1 点）：无需动作日原来下面还挂一行
+            #   「未触发过热熔断，持仓已一致 · 无交易」，与「→ 无需动作」完全同义。
+            #   把「正常轮动」并进括号，孤儿行整段删除。
+            if pill_cls == "ok":
+                _mode = "防守期" if overheated else "正常轮动"
+                pill += (f'<span class="pillcal">（{_mode} · Calmar '
+                         f'<b>{_cal:.2f}</b>）</span>')
+            else:
+                pill += (f'<span class="pillcal">　历史 Calmar <b>{_cal:.2f}</b></span>')
         _det_open = ""      # 2026-10-29：回测对比表一律默认折叠（用户要求），不再按口径自动展开
 
         # 抄底状态条：处于锁定期显示进度；不处于锁定期但近期有「被闸门拦下」的记录，
@@ -426,7 +449,7 @@ def _combo_summary_html(recent, sub_html=""):
 </details>
 </div>
 {sub_html}
-{_wstate_bar}{_migrate_html}"""
+{_wstate_bar}"""
     except Exception:                          # noqa: BLE001
         return ""
 
@@ -3020,6 +3043,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     #   512040 = 低于 MA200 3 个点买（×0.97）；512890 = 回踩 MA200 即买（×1.00）。
     # ⚠️ 这是**独立策略**，不参与轮动排名、不受过热熔断控制、也不替代防守位。
     _trow = ""
+    _tv_card = ""
     if ve_track:
         _t = ve_track
         _tdev = float(_t["dev"])
@@ -3080,18 +3104,10 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
         _ls = (f"最近卖出 {_t['last_sell']:%Y-%m-%d}" if _t["last_sell"] is not None
                else "窗口内无卖出信号")
         _tstate = "持有中" if _t["holding"] else "持币中"
-        _trow = (
-            f"<tr class='tvmk {_tact_cls}'><td class='mono'>{_t['code']}</td>"
-            f"<td class='nm2'>{html.escape(_t['name'] or '')} "
-            f"<span class='tag tvt'>策略二 · 每日跟踪</span></td>"
-            f"<td>{_tact}</td>"
-            # ★ 2026-10-26：这里原本还写「偏离 +2.42%；当前状态持有中」，
-            #   与下一行进度条（.tvbar）里的「偏离 / 状态」完全重复。
-            #   依据列只留下进度条没有的信息：最近买卖日 + 收盘/MA200 原始价。
-            f"<td class='rs'>收盘 <b>{_t['close']:.3f}</b> / MA200 "
-            f"<b>{_t['ma200']:.4f}</b>；{_lb}、{_ls}</td></tr>")
-        _trow += (
-            f"<tr class='tvx'><td colspan='4'>"
+        # ★ 2026-11-02（用户要求第 2 点）：512890 从折叠框里**提出来常显**，
+        #   并把原来的「主行 + 进度条」压成一张 2 行小卡：标题行给结论与现价，
+        #   数据条给两条线的距离 + 胜率 + 固收+，其余（规则/极值/最近买卖）收进 <details>。
+        _tvbar_html = (
             f'<div class="tvbar">'
             f'<span class="k">规则：回踩 MA200 买 / 超 +6% 卖 · 空仓持 {CASH_PROXY} 国债</span>'
             f'<span class="v">买线 <b>{_t["buy_line"]:.4f}</b>'
@@ -3113,7 +3129,42 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
                               last=(ve2_curve or {}).get("last_hold_days"),
                               live=(ve2_curve or {}).get("last_hold_live", False)))
             + (f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>' if _tnote else "")
-            + "</td></tr>")
+            + (f'<div class="tvcdx">最近买入 {_lb}、{_ls}</div>'))
+        # 表格形态（仅在需要并进主表时使用，例如过热熔断期）
+        _trow = (
+            f"<tr class='tvmk {_tact_cls}'><td class='mono'>{_t['code']}</td>"
+            f"<td class='nm2'>{html.escape(_t['name'] or '')} "
+            f"<span class='tag tvt'>策略二 · 每日跟踪</span></td>"
+            f"<td>{_tact}</td>"
+            f"<td class='rs'>收盘 <b>{_t['close']:.3f}</b> / MA200 "
+            f"<b>{_t['ma200']:.4f}</b>；{_lb}、{_ls}</td></tr>"
+            f"<tr class='tvx'><td colspan='4'>{_tvbar_html}</td></tr>")
+        # 常显卡片（2026-11-02）：紧跟在主策略下方
+        # ⚠️ 固收+ 数据挂在 ve_track 上（build_ve_track 的返回），不是 ve2_curve —— 
+        #   卡片那边也是 `_ve_curve_block(ve2_curve, fi=(ve_track or {}).get("fi"))`。
+        _fi2 = (ve_track or {}).get("fi") or {}
+        _tv_card = (
+            '<div class="tvcard">'
+            '<div class="tvch">'
+            f'<span class="tvcname">📌 策略二 · {_t["code"]} '
+            f'{html.escape(_short_hold(_t["name"] or ""))}</span>'
+            f'<span class="tvcact">{_tact}</span>'
+            f'<span class="tvcpx">现价 <b>{_t["close"]:.3f}</b> / MA200 '
+            f'<b>{_t["ma200"]:.4f}</b>（偏离 '
+            f'<b style="color:{_tcls}">{_tdev:+.2f}%</b>）</span>'
+            '</div>'
+            '<div class="tvcbar">'
+            f'<span>卖线 <b>{_t["sell_line"]:.4f}</b> {_tsell_txt}</span>'
+            f'<span>买线 <b>{_t["buy_line"]:.4f}</b> {_tbuy_txt}</span>'
+            + (f'<span>胜率 <b style="color:#42474f">{ve2_curve["win_rate"]:.0f}%</b>'
+               f'（{ve2_curve["trips_n"]} 笔均 {ve2_curve["trip_avg"]:+.2f}%）</span>'
+               if (ve2_curve or {}).get("win_rate") is not None else "")
+            + (f'<span>固收+ 年化 <b style="color:#42474f">{_fi2["ann"]:.2f}%</b>'
+               f'<i>（MDD {_fi2["mdd"]:.1f}% · {_fi2["years"]:.1f} 年）</i></span>'
+               if _fi2.get("ann") is not None else "")
+            + '<details class="tvcd"><summary>极值与规则</summary>'
+              f'{_tvbar_html}</details>'
+            '</div></div>')
 
     # 首行的「动作」不能再写死「无需动作」：抄底换持 / 主口径空仓都会真的产生交易。
     # 以「主口径持仓 vs 当前真实持仓」判定是否换仓。
@@ -3158,10 +3209,9 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     # ★ 2026-11-01（用户要求）：512890 策略二提到 512040 防守位**之前**。
     #   理由：512890 是独立策略、随时可能触发买卖（今天距 +6% 卖线仅 0.12pp）；
     #   512040 只在头名过热熔断时才启用，平时 95% 时间都是陪跑，排在前面只是占位。
-    _tv_mid = str((ve_track or {}).get("zone") or "") == "mid"
-    _tv_infold = bool(_trow) and (not overheated) and _tv_mid
-    if _tv_infold:
-        _def_fold.append(_trow)
+    # ★ 2026-11-02（用户要求第 2 点）：512890 一律走常显卡片 `_tv_card`，
+    #   不再进折叠框、也不再并进主表（原来为了让它可见，被迫把整个折叠框设成 open，
+    #   结果把 512040 那 4 行平时用不上的数据一起顶上首屏）。
     # ---- 防守位行：只有真进入防守期（过热熔断）才给出"应该持有/应该持币"的强指令 ----
     if overheated:
         if ve_ok:
@@ -3209,8 +3259,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
             f"防守期应持有防守位而非持币</td></tr>")
     # ★ 512890 策略二：未过热且 zone=mid 时已在上面**提前插入** _def_fold（排在 512040 之前）；
     #   有买卖信号（zone=buy/sell）时仍平铺在主表里 —— 强指令不能藏进折叠框。
-    if _trow and not _tv_infold:
-        guide_rows.append(_trow)
+    # （512890 已改为常显卡片，不再并进主表）
     # ⚠️ 2026-11-01 已删除固定行「其他 | 既非今日建议持仓、也非防守位 → 换到 X」：
     #   顶部胶囊已硕大写「✓ 今日持 X → 无需动作」，这行是每天固定占位的重复说明。
 
@@ -3220,11 +3269,20 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     #    故这里保留分组标题（一眼看出是这两只），但默认 open，仍可手动点开/收起。
     _def_fold_html = ""
     if _def_fold:
+        # ★ 2026-11-02（用户要求第 2 点）：512040 单独收进**默认闭合**的折叠框，
+        #   摘要压成一行灰字，把「离买区还有多远」直接写在标题里 ——
+        #   平时 4 行 MA200/分位/黄旗全部隐藏，需要时才点开。
+        if isinstance(ve_ratio, float) and ve_ratio == ve_ratio:
+            _d_buy = ve_ratio + 3.0          # 买线 = MA200×0.97 ⇒ 距买区 = 偏离 + 3pp
+            _pos = ("已进买区" if _d_buy <= 0
+                    else f"距买区还差 {_d_buy:.2f}pp")
+            _fsum_pos = f"本轮未启用 · 基金偏离 {ve_ratio:+.2f}% · {_pos}"
+        else:
+            _fsum_pos = "本轮未启用"
         _fold_sum = (f'🛡 防守位 {def_code} {html.escape(def_nm)}'
-                     + (' · 策略二 512890 红利低波' if (_trow and _tv_mid) else '')
-                     + '<span class="dfh">持仓实时跟踪 · 点击可收起</span>')
+                     f'（{_fsum_pos} · 点击展开）')
         _def_fold_html = (
-            f'<details class="defcol" open><summary>{_fold_sum}</summary>'
+            f'<details class="defcol"><summary>{_fold_sum}</summary>'
             '<table class="gtbl"><thead><tr><th>代码</th><th>标的</th>'
             '<th>今日动作</th><th>依据</th></tr></thead>'
             f'<tbody>{"".join(_def_fold)}</tbody></table></details>')
@@ -3806,10 +3864,8 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
             '<b>14:50~14:57</b> 执行最优；只能次日则 <b>9:32~9:35</b> 开盘'
             '（勿抢 9:25 竞价，跨境标的先看 IOPV 溢价 ≤2%）。</div>')
     _guide_table_html = ""
-    _guide_sub = ""
-    if _plain_hold:
-        _guide_sub = f'<div class="gsub">{_why_txt}</div>'
-    else:
+    _guide_sub = ""          # 2026-11-02：孤儿行已并入主胶囊（「（正常轮动 · Calmar X）」）
+    if not _plain_hold:
         _guide_table_html = (
             '<table class="gtbl"><thead><tr><th>代码</th><th>标的</th>'
             '<th>今日动作</th><th>依据</th></tr></thead>'
@@ -3973,6 +4029,17 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   .wvol.over{{color:#8a5312}}
   .wvol.over b{{color:#8a5312}}
   .wskipd{{font-size:10.5px;color:#98a1ad;margin-top:3px;line-height:1.5}}
+  /* 闸门明细折叠（2026-11-02）：首屏只留一行结论，历史流水账收进这里 */
+  /* 手机上 badge 与正文同行流动（flex 会把 badge 挤到单独一行） */
+  .wstate.skip .whd{{display:block;line-height:1.75}}
+  .wstate.skip .wbadge{{margin-right:6px;vertical-align:1px}}
+  .wstate.skip .wtip{{margin-left:6px}}
+  .wskd{{display:inline;font-size:11px;color:#6c717f;margin-left:6px}}
+  .wskd>summary{{cursor:pointer;list-style:none;display:inline;color:#7b8ea8;
+    text-decoration:underline;text-underline-offset:2px;white-space:nowrap}}
+  .wskd>summary::-webkit-details-marker{{display:none}}
+  .wskd>summary::before{{content:"▸ "}}
+  .wskd[open]>summary::before{{content:"▾ "}}
   /* 波动率闸门提示条：冷色系，和「抄底持仓中」的暖色区分开 */
   .wstate.skip{{background:#f7f9fc;border-color:#dfe6ef;border-left-color:#7b8ea8}}
   .skipb{{background:#eef2f8;border-color:#d7e0ec;color:#4a5c72}}
@@ -4253,6 +4320,25 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   /* 手机端：防守位分组标题里的提示语省掉，避免标题折成两行 */
   @media(max-width:640px){{details.defcol .dfh{{display:none}}}}
   details.defcol table.gtbl{{margin:2px 0 10px}}
+  /* ===== 策略二常显小卡（2026-11-02）=====
+     512890 从折叠框里提出来，压成「标题行 + 数据条 + 折叠明细」两行结构，
+     与主策略胶囊并列，构成「主 + 支」双线看板。 */
+  .tvcard{{margin:9px 0 0;border:1px solid #e6e9ef;border-radius:10px;
+    background:#fbfcfe;padding:9px 11px}}
+  .tvch{{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px 10px}}
+  .tvcname{{font-size:12.5px;font-weight:700;color:#202020}}
+  .tvcact{{font-size:12.5px}}
+  .tvcpx{{font-size:11.5px;color:#6c717f}}
+  .tvcbar{{display:flex;flex-wrap:wrap;gap:3px 14px;margin-top:5px;
+    font-size:11.5px;color:#4b5563;line-height:1.6}}
+  .tvcbar i{{font-style:normal;color:#98a1ad;margin-left:2px}}
+  .tvcd{{margin-top:2px}}
+  .tvcd>summary{{cursor:pointer;list-style:none;font-size:11px;color:#7b8ea8;
+    text-decoration:underline;text-underline-offset:2px}}
+  .tvcd>summary::-webkit-details-marker{{display:none}}
+  .tvcd>summary::before{{content:"▸ "}}
+  .tvcd[open]>summary::before{{content:"▾ "}}
+  .tvcdx{{font-size:10.5px;color:#98a1ad;margin-top:4px}}
   table.rtbl th,table.rtbl td{{padding:6px 6px}}
   /* 数字列居中（2026-10-29 用户要求）：① 排名表与 ② 换仓复盘共用 .rtbl，
      表头与数值同列对齐，扫行时不再左右横跳 */
@@ -4420,11 +4506,13 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   <h2 class="gh2">🎯 今日操作<span class="gtip">按你当前持仓对号入座</span></h2>
   <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准</span>
 </div>
-{_combo_summary_html(recent, _guide_sub)}
+{_combo_summary_html(recent, _guide_sub, overheated)}
 {('<div class="note" style="margin-bottom:8px">' + guide_note + '</div>') if guide_note else ''}
 {_sop_bar}
 {_guide_table_html}
+{_tv_card}
 {_def_fold_html}
+{_migrate_note_html(recent)}
 </section>
 
 <div class="lead">以下为主选池结论（第 ① ~ ⑤ 节），备选观察池在报告末尾第 ⑥ 节、与主选池完全独立。
