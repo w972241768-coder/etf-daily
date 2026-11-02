@@ -806,8 +806,22 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             else:
                 break
         _wsk = dict(_seg[0])
+        # 波动率要取**最近一日**的值（今天），不能用首日的 —— 原来显示 58.5% 是 10-26 的旧值
+        _wsk["vol"] = _seg[-1].get("vol")
         _wsk["n"] = len(_seg)
         _wsk["last"] = _seg[-1]["date"]
+        # ★ 2026-11-02 用户指出「10-26 到今天明明是 6 天，为什么显示 4 天」：
+        #   4 = **真的被闸门拦下的天数**（10-29/30 那两天抄底条件没触发，10-29 还发生了
+        #   正常换仓 513100→561700），6 = **区间交易日跨度**。两个数都对，但标签
+        #   「起连续 4 日」把「次数」说成了「连续天数」，属表述错误。
+        #   这里把跨度一起算出来，让卡片同时给出两个数。
+        try:
+            _d0, _d1 = pd.Timestamp(_seg[0]["date"]), pd.Timestamp(_seg[-1]["date"])
+            _wsk["span"] = int(((dates >= _d0) & (dates <= _d1)).sum())
+        except Exception:                      # noqa: BLE001
+            _wsk["span"] = None
+        # 具体是哪几天被拦（卡片上直接列出，省得用户怀疑「怎么不是 6 天」）
+        _wsk["days"] = [str(x.get("date") or "")[5:] for x in _seg]
     _lt = None
     for _x in r["trades"]:
         if _x["date"] <= asof:

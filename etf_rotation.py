@@ -226,7 +226,25 @@ def _wskip_html(p3, asof: str) -> str:
         hname = (p3 or {}).get("hold_name") or hold or "—"
         _v = f"{v:.1f}%" if isinstance(v, (int, float)) else "—"
         _n = int(sk.get("n") or 1)
-        _dtxt = f"{html.escape(d)}" + (f" 起连续 {_n} 日" if _n > 1 else "")
+        _span = sk.get("span")
+        # ★ 2026-11-02 修表述：原来一律写「起连续 N 日」，但 N 其实是**被拦次数**，
+        #   不是连续天数（10-29/30 抄底条件没触发，中间是断的）。
+        #   现在把「区间交易日跨度」和「实际被拦天数」分开写，两个数都能对上。
+        if isinstance(_span, int) and _span > _n:
+            _dtxt = (f"{html.escape(d)} 起 · 已 <b>{_span}</b> 个交易日"
+                     f" · 其中 <b>{_n}</b> 日被拦")
+        elif _n > 1:
+            _dtxt = f"{html.escape(d)} 起连续 {_n} 日"
+        else:
+            _dtxt = html.escape(d)
+        _days = sk.get("days") or []
+        _days_html = ""
+        if _days:
+            _gap = (isinstance(_span, int) and _span > _n)
+            _days_html = ('<div class="wskipd">被拦日 '
+                          + " / ".join(html.escape(str(x)) for x in _days)
+                          + ("（其余交易日未触发抄底条件）" if _gap else "")
+                          + '</div>')
         tail = (f" · 按头名持 <b>{html.escape(str(hname))}</b>"
                 if hold and hold != "CASH" else "")
         return (
@@ -237,6 +255,7 @@ def _wskip_html(p3, asof: str) -> str:
             f'<span class="wtip">闸门 ≤{lim:.0f}%</span></div>'
             f'<div class="wvol over">60 日波动率 <b>{_v}</b> ＞ {lim:.0f}%'
             f' · 末位不抄底{tail}</div>'
+            f'{_days_html}'
             '</div>')
     except Exception:                          # noqa: BLE001
         return ""
@@ -3915,6 +3934,7 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   .wvol b{{color:#42474f;font-variant-numeric:tabular-nums}}
   .wvol.over{{color:#8a5312}}
   .wvol.over b{{color:#8a5312}}
+  .wskipd{{font-size:10.5px;color:#98a1ad;margin-top:3px;line-height:1.5}}
   /* 波动率闸门提示条：冷色系，和「抄底持仓中」的暖色区分开 */
   .wstate.skip{{background:#f7f9fc;border-color:#dfe6ef;border-left-color:#7b8ea8}}
   .skipb{{background:#eef2f8;border-color:#d7e0ec;color:#4a5c72}}
