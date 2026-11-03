@@ -59,6 +59,28 @@ def find_adj_csv(explicit: Optional[str] = None):
     return (best, best_end) if best else (None, None)
 
 
+def _find_long_csv_2014(prod_path: Optional[str] = None) -> Optional[str]:
+    """找「2014 起」的研究用长历史 CSV（供年度表现下方的窗口对照）。
+
+    只用于**对照**：生产口径永远用 2019-12-31 起点那份，本函数返回的 CSV 仅用来
+    补 2014~2018 那段（生产 CSV 从 2018-12 才有数据）。找不到就返回 None，
+    调用方自动降级为只显示 2020 那一行。
+    """
+    cands = []
+    if prod_path:
+        d = os.path.dirname(os.path.abspath(prod_path))
+        cands.append(os.path.join(d, "tdx_adj_long_2014_2026.csv"))
+    env = os.environ.get("ETF_ADJ_CSV_2014")
+    if env:
+        cands.append(env)
+    cands.append(os.path.join(PROJECT_DIR, "tdx_adj_long_2014_2026.csv"))
+    cands.append(os.path.join(_HERE, "tdx_adj_long_2014_2026.csv"))
+    for p in cands:
+        if p and os.path.exists(p):
+            return p
+    return None
+
+
 def _extend_panel(panel: pd.DataFrame, live_df, pivot: Optional[str]):
     """把本次运行的前复权在线数据**接到长历史尾部**，让「至今」真的到锚定日。
 
@@ -385,6 +407,47 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
         except Exception as e:                    # noqa: BLE001
             mine = dict(error=f"{type(e).__name__}: {e}")
 
+    # ---- 「2014 至今」长窗口对照（2026-11-03 用户要求）----
+    # 年度表现柱状图下方需要一行「2014 至今 vs 2020 至今」的年化 / 累计 / 最大回撤。
+    # 生产 CSV（tdx_adj_long_2019_2026.csv）最早只到 2018-12，2014 那一段只能用
+    # 研究 CSV（tdx_adj_long_2014_2026.csv）**同参数、同成本**再跑一遍。
+    # ⚠️ 两个 CSV 的 P3 滚动分位起点不同 ⇒ 同起点结果略有差异（主窗 14.69 vs 14.36）。
+    #    因此本块只作「窗口对照」，绝不覆盖主口径（主口径永远取 2019-12-31 起那一段）。
+    longwin = None
+    try:
+        _lw_path = _find_long_csv_2014(path)
+        if _lw_path:
+            _lw_panel = bl.read_panel(_lw_path)
+            _lw_panel, _ = _extend_panel(_lw_panel, live_df, pivot)
+            _lw_dates = _lw_panel.index
+            _lw_end = len(_lw_dates) - 1
+            if pivot:
+                _lw_end = min(_lw_end,
+                              int(_lw_dates.searchsorted(pd.Timestamp(pivot), side="right") - 1))
+            _lw_pool = [c for c in pool if c in _lw_panel.columns]
+            if _lw_end > 260 and len(_lw_pool) >= 2 and defensive in _lw_panel.columns:
+                _kwl = dict(buy=cost / 2.0, sell=cost / 2.0, W=W, MA=MA,
+                            value_engine=value_engine, sticky=sticky,
+                            enter_dev=enter_dev, enter_lead=enter_lead,
+                            exit_dev=exit_dev, exit_lead=exit_lead,
+                            min_def_days=min_def_days)
+                _kwl.update(dict(bl.LIVE_COMPOSITE))
+                _rl = bl.backtest(_lw_panel, _lw_dates, 0, _lw_end,
+                                  _lw_pool, defensive, **_kwl)
+                _nl = _rl["navs"]
+                _sl = bl.stats(_nl)
+                _s0 = str(_lw_dates[0].date())
+                _s1 = str(_lw_dates[_lw_end].date())
+                longwin = dict(
+                    start=_s0, end=_s1,
+                    years=(_lw_dates[_lw_end] - _lw_dates[0]).days / 365.25,
+                    total=_sl["total"] * 100, ann=_sl["ann"] * 100,
+                    mdd=_sl["mdd"] * 100, calmar=_sl["calmar"],
+                    final=float(_nl.iloc[-1]), trades_n=len(_rl["trades"]),
+                    csv=os.path.basename(_lw_path))
+    except Exception as e:                       # noqa: BLE001
+        longwin = dict(error=f"{type(e).__name__}: {e}")
+
     # ---- 净值曲线的「持仓色带」（2026-10-29 用户需求，参考博主的持仓条）----
     # 用**主口径**（D3+P3+抄底）的换仓序列铺成逐日持仓，供曲线下方色带使用。
     _cv = _build_curve(navs, panel, asof, bench, CURVE_DAYS, trades,
@@ -412,6 +475,7 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
         ext_note=ext_note, extended=bool((hist_end is not None)
                                         and (panel.index.max() > hist_end)),
         since=since, since_live=since_live, d3=d3, p3=p3, mine=mine,
+        longwin=longwin,
         adj_csv=path,
         n=n, pool_size=len(pool), defensive=defensive, cost=cost,
         have_bench=have_bench, base=BASE_DATE,

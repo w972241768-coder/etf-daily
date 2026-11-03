@@ -330,18 +330,33 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
 
         rows = []
         if p3.get("ok"):
+            _n_p3days = None
+            try:
+                _n_p3days = len(p3["navs"]) - 1
+            except Exception:                  # noqa: BLE001
+                _n_p3days = None
             rows.append(("D3+P3+抄底", p3.get("hold_name"), p3.get("hold") == "CASH",
                          dict(final=p3.get("final"), mdd=p3.get("mdd"),
-                              calmar=p3.get("calmar")), True))
+                              calmar=p3.get("calmar"), total=p3.get("total"),
+                              ann=_ann_pct(p3.get("total"), _n_p3days)), True))
             # 2026-10-26：只保留「仅 P3」一个参照；基础策略与 D3 单列不再进正文表
 
+
+        def _pctc(v, nd=1):
+            """带涨跌色的百分数单元格（累计 / 平均年收益共用）。"""
+            if v is None:
+                return '<td class="num">—</td>'
+            return (f'<td class="num" style="color:{_color(v)};font-weight:600">'
+                    f'{v:+.{nd}f}%</td>')
 
         body = "".join(
             f'<tr{" class=\"hi\"" if (hi or i == 0) else ""}>'
             f'<td>{"<b>" + nm + "</b>" if (hi or i == 0) else nm}</td>'
             + _hold_cell(hn, cash)
             + f'<td class="num"{" style=\"font-weight:700\"" if (hi or i == 0) else ""}>{_num(pk.get("final"))}</td>'
-            f'<td class="num">{_num(pk.get("mdd"), 2)}%</td>'
+            + _pctc(pk.get("total"))
+            + _pctc(pk.get("ann"))
+            + f'<td class="num" style="color:#42474f">{_num(pk.get("mdd"), 2)}%</td>'
             f'<td class="num">{_num(pk.get("calmar"), 2)}</td></tr>'
             for i, (nm, hn, cash, pk, hi) in enumerate(rows))
 
@@ -429,6 +444,25 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
                 pill += (f'<span class="pillcal">　历史 Calmar <b>{_cal:.2f}</b></span>')
         _det_open = ""      # 2026-10-29：回测对比表一律默认折叠（用户要求），不再按口径自动展开
 
+        # ---- 胶囊数据行（2026-11-03 用户要求）----
+        # 主句回答「今天动不动手」，这一行补上「这套东西历史上到底赚了多少」：
+        # 回测起点 + 累计收益 + 平均年收益。用 11px 灰色小字排在胶囊内第二行，
+        # 不抢主句的注意力；缺数据时整行不渲染。
+        _pd_html = ""
+        if p3.get("ok") and p3.get("total") is not None:
+            _pdt = float(p3["total"])
+            try:
+                _pda = _ann_pct(_pdt, len(p3["navs"]) - 1)
+            except Exception:                  # noqa: BLE001
+                _pda = None
+            _pd_html = (
+                '<div class="pilldata">'
+                f'<span>回测起点 <b>{html.escape(str(recent.get("base") or ""))}</b></span>'
+                f'<span>累计 <b style="color:{_color(_pdt)}">{_pdt:+.1f}%</b></span>'
+                + (f'<span>平均年收益 <b style="color:{_color(_pda)}">'
+                   f'{_pda:+.1f}%</b></span>' if _pda is not None else "")
+                + '</div>')
+
         # 抄底状态条：处于锁定期显示进度；不处于锁定期但近期有「被闸门拦下」的记录，
         # 就换成闸门提示条 —— 否则新口径下这段永远空白，用户看不到波动率这条新规则。
         _wstate_bar = _wstate_html(((recent.get("p3") or {}).get("weak_state")))
@@ -439,7 +473,9 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
 <div class="cbpill">{pill}
 <details class="cbdet"{_det_open}><summary>回测对比 · 规则</summary>
 <div class="tblwrap"><table class="cbst"><thead><tr>
-<th>方案</th><th>今日应持</th><th class="num">净值</th><th class="num">最大回撤</th><th class="num">Calmar</th>
+<th>方案</th><th>今日应持</th><th class="num">净值</th>
+<th class="num">累计收益</th><th class="num">平均年收益</th>
+<th class="num">最大回撤</th><th class="num">Calmar</th>
 </tr></thead><tbody>{body}</tbody></table></div>
 {_wr_html}
 <div class="cbsn">{concl}
@@ -449,6 +485,7 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
 </details>
 </div>
 {sub_html}
+{_pd_html}
 {_wstate_bar}"""
     except Exception:                          # noqa: BLE001
         return ""
@@ -620,6 +657,17 @@ def _p3_card_html(p3, recent, cost):
         if not rows_last:
             rows_last = '<tr><td colspan="10" class="dimtxt">区间内没有触发</td></tr>'
 
+        # 平均年收益（2026-11-03 用户要求）：同一窗口的总收益按 244 交易日/年折算，
+        # 与「累计」并排 —— 累计 900% 听着抽象，年化 40% 才知道「一年赚多少」。
+        try:
+            _nd = len(p3["navs"]) - 1
+        except Exception:                      # noqa: BLE001
+            _nd = None
+        _ann = _ann_pct(p3.get("total"), _nd)
+        _ann_cell = (f'<td class="num" style="color:{col(_ann)};font-weight:600">'
+                     f'{_ann:+.2f}%</td>' if _ann is not None
+                     else '<td class="num dimtxt">—</td>')
+
         return f"""<style>{_D3_CSS}</style>
 <div class="d3card p3">
   <div class="d3hd">
@@ -647,10 +695,12 @@ def _p3_card_html(p3, recent, cost):
   <div class="tblwrap"><table class="d3tbl"><thead><tr>
     <th>同一窗口（{recent.get('base', '')} → {html.escape(str(recent.get('asof', '')))}）</th>
     <th class="num">净值</th><th class="num">区间收益</th>
+    <th class="num" title="区间总收益按 244 个交易日/年折算的几何平均年收益，与「净值」同一口径">平均年收益</th>
     <th class="num">最大回撤</th><th class="num">夏普</th><th class="num">Calmar</th></tr></thead><tbody>
     <tr class="hi"><td><b>D3+P3+抄底（现行口径）</b></td>
       <td class="num">{p3['final']:.4f}</td>
       <td class="num" style="color:{col(p3['total'])}">{p3['total']:+.2f}%</td>
+      {_ann_cell}
       <td class="num" style="color:#42474f">{p3['mdd']:.2f}%</td>
       <td class="num">{p3.get('sharpe') or 0:.2f}</td>
       <td class="num">{p3.get('calmar') or 0:.2f}</td></tr>
@@ -904,6 +954,22 @@ def _color(v):
     if v is None or v != v:
         return "#666"
     return RED if v > 0 else (GREEN if v < 0 else "#666")
+
+
+def _ann_pct(total_pct, n_days):
+    """区间总收益(%) → 平均年收益(%)，按 244 个交易日/年折算。
+
+    与 etf_backtest_long.stats() 的 ann 口径完全一致（同一个 244 常数），
+    所以「累计 +893.7% / 6.8 年 → 年化 +40.3%」在任何卡片上都对得上。
+    """
+    try:
+        t = float(total_pct)
+        n = float(n_days or 0)
+        if n <= 0:
+            return None
+        return ((1.0 + t / 100.0) ** (244.0 / n) - 1.0) * 100.0
+    except Exception:                          # noqa: BLE001
+        return None
 
 
 def _bg(v, vmax):
@@ -2730,20 +2796,26 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
            if v is not None and v == v]
     _vmax = max([0.0] + _yv)
     _vmin = min([0.0] + _yv)
-    _ytop = _vmax + max(7.0, abs(_vmax) * 0.24)     # 柱顶留标签空间
+    _ytop = _vmax + max(6.0, abs(_vmax) * 0.16)     # 柱顶留标签空间（2026-11-03：0.24→0.16，省出竖向空间给柱子）
     _ybot = _vmin - max(5.0, abs(_vmin) * 0.40)     # 柱底留标签空间
     _yspan = (_ytop - _ybot) or 1.0
 
     # ---- SVG 竖柱分组图（viewBox 定幅，宽度 100% 自适应）----
-    _VW, _VH = 300.0, 224.0
-    _PX0, _PX1 = 7.0, 293.0                        # 绘图区左右
-    _PYT, _PYB = 30.0, 178.0                       # 绘图区上下（150pt 高）
+    # ★ 2026-11-03（用户要求）本图三处改造：
+    #   ① 图例从 SVG 里搬到 HTML（.ytdleg）—— SVG 内的 tspan 会随整图等比缩放，
+    #      字号没法单独控制；搬出来才能与正文同规格、窄屏还能自动换行；
+    #   ② 每年柱组下面直接印灰字「回撤 −14.8%」，底部那段整段解释文字删掉；
+    #   ③ 画布由 300×224 改扁成 300×158 ⇒ 同样的卡片高度下绘图区能横向铺满，
+    #      柱宽由约 14px 提到约 20px，柱子不再拥挤。
+    _VW, _VH = 300.0, 158.0
+    _PX0, _PX1 = 6.0, 294.0                        # 绘图区左右
+    _PYT, _PYB = 6.0, 124.0                        # 绘图区上下（118pt 高）
     _PH = _PYB - _PYT
     _ZY = _PYB - (0.0 - _ybot) / _yspan * _PH      # 零轴线 y
     _nyr = max(1, len(_yl))
     _nser = len(_yseries)
-    _bw = 11.0                                    # 柱宽
-    _dgap = 9.0                                   # 组间距（保证跨组柱心距 ≥ 标签宽，永不相撞）
+    _bw = 11.5                                    # 柱宽
+    _dgap = 10.0                                  # 组间距（保证跨组柱心距 ≥ 标签宽，永不相撞）
     # 组内柱心距 s：_nyr*((_nser-1)*s + bw) + (_nyr-1)*dgap = 绘图区宽
     _s = (((_PX1 - _PX0) - (_nyr - 1) * _dgap - _nyr * _bw)
           / max(1.0, _nyr * (_nser - 1)))
@@ -2754,14 +2826,6 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         return _PYB - (v - _ybot) / _yspan * _PH
 
     _yparts = [
-        # 图例
-        f'<text x="{_PX0}" y="12" font-size="8.6" fill="#5b6472">'
-        + "".join(
-            f'<tspan fill="{c}" font-weight="700">■</tspan>'
-            f'<tspan dx="2" fill="#5b6472">{n}</tspan>'
-            + ('<tspan dx="9">&#8203;</tspan>' if i < 2 else "")
-            for i, (_k, n, c, _r, _m) in enumerate(_yseries))
-        + "</text>",
         # 零轴线
         f'<line x1="{_PX0}" y1="{_ZY:.1f}" x2="{_PX1}" y2="{_ZY:.1f}" '
         f'stroke="#c9cfd8" stroke-width="1"/>',
@@ -2825,40 +2889,91 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                 f'<text x="{_lx:.1f}" y="{_ly:.1f}" font-size="6.4" '
                 f'text-anchor="middle" fill="{_lc}" font-weight="600">'
                 f'{_lv:+.1f}</text>')
-        # 年份标签
-        _yparts.append(f'<text x="{_gx + _grp_w / 2:.1f}" y="{_PYB + 18:.1f}" '
-                       f'font-size="8.6" text-anchor="middle" fill="#5b6472">'
-                       f'{_yr}</text>')
-    # 顶部/底部刻度参考
-    _yparts.append(f'<text x="{_PX1}" y="{_PYT - 6:.1f}" font-size="6.4" '
-                   f'text-anchor="end" fill="#b6bdc6">{_ytop:.0f}%</text>')
-    _yparts.append(f'<text x="{_PX1}" y="{_PYB + 11:.1f}" font-size="6.4" '
-                   f'text-anchor="end" fill="#b6bdc6">{_ybot:.0f}%</text>')
+        # 年份标签 + 当年最大回撤（灰字，取默认口径 D3+P3+抄底）
+        _yparts.append(f'<text x="{_gx + _grp_w / 2:.1f}" y="{_PYB + 13:.1f}" '
+                       f'font-size="7.2" text-anchor="middle" fill="#5b6472" '
+                       f'font-weight="600">{_yr}</text>')
+        _gy_md = (_p3y.get(_yr) or {}).get("mdd")
+        if _gy_md is not None and _gy_md == _gy_md:
+            _yparts.append(
+                f'<text x="{_gx + _grp_w / 2:.1f}" y="{_PYB + 24.5:.1f}" '
+                f'font-size="5.9" text-anchor="middle" fill="#98a1ad" '
+                f'letter-spacing="-0.15">回撤 {_gy_md:.1f}%</text>')
+    # 刻度参考（画在绘图区内侧，避免与「年份 / 回撤」两行标签抢位置）
+    _yparts.append(f'<text x="{_PX1}" y="{_PYT + 6.5:.1f}" font-size="5.8" '
+                   f'text-anchor="end" fill="#c8ced6">{_ytop:.0f}%</text>')
+    _yparts.append(f'<text x="{_PX1}" y="{_PYB - 1.5:.1f}" font-size="5.8" '
+                   f'text-anchor="end" fill="#c8ced6">{_ybot:.0f}%</text>')
     ytd_svg = (f'<svg viewBox="0 0 {_VW:.0f} {_VH:.0f}" width="100%" '
                f'preserveAspectRatio="xMidYMid meet" role="img" '
                f'aria-label="年度表现分组柱状图">{"".join(_yparts)}</svg>')
 
     n_yr = len(_yl)
-    # ★ 2026-10-25：手机触屏无 hover，SVG 里 <title> 的年度回撤根本点不出来。
-    #   这里把「默认口径 D3+P3」的逐年最大回撤压成一行小字直接印在脚注里，
-    #   桌面端仍保留柱子悬停（信息重复但无害），手机端则始终可读。
-    _mdd_line = " · ".join(
-        f"{str(y)[-2:]}′ {(_p3y.get(str(y)) or {}).get('mdd'):.1f}%"
-        for y in (str(d["year"]) for d in _yl)
-        if (_p3y.get(str(y)) or {}).get("mdd") is not None)
+    # ---- 图例：HTML 一行 chips（原来塞在 SVG 里，缩放时字号不可控）----
+    _leg_html = "".join(
+        f'<span class="ytdlg"><i style="background:{c}"></i>{n}</span>'
+        for _k, n, c, _r, _m in _yseries)
+
+    # ---- 柱下双窗口对照（2026-11-03 用户要求）----
+    # 2020 行 = 主口径 recent['p3']（与页面所有数字同源）；
+    # 2014 行 = recent['longwin']（研究 CSV 同参数重跑，只为补 2014~2018 那段）。
+    _cmp_rows = []
+
+    def _cmp_add(label, years_txt, total, ann, mdd, cur, tip):
+        if total is None and ann is None:
+            return
+        _ct = RED if (total or 0) > 0 else GREEN
+        _ca = RED if (ann or 0) > 0 else GREEN
+        _at = f"{ann:+.1f}%" if ann is not None else "—"
+        _tt = f"{total:+.1f}%" if total is not None else "—"
+        _mt = f"{mdd:.1f}%" if mdd is not None else "—"
+        _cmp_rows.append(
+            f'<tr{" class=\"now\"" if cur else ""} title="{html.escape(tip)}">'
+            f'<td>{label}<i>{years_txt}</i></td>'
+            f'<td class="num" style="color:{_ca}">{_at}</td>'
+            f'<td class="num" style="color:{_ct}">{_tt}</td>'
+            f'<td class="num ytdmddv">{_mt}</td></tr>')
+
+    _pk = ((recent or {}).get("p3") or {})
+    if _pk.get("ok"):
+        _yrs, _annp = None, None
+        try:
+            _b = pd.Timestamp(str(recent.get("base") or "2019-12-31"))
+            _e = pd.Timestamp(str(recent.get("asof")))
+            _yrs = (_e - _b).days / 365.25
+        except Exception:                      # noqa: BLE001
+            _yrs = None
+        try:
+            if _pk.get("navs") is not None:
+                _annp = float(bl.stats(_pk["navs"])["ann"]) * 100.0
+        except Exception:                      # noqa: BLE001
+            _annp = None
+        _cmp_add("2020 至今", (f"{_yrs:.1f} 年" if _yrs else ""),
+                 _pk.get("total"), _annp, _pk.get("mdd"), True,
+                 f"主口径 D3+P3+抄底：{recent.get('base')} → {recent.get('asof')}，"
+                 f"与页面其他数字完全同源")
+    _lw = ((recent or {}).get("longwin") or {})
+    if _lw.get("total") is not None and not _lw.get("error"):
+        _cmp_add("2014 至今", (f"{_lw.get('years'):.1f} 年" if _lw.get("years") else ""),
+                 _lw.get("total"), _lw.get("ann"), _lw.get("mdd"), False,
+                 f"研究口径：{_lw.get('start')} → {_lw.get('end')}，同参数同成本在"
+                 f"「2014 起」长历史上重跑；该 CSV 的 P3 滚动分位起点不同，"
+                 f"与上一行不作逐位比较")
+    _cmp_html = ""
+    if _cmp_rows:
+        _cmp_html = ('<div class="ytdcmpw"><table class="ytdcmp"><thead><tr>'
+                     '<th>区间</th><th class="num">平均年收益</th>'
+                     '<th class="num">累计收益</th><th class="num">最大回撤</th>'
+                     '</tr></thead><tbody>' + "".join(_cmp_rows) + "</tbody></table></div>")
+
     ytd_block = f"""
 <div class="ytdchart">
 <div class="ytdh">年度表现<span class="sphs">（近 {n_yr} 年 · 三柱对比）</span></div>
+<div class="ytdleg">{_leg_html}<span class="ytdnote">灰字＝当年最大回撤</span></div>
 <div class="ytdbody">
 {ytd_svg}
 </div>
-<div class="ytdfoot">每年收益（含换仓成本，单位 %）· <b>柱子颜色区分策略</b>：<span
-style="color:{CLR_P3};font-weight:700">D3+P3+抄底（默认口径）</span> / <span
-style="color:{CLR_STRAT};font-weight:700">基础轮动</span> / <span
-style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两者<b>仅作参照</b>）·
-柱体<b>向上=盈利、向下=亏损</b>；柱上数字沿用 <span style="color:{RED}">红涨</span>
-<span style="color:{GREEN}">绿跌</span> · 同一刻度 · 悬停看当年最大回撤 · 前复权长历史回测
-<br><span class="ytdmdd">各年最大回撤（默认口径 D3+P3+抄底）：{_mdd_line}</span></div>
+{_cmp_html}
 </div>"""
 
     # 阶梯表
@@ -3666,11 +3781,17 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
                     "</tr>")
             # ★ 2026-10-28：Σ 行必须与**上面这张表**同源（明细已改主口径），
             #   否则「与上表严格自洽」是假话。这里按 _rows_src 自行连乘。
+            # ★ 2026-11-03（用户问「是不是该累加」）：**连乘才是对的** ——
+            #   这三段是同一个账户前后相接的三笔持仓，第 2 段的本金里已经含着第 1 段的盈亏，
+            #   真实净值就是 ∏(1+rᵢ)；直接相加只有当每段都「只拿原始本金」去跑才成立。
+            #   单段幅度小（−1.5%~−0.1%）时两者几乎相等，所以同时把算术和印出来做对照。
             _pr, _pb = 1.0, 1.0
+            _sr = 0.0
             _n_r = _n_b = 0
             for _rw in _rows_src:
                 if _rw.get("ret") is not None:
                     _pr *= (1.0 + _rw["ret"]); _n_r += 1
+                    _sr += _rw["ret"]
                 if _rw.get("bench") is not None:
                     _pb *= (1.0 + _rw["bench"]); _n_b += 1
             # 末段若是「今日刚换仓」，同期上证可能无数据（_n_b < _n_r），
@@ -3688,19 +3809,26 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
             _cb = None if _c["bench"] is None else _c["bench"] * 100.0
             _ca = None if _c["alpha"] is None else _c["alpha"] * 100.0
             _cum_days = sum((rw.get("days") or 0) for rw in _rows_src)
+            _sr_pct = _sr * 100.0
+            _gap_pp = (abs(_sr_pct - (_cr or 0.0)))
             rr_rows.append(
                 '<tr class="def">'
                 f'<td class="num">Σ</td>'
                 f'<td class="mono num">{_c["start"]}</td>'
-                f'<td><b>累计 {_c["trades"]} 次换仓连乘</b></td>'
+                f'<td><b>累计 {_c["trades"]} 次换仓 · 连乘复利</b></td>'
                 f'<td class="mono num">{_c["end"]}</td>'
                 f'<td class="num" style="font-weight:700">{_cum_days} 日</td>'
-                f'<td class="num" style="color:{_color(_cr)};font-weight:700">'
+                f'<td class="num" style="color:{_color(_cr)};font-weight:700" '
+                f'title="同一账户连续复利：∏(1+rᵢ)−1；算术和 {_sr_pct:+.2f}%，'
+                f'两者相差 {_gap_pp:.2f}pp（单段幅度越小，连乘越接近相加）">'
                 f'{_fmt(_cr)}</td>'
                 f'<td class="num" style="color:{_color(_cb)}">{_fmt(_cb)}</td>'
                 f'<td class="num" style="color:{_color(_ca)};font-weight:700">'
                 f'{"<span class=\"dimtxt\">—</span>" if _ca is None else _fmt(_ca, pct=False, nd=2) + "pp"}</td>'
-                f'<td class="rs" style="min-width:150px">分段 (1+r) 连乘，与上表严格自洽'
+                f'<td class="rs" style="min-width:150px">三段是<b>同一账户前后相接</b>的持仓，'
+                f'故按 <b>∏(1+r)−1</b> 连乘（＝净值口径）；'
+                f'若直接相加得 {_sr_pct:+.2f}%，差 {_gap_pp:.2f}pp —— '
+                f'相加只在「每段都回到原始本金」时成立'
                 f'{"；同期上证只算持仓段（空仓段/末段不计），故不列超额" if _c.get("bench_partial") else ""}'
                 f'</td>'
                 '</tr>')
@@ -4059,6 +4187,12 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   details.migrdet[open]>summary::before{{content:"▾ "}}
   details.migrdet .migr{{margin:6px 0 0}}
   .pillcal{{font-size:11px;color:#8b93a1;font-weight:400}}
+  /* 胶囊内第二行数据条（2026-11-03）：起点 / 累计 / 平均年收益 / 最大回撤。
+     主句 15px 加粗负责「动不动手」，这行 11px 灰色负责「值不值」——层级分开不打架。 */
+  .pilldata{{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 14px;
+    margin:2px 0 0;font-size:11px;color:#8b93a1;line-height:1.6}}
+  .pilldata span{{white-space:nowrap}}
+  .pilldata b{{font-weight:700;font-variant-numeric:tabular-nums}}
   .cbpill{{font-size:15px;line-height:1.58;color:#202020;white-space:normal;font-weight:500}}
   .cbpill b{{font-weight:800}}
   .cbsum.diff .cbpill{{font-size:15px}}
@@ -4100,6 +4234,12 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
     font-size:11.5px;line-height:1.65;color:#3a4560;min-width:0}}
   .tvbar .k{{font-weight:600;color:#33447a;white-space:nowrap}}
   .tvbar .v{{white-space:nowrap}}
+  /* 2026-11-03：≤400px 时展开「极值与规则」里 k/v 仍是 nowrap，会把整页撑宽 39px
+     （实测 320px：.tvbar 内容 294 > 容器 214）。窄屏一律允许折行。 */
+  @media (max-width:400px){{
+    .tvbar .k,.tvbar .v{{white-space:normal}}
+    details.tvcd{{max-width:100%;min-width:0}}
+  }}
   .tvbar .v i{{font-style:normal;color:#5d6a86;margin-left:4px;font-size:11px}}
   .tag.tvt{{background:#e8edfb;border:1px solid #c8d4f5;color:#2c4fb8}}
   table.dgtbl{{font-size:12.5px;margin-bottom:10px}}
@@ -4238,7 +4378,10 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   /* 年度卡 400px（原 300）：给图更多横向空间，同时把排名表自然压窄、
      列间距收紧，不再出现「表格被拉得很散」的观感 */
   /* 2026-10-31：删掉排名表「切换至今」列后，右侧年度柱状图从 400px 加宽到 480px */
-  .s2r{{flex:0 0 480px;min-width:0;display:flex;flex-direction:column;min-height:0}}
+  /* 2026-11-03（用户要求「柱子别那么拥挤」）：480 → 560px。
+     左表实测自然宽度 ~498px，1452-560-14 = 878 仍远宽于它；窄桌面由下面的
+     1150/1050 两档断点回收，绝不会把排名表顶出横向滚动条。 */
+  .s2r{{flex:0 0 560px;min-width:0;display:flex;flex-direction:column;min-height:0}}
   /* min-height 防「排名表很矮时年度卡被压扁到看不见图」；两者底边仍由 stretch 齐平 */
   .s2r .ytdchart{{flex:1 1 auto;min-height:250px}}
   /* ===== ① 今日排名卡片（2026-10-25 补）=====
@@ -4282,6 +4425,31 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   .ytdfoot{{margin-top:4px;font-size:9.5px;color:#98a1ad;line-height:1.5;
     white-space:normal;flex:0 0 auto}}
   .ytdfoot .ytdmdd{{color:#6c717f;font-variant-numeric:tabular-nums}}
+  /* ===== 年度表现 · 图例 + 柱下双窗口对照（2026-11-03）=====
+     原底部整段解释文字已删；图例从 SVG 搬到 HTML（可换行、字号与正文同级）；
+     柱组底下直接印灰字「回撤 x%」；最底下一张 4 列小表给 2014/2020 两个窗口。 */
+  .ytdleg{{display:flex;flex-wrap:wrap;align-items:center;gap:2px 10px;
+    margin:0 0 1px;font-size:10px;color:#5b6472;flex:0 0 auto}}
+  .ytdleg .ytdlg{{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}}
+  .ytdleg i{{width:9px;height:9px;border-radius:2px;display:inline-block;flex:0 0 auto}}
+  .ytdleg .ytdnote{{margin-left:auto;color:#a8b0bb;font-size:9.5px;white-space:nowrap}}
+  .ytdcmpw{{flex:0 0 auto;margin-top:3px;padding-top:5px;
+    border-top:1px dashed #e8ebf0}}
+  /* 固定列宽（32/24/24/20）：窄屏 320px 时四列也不会被内容顶宽而溢出卡片 */
+  table.ytdcmp{{width:100%;table-layout:fixed;border-collapse:collapse;font-size:10.5px;
+    font-variant-numeric:tabular-nums}}
+  table.ytdcmp th{{font-weight:600;color:#a3abb6;font-size:9.5px;
+    padding:0 0 2px;text-align:right;line-height:1.25}}
+  table.ytdcmp th:first-child{{text-align:left;width:32%}}
+  table.ytdcmp th:nth-child(2){{width:24%}}
+  table.ytdcmp th:nth-child(3){{width:24%}}
+  table.ytdcmp th:nth-child(4){{width:20%}}
+  table.ytdcmp td{{padding:1px 0;text-align:right;color:#42474f;line-height:1.45}}
+  table.ytdcmp td:first-child{{text-align:left;color:#202020;font-weight:600}}
+  table.ytdcmp td:first-child i{{font-style:normal;font-weight:400;color:#a3abb6;
+    font-size:9.5px;margin-left:5px;white-space:nowrap}}
+  table.ytdcmp tr.now td{{font-weight:700}}
+  table.ytdcmp td.ytdmddv{{color:#6c717f}}
   .split .l .rs{{min-width:0}}
   .sphs{{font-size:12px;font-weight:400;color:var(--mut)}}
   h2.sph2{{margin:0 0 8px}}
@@ -4362,8 +4530,20 @@ style="color:{CLR_D3};font-weight:700">D3+P3（不含抄底）</span>（后两�
   @media (max-width:1320px){{
     .rwrap{{flex-direction:column}}
   }}
-  /* 中等窗口：年度卡收窄到 340px，把宽度让给排名表（2026-10-31 删列后 8 列） */
-  @media (max-width:1050px){{
+  /* 中等窗口：年度卡收窄，把宽度让给排名表（2026-10-31 删列后 8 列）
+     ⚠️ 2026-11-03：主档由 480 加到 560 后，这里补两档阶梯 ——
+     1150~1050 用 440px（此时左表 1050-48-440-14=548 > 自然宽 498 ✓），
+     ≤1050 仍回落到 340px。断点都按「左表自然宽 498」倒推，不会再挤出横向滚动条。 */
+  @media (max-width:1150px){{
+    .s2r{{flex:0 0 440px}}
+    /* 2026-11-03：窄卡（440px）配高表（~460px）时，拉伸会把画布拉成
+       上下各 100px 的空白（画布比例 1.9，实际只用到一半高度）。
+       这一段放弃「等高拉伸」，让年度卡按自身内容高度收住，图跟着宽度走。 */
+    .split2{{align-items:flex-start}}
+    .s2r .ytdchart{{flex:0 0 auto}}
+    .ytdbody{{flex:0 0 auto}}
+  }}
+  @media (max-width:999px){{
     .s2r{{flex:0 0 340px}}
   }}
   /* ===== 并排断点 760px（2026-10-25 修）=====
