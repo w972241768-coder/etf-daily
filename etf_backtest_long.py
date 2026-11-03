@@ -55,6 +55,7 @@ NAMES = {
     "512890": "红利低波ETF华泰柏瑞", "159957": "创业板ETF华夏",
     "159915": "创业板ETF易方达", "159949": "创业板50ETF华夏",
     "512040": "价值ETF富国", "000001": "上证指数", "000688": "科创50", "399006": "创业板指",
+    "511010": "国债ETF", "511880": "银华日利",
 }
 DEFENSIVE = "512040"
 BENCH = ["000001", "000688", "399006", "513100"]
@@ -303,6 +304,12 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              weak_first_d3: bool = False,
              weak_ma20_entry: bool = False,
              weak_max_vol: float = 0.0,
+             # ---- 动量买入的绝对波动率闸门（2026-11-03 研究，默认 0 = 完全关闭）----
+             # weak_max_vol 只管「抄底买入」；动量排名买入此前**没有任何波动率约束**。
+             # 2026-08-17 以 vol60=90.9% 买入 588170、08-31 又以 90.0% 买回，两次都踩在
+             # 科创半导体暴跌起点 ⇒ mom_max_vol 给「换入新头名」补上同一道闸。
+             mom_max_vol: float = 0.0,
+             mom_fallback: str = "cash",   # "cash"=转入空仓 | "hold"=保持原仓不动
 
              weak_exit_ma20: bool = False, weak_exit_days: int = 0,
              weak_exit_pos: bool = False,
@@ -355,8 +362,10 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     weak_events: List[dict] = []          # 抄底触发明细（研究用）
     weak_skips: List[dict] = []           # 被波动率闸门拦下的抄底（日报展示用，2026-10-31）
     # 波动率闸门（2026-10-31）：仅在开启时预计算 60 日年化波动率矩阵，默认零开销。
+    # 2026-11-03：mom_max_vol（动量买入闸门）也需要同一张矩阵 ⇒ 一并触发预计算。
+    mom_skips: List[dict] = []            # 被动量波动率闸门拦下的换入（研究用）
     _vol60 = None
-    if weak_max_vol and weak_max_vol > 0:
+    if (weak_max_vol and weak_max_vol > 0) or (mom_max_vol and mom_max_vol > 0):
         try:
             _vol60 = (panel[pool].pct_change(fill_method=None).rolling(60).std()
                       * (252 ** 0.5) * 100)
@@ -712,6 +721,29 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             target = defensive if ve_ok else "CASH"
             if not ve_ok:
                 reason = reason + " | 价值引擎未触发 -> 持币"
+        # ---- 动量买入的绝对波动率闸门（2026-11-03 研究，默认关闭 ⇒ 逐位等价）----
+        # 只在「ROT 状态下要换入一只新的非防守标的」时生效；继续持有/抄底/防守均不干预。
+        if (mom_max_vol and mom_max_vol > 0 and state == "ROT"
+                and target != "CASH" and target != held
+                and target != weak_hold and target != defensive):
+            _mv = None
+            if _vol60 is not None:
+                try:
+                    _mv = float(_vol60.at[dates[i], target])
+                except Exception:                      # noqa: BLE001
+                    _mv = None
+            if _mv is not None and _mv == _mv and _mv > mom_max_vol:
+                mom_skips.append(dict(
+                    date=str(dates[i].date()), code=target,
+                    name=NAMES.get(target, target),
+                    vol=round(_mv, 1), limit=float(mom_max_vol)))
+                if mom_fallback == "hold" and held != "CASH":
+                    target = held
+                else:
+                    target = "CASH"
+                note_cool = ((note_cool + f" | 头名波动{_mv:.0f}%>{mom_max_vol:.0f}%不追")
+                             if note_cool else
+                             f" | 头名波动{_mv:.0f}%>{mom_max_vol:.0f}%不追")
         reason = (reason or "池内头名变更(粘性带外)") + note_cool
 
         switched = (target != held)
@@ -723,10 +755,13 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             #   · 现金口径：实际只需 sell，被高估了一次 buy ⇒ 基线偏保守。
             #   两者用同一假设 ⇒ 对比公平，且国债结果含真实成本，不需要额外补扣。
             nav *= (1.0 - c)
+            # 2026-11-03：CASH 段实际持 cash_proxy（国债），名称如实写出来，
+            #   否则第 ② 节会出现「买入：持币」却带着 -0.18% 收益的矛盾。
+            _cash_nm = (f"{cash_proxy} 国债(空仓)" if cash_proxy else "持币")
             trades.append(dict(date=str(dates[i].date()), frm=held, to=target,
-                               frm_name=("空仓" if held == "CASH"
+                               frm_name=(_cash_nm if held == "CASH"
                                          else NAMES.get(held, held)),
-                               to_name=("持币" if target == "CASH"
+                               to_name=(_cash_nm if target == "CASH"
                                         else NAMES.get(target, target)),
                                state=state, reason=reason, tie=bool(tied),
                                lead=(None if sig["lead"] != sig["lead"]
@@ -807,7 +842,8 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 weak_hold=weak_hold, weak_hold_i=int(weak_hold_i),
                 weak_entry_px=weak_entry_px,
                 gate_days=gate_days_n, gate_trig=gate_trig_n,
-                weak_skips=weak_skips)
+                weak_skips=weak_skips,
+                mom_skips=mom_skips)
 
 
 def bench_curve(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int,

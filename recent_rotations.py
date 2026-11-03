@@ -554,6 +554,10 @@ def _d3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             remain = None
     cool_days = int(sum(c["days"] for c in cools))
     n_days_all = max(1, len(navs) - 1)
+    # 2026-11-03：空仓段实际持国债 ETF，显示成「持币」会让第 ② 节出现
+    # 「持币却亏了 -0.18%」的自相矛盾（那 -0.18% 是国债涨跌 + 换仓成本）。
+    _cash_nm = (f"{bl.LIVE_COMPOSITE.get('cash_proxy')} 国债(空仓)"
+                if bl.LIVE_COMPOSITE.get("cash_proxy") else "持币")
 
     return dict(
         ok=True, thr=D3_THR, days=D3_DAYS,
@@ -563,8 +567,8 @@ def _d3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         trades_n=len(r["trades"]), cool_n=len(cools), cool_days=cool_days,
         cash_pct=cool_days / n_days_all * 100,
         hold=hold, base_hold=base_hold,
-        hold_name=("持币" if hold == "CASH" else bl.NAMES.get(hold, hold)),
-        base_hold_name=("持币" if base_hold == "CASH" else bl.NAMES.get(base_hold, base_hold)),
+        hold_name=(_cash_nm if hold == "CASH" else bl.NAMES.get(hold, hold)),
+        base_hold_name=(_cash_nm if base_hold == "CASH" else bl.NAMES.get(base_hold, base_hold)),
         same=(hold == base_hold), active=bool(active), remain=remain, back=back,
         last=[dict(date=c["date"], name=c["name"], ret=c["ret"],
                    until=c["until"], days=c["days"]) for c in cools[-3:]][::-1],
@@ -815,19 +819,17 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             _nav_end = float(navs.iloc[-1])
         _nav_start = float(_t["nav"])
         _same = (_d1 == _d0)
-        # ★ 2026-10-28：空仓段（换到 CASH）不参与「同期上证 / 超额」比较 ——
-        #   空仓是 D3/P3 规则强制的冷却，净值不变，拿现金去比指数会显示成
-        #   「跑输大盘」，属误导（实测 10-28 空仓段：策略 -0.00% vs 上证 +0.91%）。
+        # ★ 2026-10-28：空仓段（换到 CASH）不参与「同期上证 / 超额」比较。
+        # ★ 2026-11-03 修正：接入 cash_proxy 后「空仓净值不变」的前提已不成立 ——
+        #   现在空仓段持 511010 国债生息（且扣了换仓成本），与股票段同样可比。
+        #   继续直接抹成「—」会出现「持国债亏了 -0.18% 却没有超额对照」的困惑。
         _is_cash = (str(_t.get("to") or "") == "CASH")
         if _same:
             _ret = _br = _al = None
         else:
             _ret = (_nav_end / _nav_start - 1.0) if _nav_start > 0 else None
-            if _is_cash:
-                _br = _al = None
-            else:
-                _br = _bench_ret(_d0, _d1)
-                _al = (_ret - _br) if (_ret is not None and _br is not None) else None
+            _br = _bench_ret(_d0, _d1)
+            _al = (_ret - _br) if (_ret is not None and _br is not None) else None
         _days = 0
         if not _same:
             try:

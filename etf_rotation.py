@@ -59,6 +59,17 @@ CASH_PROXY = bl.LIVE_COMPOSITE.get("cash_proxy")
 CASH_LABEL = (f"空仓·持 {CASH_PROXY} 国债" if CASH_PROXY else "空仓持币")
 CASH_SHORT = (f"国债{CASH_PROXY}" if CASH_PROXY else "空仓")
 
+# ---- 「极端波动」提示阈值（2026-11-03 用户拍板，纯展示、零参数）----
+# 背景：2026-08-18→10-26 那段 −18% 回撤的峰值持仓 588170，当时 60 日年化波动率 90%。
+# 复盘发现「动量排名买入」这条路径完全没有波动率约束（weak_max_vol=45% 只管抄底）。
+# 试过给引擎加 mom_max_vol 闸门：四窗口终值全升、MDD 一致改善 2.23pp，但
+#   ① 全期只触发 3 次，全在 2026-08 同一个标的；② 2019~2025 七年零触发；
+#   ③ 阈值 88%→90% 结果翻转（20.00 → 19.26） ⇒ 判定为对单次事件的定点雕花，不接入。
+# 改为「把信息告诉你，不替你做决定」：仅当建议持仓的 60 日年化波动率 ≥ 本阈值时，
+# 在今日操作指引里多显示一行提示。不参与排名、不触发任何买卖、不影响回测口径。
+VOL_WARN = 85.0
+
+
 # ---- 三条策略序列的统一配色（2026-10-25 改）----
 # 旧版「红 / 紫 / 品红」三种色相太近（紫 #7b3fe4 与品红 #c2185b 几乎分不开），
 # 改为「蓝 / 橙 / 玫红」——色相分别约 225° / 36° / 336°，两两间隔足够大。
@@ -427,7 +438,8 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
                     f"<b>换持末位 {_h_disp}</b>")
         elif _h_p3 == "CASH":
             pill_cls = "diff"
-            pill = "⚠ 今日<b>空仓持币</b>（D3 止损 或 P3 追高触发）"
+            # 2026-11-03：空仓已不是「躺现金」，统一用 CASH_LABEL（空仓·持 511010 国债）
+            pill = f"⚠ 今日<b>{CASH_LABEL}</b>（D3 止损 或 P3 追高触发）"
         else:
             pill_cls = "diff"
             pill = f"⚠ <b>今日调整为 {_h_disp}</b>（D3 / P3 / 抄底 叠加）"
@@ -573,19 +585,25 @@ def _p3_card_html(p3, recent, cost):
                 state = (f'<span class="d3badge on">空仓中 · D3 单笔止损触发</span>'
                          f'{html.escape(str(p3.get("cash_reason") or ""))} → '
                          f'<b>空仓 5 个交易日</b>，{_cun} 收盘回场')
-                act = ('今天收盘卖出清仓；回场日以每日报告更新'
-                       '（按当日排名第 1 名买回）。')
+                act = ((f'今天收盘卖出、换持 <b>{CASH_PROXY} 国债</b>；'
+                        '回场日以每日报告更新（按当日排名第 1 名买回）。') if CASH_PROXY else
+                       ('今天收盘卖出清仓；回场日以每日报告更新'
+                        '（按当日排名第 1 名买回）。'))
             elif _csr == "P3":
                 state = (f'<span class="d3badge on">空仓中 · P3 追高止盈触发</span>'
                          f'{html.escape(str(p3.get("cash_reason") or ""))} → '
                          f'<b>空仓 20 个交易日</b>，{_cun} 收盘回场')
-                act = ('今天收盘卖出清仓；回场日以每日报告更新'
-                       '（按当日排名第 1 名买回）。')
+                act = ((f'今天收盘卖出、换持 <b>{CASH_PROXY} 国债</b>；'
+                        '回场日以每日报告更新（按当日排名第 1 名买回）。') if CASH_PROXY else
+                       ('今天收盘卖出清仓；回场日以每日报告更新'
+                        '（按当日排名第 1 名买回）。'))
             else:
                 state = (f'<span class="d3badge on">空仓中</span>'
                          f'D3+P3 组合此刻要求<b>空仓</b>，{rem}，约 <b>{back}</b> 收盘回场')
-                act = (f'若按 D3+P3 执行：<b>今天收盘应卖出、转入空仓</b>，'
-                       f'到 <b>{back}</b> 收盘再按当日头名买回。')
+                act = ((f'若按 D3+P3 执行：<b>今天收盘应卖出、换持 {CASH_PROXY} 国债</b>，'
+                        f'到 <b>{back}</b> 收盘再按当日头名买回。') if CASH_PROXY else
+                       (f'若按 D3+P3 执行：<b>今天收盘应卖出、转入空仓</b>，'
+                        f'到 <b>{back}</b> 收盘再按当日头名买回。'))
         elif p3.get("same_base"):
             # 2026-10-28 用户要求：不再提「基础轮动」——既然只用这一套口径，
             # 拿基础策略做对照只会让人分心。
@@ -2606,12 +2624,79 @@ def _ve_curve_block(vc, fi=None):
 """
 
 
+def _vol_source_df(df):
+    """给「波动率历史分位」用的长样本：长历史 CSV 打底 + 当期 df 尾部覆盖。
+
+    ⚠️ 为什么不能直接用 df（2026-11-03 专家审查后修正）：
+      · 在线模式 df 每只只有 480 根（KLINE_BARS，<2 年）——「历史分位」实为近两年分位；
+      · 离线模式非防守标的只取 window+8 = 28 根 —— 连 60 日波动率都算不出，静默失效；
+      · 在线 480 根复权基准是末端常数，区间内如有份额折算会残留跳空，污染 std。
+    这里优先读 tdx_adj_long_2014_2026.csv（2014 起、真实前复权），再用当期 df 覆盖尾部。
+    任何异常都退回 df 本身 —— 只降级、不报错。
+    """
+    if df is None or getattr(df, "empty", True):
+        return df
+    try:
+        cur = df[["date", "code", "close"]].copy()
+        cur["date"] = pd.to_datetime(cur["date"])
+        cur["code"] = cur["code"].astype(str)
+        cut = cur["date"].min()
+        base = None
+        for cand in ("tdx_adj_long_2014_2026.csv", "tdx_adj_long_2019_2026.csv"):
+            path = os.path.join(HERE, cand)
+            if not os.path.exists(path):
+                path = cand
+            if not os.path.exists(path):
+                continue
+            ld = pd.read_csv(path, dtype={"code": str})
+            ld["date"] = pd.to_datetime(ld["date"].astype(str), format="%Y%m%d")
+            base = ld.loc[ld["date"] < cut, ["date", "code", "close"]]
+            break                       # 只用第一份可用的（2014 优先）
+        if base is None or base.empty:
+            return cur
+        return pd.concat([base, cur], ignore_index=True)
+    except Exception:                   # noqa: BLE001
+        return df
+
+
+def build_vol_map(df, codes, n=60):
+    """60 日年化波动率快照，供「极端波动」提示使用（2026-11-03）。
+
+    返回 {code: dict(vol=当前%, med=自身历史中位%, pct=当前所处分位, n=样本数)}。
+    ⚠️ 纯展示，不进入任何排名/买卖判定，也不改回测口径。
+    """
+    out = {}
+    if df is None or getattr(df, "empty", True):
+        return out
+    try:
+        d = df.copy()
+        d["date"] = pd.to_datetime(d["date"])
+        d["code"] = d["code"].astype(str)
+        for code in codes:
+            s = d.loc[d["code"] == str(code), ["date", "close"]]
+            if len(s) < n + 20:
+                continue
+            s = s.sort_values("date")["close"].astype(float)
+            ret = s.pct_change().dropna()
+            v = (ret.rolling(n).std() * (252 ** 0.5) * 100).dropna()
+            if len(v) == 0:
+                continue
+            cur = float(v.iloc[-1])
+            if cur != cur:                       # NaN 防护
+                continue
+            out[str(code)] = dict(vol=cur, med=float(v.median()),
+                                  pct=float((v <= cur).mean() * 100), n=int(len(v)))
+    except Exception:                            # noqa: BLE001
+        return out
+    return out
+
+
 def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                 swap_days, tie_days, head1, head2, lead, overheated,
                 overheat_dev, overheat_lead, info, source, now,
                 watch=(), info_watch=(), freshness=(False, ""), live=(False, ""),
                 recent=None, adj_note="", yearly=None, idx=None, ve_curve=None,
-                ve_track=None, ve2_curve=None):
+                ve_track=None, ve2_curve=None, vol_map=None):
     cells = [s.momentum for s in snap]
     vmax = max((abs(v) for m in cells for v in m.values() if v == v), default=1.0)
 
@@ -3314,6 +3399,31 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         _why_txt = ("防守期内" if overheated else "未触发过热熔断") + \
                    "，持仓已一致 · 无交易"
 
+    # ---- 「极端波动」提示（2026-11-03 用户拍板）----
+    # 只在建议持仓的 60 日年化波动率 ≥ VOL_WARN 时出现。**不构成任何操作信号**：
+    # 不改排名、不改买卖、不影响回测口径，只是把「你现在站在多陡的坡上」讲清楚。
+    # ⚠️ 必须是**独立渲染块**，不能只塞进 _why_txt：
+    #   `_plain_hold`（无需动作日）会把整张操作表砍掉，而一年 220+ 天都是这种日子
+    #   ⇒ 挂在表格里的提示会随机消失，正好在最该看见的时候看不见（2026-11-03 踩过）。
+    _vol_warn_html = ""
+    if str(final_code) != "CASH":
+        _vh = (vol_map or {}).get(str(final_code))
+        try:
+            _vv = float((_vh or {}).get("vol"))
+        except (TypeError, ValueError):
+            _vv = None
+        if _vv is not None and _vv == _vv and _vv >= VOL_WARN:
+            _vol_warn_html = (
+                f'<div class="volwarn">⚠ <b>极端波动</b>：{final_code} '
+                f'{html.escape(str(final_nm or ""))} 60 日年化波动率 '
+                f'<b>{_vv:.1f}%</b>，该标的自身历史中位 {_vh["med"]:.1f}%、'
+                f'当前处 {_vh["pct"]:.0f} 分位。'
+                f'持有它就要接受同量级的回撤可能 —— '
+                f'<span class="vnb">这只是提示，不是买卖信号</span>，'
+                f'策略不会因为它改变任何动作。</div>')
+            _why_txt += (f"<br><span class='volwarn2'>⚠ 60 日年化波动 "
+                         f"{_vv:.1f}%（历史中位 {_vh['med']:.1f}%）</span>")
+
     guide_rows = [
         f"<tr><td class='mono'>{final_code}</td>"
         f"<td class='nm2'>{html.escape(final_nm)} {_tag}</td>"
@@ -3756,10 +3866,11 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                          else '<span class="dimtxt">0 日</span>')
                 # ★ 2026-10-28：空仓段（换到 CASH）不参与指数比较 ——
                 #   现金 vs 指数会显示成「跑输大盘」，属误导，直接标「空仓」。
-                _cash_row = bool(rw.get("cash"))
-                _bench_cell = ('<span class="dimtxt">空仓</span>' if _cash_row
-                               else _fmt(_b))
-                _alpha_cell = ('<span class="dimtxt">—</span>' if (_cash_row or _a is None)
+                # ★ 2026-11-03 修正：接入 cash_proxy 后「空仓净值不变」的前提已不成立 ——
+                #   现在空仓段持 511010 国债生息（并扣了换仓成本），与股票段同样可比。
+                #   再抹成「空仓 / —」会出现「持国债亏了 -0.18% 却没有超额对照」的困惑。
+                _bench_cell = _fmt(_b)
+                _alpha_cell = ('<span class="dimtxt">—</span>' if _a is None
                                else _fmt(_a, pct=False, nd=2) + "pp")
                 rr_rows.append(
                     "<tr>"
@@ -4667,6 +4778,15 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
   /* 允许折行：320px 屏上「胜率 100%（5 笔已平仓，均 +14.28%）」整条 340px，
      继承 .chip 的 nowrap 会把页面撑宽（2026-11-02） */
   .chip .cnote{{font-style:normal;font-size:11px;color:#8b93a1;white-space:normal}}
+  /* 「极端波动」提示（2026-11-03）：只在 60 日年化波动率 ≥ VOL_WARN 时出现。
+     独立成块（不依赖操作表是否渲染 —— 无需动作日整张表会被砍掉）。
+     琥珀色警示：醒目但不抢红色「买入」信号的位置。 */
+  .volwarn{{margin:0 0 8px;font-size:12px;line-height:1.55;color:#8a4b08;
+    background:#fffbeb;border-left:3px solid #f59e0b;border-radius:4px;
+    padding:7px 10px;white-space:normal}}
+  .volwarn .vnb{{color:#a16207;font-style:normal}}
+  /* 操作表「依据」列里的紧凑版 */
+  .volwarn2{{display:inline-block;margin-top:2px;font-size:11.5px;color:#b45309}}
   /* 阶梯表压缩：单位省略 %、小字、紧凑内边距 */
   table.lad{{font-size:11.5px}}
   table.lad th,table.lad td{{padding:4px 4px}}
@@ -4687,6 +4807,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
   <span class="gdate">锚定日 <b>{pivot}</b> ｜ 数字随盘中波动，以<b>收盘价</b>为准</span>
 </div>
 {_combo_summary_html(recent, _guide_sub, overheated)}
+{_vol_warn_html}
 {('<div class="note" style="margin-bottom:8px">' + guide_note + '</div>') if guide_note else ''}
 {_sop_bar}
 {_guide_table_html}
@@ -5199,6 +5320,29 @@ def main():
     else:
         info_main.append(f"[VE2] {VE_TRACK_CODE} 净值曲线不可用（历史数据不足）")
 
+    # ---- 「极端波动」提示（2026-11-03）：只算波动率快照，不改任何策略口径 ----
+    try:
+        _vcodes = [r.code for r in snap_main]
+        if defensive:
+            # ⚠️ defensive 是 set（{'512040'}），必须 extend 不能 append ——
+            #    append 会把整个集合塞进列表，str(code) 变成 "{'512040'}"，
+            #    在 build_vol_map 里永远匹配不到（2026-11-03 修正）。
+            _vcodes.extend(defensive)
+        if CASH_PROXY:
+            _vcodes.append(CASH_PROXY)
+        # ⚠️ 分位必须有长样本：在线 df 仅 480 根（<2 年）、离线仅 28 根，
+        #    直接拿它算「历史分位」名不副实，离线还会静默失效 ⇒
+        #    改用「长历史 CSV 打底 + 当期尾部覆盖」（见 _vol_source_df）。
+        vol_map = build_vol_map(_vol_source_df(df), _vcodes)
+        _vhw = [f"{k}:{v['vol']:.0f}%" for k, v in vol_map.items()
+                if v["vol"] >= VOL_WARN]
+        if _vhw:
+            info_main.append(f"[波动] 极端波动标的（≥{VOL_WARN:.0f}%）："
+                             f"{'、'.join(_vhw)}")
+    except Exception as e:                      # noqa: BLE001
+        vol_map = {}
+        info_main.append(f"[波动] 波动率快照计算异常: {type(e).__name__}: {e}")
+
     gen_now = datetime.now().strftime("%Y-%m-%d %H:%M")
     html_doc = render_html(
         pivot=pivot, window=W, sticky=a.sticky_lead, defensive=defensive, snap=snap_main,
@@ -5209,7 +5353,7 @@ def main():
         watch=watched, info_watch=info_watch,
         freshness=(is_stale, fresh_txt), live=(live_on, live_txt),
         recent=recent, adj_note=adj_note, yearly=yearly, idx=idx, ve_curve=ve_curve,
-        ve_track=ve_track, ve2_curve=ve2_curve)
+        ve_track=ve_track, ve2_curve=ve2_curve, vol_map=vol_map)
 
     out_dir = a.out and os.path.dirname(os.path.abspath(a.out)) or DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
@@ -5284,6 +5428,9 @@ def main():
             ve2_zone=_ve2.get("zone"),
             ve2_action=_ve2.get("action"),
             ve2_holding=_ve2.get("holding"),
+            # 空仓期替代载体（2026-11-03 补）：notify.py 靠这个把「空仓持币」
+            # 改写成「空仓·持 511010 国债」，否则手机通知与页面口径打架。
+            cash_proxy=CASH_PROXY,
         )
         try:
             _sd = os.path.dirname(os.path.abspath(a.state_out))

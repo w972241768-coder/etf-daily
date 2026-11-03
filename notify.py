@@ -64,11 +64,17 @@ def load_prev_from_git(path_in_repo="docs/state.json"):
 
 
 # --------------------------------------------------------------------------- 事件判定
-def _fmt_hold(code, name):
+def _fmt_hold(code, name, cash_proxy=None):
+    """空仓已不是躺现金 —— 生产口径把 CASH 段换持国债 ETF（LIVE_COMPOSITE.cash_proxy）。
+
+    ⚠️ 2026-11-03 修：以前写死「空仓持币」，手机收到的 D3/P3 通知不会提示买国债，
+    与页面口径打架。cash_proxy 由 state.json 提供；旧快照无此字段时回退 511010。
+    """
     if not code:
         return "—"
     if code == "CASH":
-        return "空仓持币"
+        cp = cash_proxy or "511010"
+        return f"空仓·持 {cp} 国债"
     return f"{code} {name or ''}".strip()
 
 
@@ -81,9 +87,10 @@ def diff_events(old, new):
     # ① 执行口径持仓变化（最高优先级）
     if old.get("hold_default") != new.get("hold_default"):
         _t = "抄底换仓" if new.get("weak_active") else "持仓变更"
+        _cp = new.get("cash_proxy") or old.get("cash_proxy")
         ev.append((_t,
-                   [f"{_fmt_hold(old.get('hold_default'), old.get('hold_default_name'))}"
-                    f" → {_fmt_hold(new.get('hold_default'), new.get('hold_default_name'))}"]))
+                   [f"{_fmt_hold(old.get('hold_default'), old.get('hold_default_name'), _cp)}"
+                    f" → {_fmt_hold(new.get('hold_default'), new.get('hold_default_name'), _cp)}"]))
 
     # ② 过热熔断状态翻转
     if bool(old.get("overheat")) != bool(new.get("overheat")):
@@ -127,7 +134,7 @@ def build_message(ev, new):
     nav, cal = new.get("nav_default"), new.get("calmar_default")
     if nav:
         lines.append(f"组合净值 {nav:.4f}" + (f" ｜ Calmar {cal:.2f}" if cal else ""))
-    lines.append(f"今日应持：{_fmt_hold(new.get('hold_default'), new.get('hold_default_name'))}")
+    lines.append(f"今日应持：{_fmt_hold(new.get('hold_default'), new.get('hold_default_name'), new.get('cash_proxy'))}")
     lines.append(SITE)
     return "\n".join(lines)
 
@@ -243,10 +250,16 @@ def main():
         print(f"[notify] 无上一版快照（首次运行）→ 仅建立基线，不提醒。asof={new.get('asof')}")
         return 0
 
-    # 同一天重复生成（比如手动多跑一次）不该重复提醒
+    # ⚠️ **不能凭 asof 相同就早退**（2026-11-03 修复，专家审查指出的严重漏洞）：
+    #   CI 每天跑两次 —— 12:20 盘中版 + 15:45 收盘版，**两次的 asof 都是「今天」**。
+    #   若在此直接 return 0，15:45 那次永远推不出去，后果是：
+    #     · 午盘没触发、13:00~15:00 才触发的真信号 → 完全失聪；
+    #     · 午盘因日内毛刺误报、收盘撤回 → 收不到「信号已解除」。
+    #   正确做法：交给下面的 diff_events 比对核心状态字段。真没变化时它返回空列表、
+    #   自然走静默分支 —— 所以「同一天多跑几次」不会重复打扰，这个保护并没丢。
     if str(old.get("asof")) == str(new.get("asof")):
-        print(f"[notify] 锚定日未变（{new.get('asof')}）→ 无变化，不打扰")
-        return 0
+        print(f"[notify] 锚定日相同（{new.get('asof')}）→ 继续比对状态字段"
+              f"（盘中版 vs 收盘版状态可能不同）")
 
     ev = diff_events(old, new)
     if not ev:
