@@ -1,26 +1,25 @@
-name: ETF 轮动日报 · 每日生成
+name: ETF 轮动日报 · 手动刷新
 
 # 免费额度：公开仓库 Actions 分钟数不计量；GitHub Pages 静态托管免费。
 #
 # ⚠️ GitHub 的 schedule 是「尽力而为」调度：高负载时会延后十几分钟，也可能整次丢弃
 #    （2026-10-26 实测：04:30 UTC 那次首跑被直接跳过，仓库里 12 次运行全是手动）。
-#    因此设三个时段冗余，均在南非 10:00 之前完成：
-#      时段一  UTC 04:20 = 北京 12:20 = 南非 06:20
-#      时段二  UTC 04:50 = 北京 12:50 = 南非 06:50
-#      时段三  UTC 07:45 = 北京 15:45 = 南非 09:45（收盘后，用收盘数据）
-#    三个时段都走 jobs.gate 时间窗判重（2026-10-28 修订）：
-#      时段一/二（盘中版）：今天 11:50 之后已有提交 → 跳过；否则跑（上午的手动版不会顶掉中午版）
-#      时段三（收盘版）  ：今天 15:00 之后已有提交 → 跳过；否则跑
-#    ⇒ 盘中版、收盘版各自独立刷新一次，互不吞并。
-# 交易日：时段一/时段二为盘中价（新浪快照补末根）；时段三为收盘数据。
-# 周末/非交易日：均为上一交易日收盘。
+#
+# ★★ 2026-11-03 用户拍板：**停用全部定时自动更新**，只保留手动触发。
+#    触发方式 = 日报页面右下角「🔄 刷新日报」按钮 → GitHub API 调 workflow_dispatch
+#    （REPO=w972241768-coder/etf-daily，WF=daily.yml，REF=main，见 etf_rotation.py 的 rfRun）。
+#    停用理由：
+#      ① 用户已固定用手动刷新，觉得时机自己掌控、更及时；
+#      ② 自动跑每天最多 3 次会在 docs/ 产生提交，与本地手动跑互相 rebase 打架
+#         （2026-11-03 已因 CI 抢推导致一次 push 被 rejected）。
+#    要恢复定时：把下面 schedule 三行的注释去掉即可，其余逻辑无需改动。
 
 on:
-  schedule:
-    - cron: "20 4 * * 1-5"      # 时段一（南非 06:20）
-    - cron: "50 4 * * 1-5"      # 时段二（南非 06:50）——时段一被跳过时兜底
-    - cron: "45 7 * * 1-5"      # 时段三（南非 09:45）——盘中时段再兜底，用收盘数据
-  workflow_dispatch:            # 也可在 Actions 页手动点一次立刻跑
+  # schedule:
+  #   - cron: "20 4 * * 1-5"      # 时段一 UTC 04:20 = 北京 12:20
+  #   - cron: "50 4 * * 1-5"      # 时段二 UTC 04:50 = 北京 12:50
+  #   - cron: "45 7 * * 1-5"      # 时段三 UTC 07:45 = 北京 15:45（收盘后）
+  workflow_dispatch:            # ← 页面「刷新日报」按钮走这条；也可在 Actions 页手动点
 
 # 同一时间只允许一个实例，避免多次运行同时 push 到 main 造成冲突
 concurrency:
@@ -31,52 +30,11 @@ permissions:
   contents: write             # 需要写权限才能把生成的 HTML 提交回仓库
 
 jobs:
-# 判重闸门（分档）：所有 schedule 触发都先查 docs/state.json 上次提交时间。
-#   时段一/二（盘中版）：北京时间当天已有任意日报提交 → skip=1（跳过构建）。
-#   时段三（收盘版）：只认「今天 15:00 收盘后已有提交」才算重；
-#     当天只有盘中版或尚无日报 → 放行，用收盘数据重跑。
-# 效果：盘中版每天最多一次；收盘版每天必有一次（哪怕白天手动跑过）。
-# 手动触发一律放行（skip=0）。
-  gate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      skip: ${{ steps.chk.outputs.skip }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 50        # 需要历史才能查到 docs/state.json 上次提交时间
-      - id: chk
-        env:
-          SCHEDULE: ${{ github.event.schedule }}
-        run: |
-          if [ -z "$SCHEDULE" ]; then
-            echo "skip=0" >> "$GITHUB_OUTPUT"
-            echo "手动触发，直接执行"
-            exit 0
-          fi
-          last=$(git log -1 --format=%ct -- docs/state.json 2>/dev/null || echo 0)
-          # 时间窗判重（2026-10-28）：不再按「当天是否有提交」，而是按「窗口内是否已有提交」
-          #   中午节点（时段一/二）：只认今天 11:50 之后的提交 → 早盘/上午的手动版不会顶掉中午版
-          #   收盘节点（时段三）  ：只认今天 15:00 之后的提交
-          # 这样无论 schedule 延迟多久、当天手动跑过几次，各窗口都能各自刷新一次。
-          case "$SCHEDULE" in
-            "45 7 * * 1-5") win="15:00"; label="收盘版" ;;
-            *)              win="11:50"; label="盘中版" ;;
-          esac
-          threshold=$(TZ=Asia/Shanghai date -d "today $win" +%s)
-          echo "$label 判重：state.json 上次提交=$last　门槛=今日$win($threshold)"
-          if [ "$last" -ge "$threshold" ]; then
-            echo "skip=1" >> "$GITHUB_OUTPUT"
-            echo "::notice::今日 $win 之后已有日报提交，跳过本次（$SCHEDULE）"
-          else
-            echo "skip=0" >> "$GITHUB_OUTPUT"
-            echo "今日 $win 之后尚无日报，执行本次：$SCHEDULE"
-          fi
-
+# ⚠️ 2026-11-03：原 jobs.gate（时间窗判重）已删除。
+#   它的唯一作用是「同一时段内已有提交就跳过」，而判重的前提是多个 schedule 并发触发；
+#   现在只剩手动触发，用户点一次就跑一次，判重反而会误挡（同一天刷第二次会被跳过）。
+#   如需恢复定时，记得连 gate job 一起从 git 历史取回。
   build:
-    needs: gate
-    if: needs.gate.outputs.skip != '1'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
