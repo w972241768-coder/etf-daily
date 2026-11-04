@@ -421,21 +421,27 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     # 波动率闸门（2026-10-31）：仅在开启时预计算 60 日年化波动率矩阵，默认零开销。
     # 2026-11-03：mom_max_vol（动量买入闸门）也需要同一张矩阵 ⇒ 一并触发预计算。
     mom_skips: List[dict] = []            # 被动量波动率闸门拦下的换入（研究用）
-    _vol60 = None
+    # ★ 2026-11-04 修（专家审查指出）：原来只算一份 _vol60 供四处共用，
+    #   LIVE_COMPOSITE 设 weak_vol_mode="downside" 后，mom_max_vol / vol_target /
+    #   vol_rebal 三个实验参数会**静默改用下行波动率** ⇒ 回测失真。
+    #   现在拆成两份：抄底闸门用 _vol60_weak（跟随 weak_vol_mode），其余恒用 _vol60_total。
+    _vol60_total = None                   # 总波动率（std）
+    _vol60_weak = None                    # 抄底专用（total / downside）
     if (weak_max_vol and weak_max_vol > 0) or (mom_max_vol and mom_max_vol > 0) \
             or (vol_target and vol_target > 0):
         try:
             _ret60 = panel[pool].pct_change(fill_method=None)
+            _vol60_total = _ret60.rolling(60).std() * (252 ** 0.5) * 100
             if weak_vol_mode == "downside":
                 # 下行波动率 = 半方差开方，只统计负收益日；正收益压成 0。
                 # ⚠️ 必须用 clip(upper=0) 而不是 where(r<0, 0.0)：后者会把 NaN 也变成 0，
                 #    早期数据不足时半方差恒为 0、中位数被拉成 0.0%（2026-11-04 踩过）。
                 _dn = _ret60.clip(upper=0.0)
-                _vol60 = np.sqrt((_dn ** 2).rolling(60).mean()) * (252 ** 0.5) * 100
+                _vol60_weak = np.sqrt((_dn ** 2).rolling(60).mean()) * (252 ** 0.5) * 100
             else:
-                _vol60 = _ret60.rolling(60).std() * (252 ** 0.5) * 100
+                _vol60_weak = _vol60_total
         except Exception:                      # noqa: BLE001
-            _vol60 = None
+            _vol60_total = _vol60_weak = None
     weak_cd_map: dict = {}                # 标的 -> 上次抄底日索引（冷却用）
     # 抄底「持仓锁定」状态（2026-10-28 研究）：建仓后锁定该标的，
     # 直到 weak_exit_ma20 / weak_exit_days / weak_exit_pos 任一成立才释放。
@@ -724,9 +730,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 _roc_ok = True
                 # 波动率闸门：末位 60 日年化波动率须 <= weak_max_vol
                 _vol_ok = True
-                if _vol60 is not None and _weak is not None:
+                if _vol60_weak is not None and _weak is not None:
                     try:
-                        _vv = _vol60.at[dates[i], _weak]
+                        _vv = _vol60_weak.at[dates[i], _weak]
                         _vol_ok = bool(pd.notna(_vv) and float(_vv) <= weak_max_vol)
                     except Exception:              # noqa: BLE001
                         _vol_ok = False
@@ -749,9 +755,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                             and _pool_ok and _ma_ok and _roc_ok and _val_ok
                             and _vol_ok):
                         _vev = None
-                        if _vol60 is not None:
+                        if _vol60_weak is not None:
                             try:
-                                _vev = float(_vol60.at[dates[i], _weak])
+                                _vev = float(_vol60_weak.at[dates[i], _weak])
                             except Exception:        # noqa: BLE001
                                 _vev = None
                         weak_events.append(dict(
@@ -784,9 +790,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                           and _roc_ok and _val_ok):
                         # 波动率闸门拦下（2026-10-31）：记录以便日报说明「今天为什么没抄」
                         _vskip = None
-                        if _vol60 is not None:
+                        if _vol60_weak is not None:
                             try:
-                                _vskip = float(_vol60.at[dates[i], _weak])
+                                _vskip = float(_vol60_weak.at[dates[i], _weak])
                             except Exception:        # noqa: BLE001
                                 _vskip = None
                         weak_skips.append(dict(
@@ -824,9 +830,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 and target != "CASH" and target != held
                 and target != weak_hold and target != defensive):
             _mv = None
-            if _vol60 is not None:
+            if _vol60_total is not None:
                 try:
-                    _mv = float(_vol60.at[dates[i], target])
+                    _mv = float(_vol60_total.at[dates[i], target])
                 except Exception:                      # noqa: BLE001
                     _mv = None
             if _mv is not None and _mv == _mv and _mv > mom_max_vol:
@@ -877,9 +883,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             #   只在换仓那一刻定 w、持有期内不变 ⇒ 零额外调仓成本（与实盘一致：
             #   不会为了把 w 从 0.62 调到 0.64 而每天买卖）。
             if (vol_target and vol_target > 0 and target != "CASH"
-                    and _vol60 is not None):
+                    and _vol60_total is not None):
                 try:
-                    _vt = float(_vol60.at[dates[i], target])
+                    _vt = float(_vol60_total.at[dates[i], target])
                 except Exception:                  # noqa: BLE001
                     _vt = None
                 if _vt is not None and _vt == _vt and _vt > 0:
@@ -933,9 +939,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
         #   并按 |Δw|×(buy+sell) 扣调仓摩擦（真实调仓要买卖两边，按双边计）。
         #   换仓日已由上面的 switched 分支定好 pos_w 且已扣 buy+sell，这里不重复扣。
         if (vol_rebal == "daily" and vol_target and vol_target > 0
-                and target != "CASH" and _vol60 is not None):
+                and target != "CASH" and _vol60_total is not None):
             try:
-                _vd = float(_vol60.at[dates[i], target])
+                _vd = float(_vol60_total.at[dates[i], target])
             except Exception:                      # noqa: BLE001
                 _vd = None
             if _vd is not None and _vd == _vd and _vd > 0:

@@ -215,17 +215,27 @@ def _wstate_html(ws) -> str:
                 + ' · 符合入场条件</div>')
     # ⑤ 建仓日涨幅（2026-11-04 新增，纯展示、零参数）
     #   超历史最高时标注「样本外」，把信息交给用户自行判断，不改当日买入规则。
+    #   ⚠️ 2026-11-04 修（专家审查指出）：day_chg 是**建仓首日**的固定值，
+    #     若不分 days，持仓第 2~10 天仍会高亮「尾盘是否执行自行判断」，与「已持仓 N 日」矛盾。
     _surge_row = ""
     _dc = ws.get("day_chg")
     if _dc is not None:
         _over = _dc > WEAK_HIST_MAX_CHG
-        _cls = "wvol surge" if _over else "wvol"
-        _tail = (' · <b>超出历史区间（样本外）</b>，尾盘是否执行自行判断；'
-                 '规则仍为当日买入、次日不补' if _over else ' · 处于历史区间内')
-        _surge_row = (
-            f'<div class="{_cls}">建仓日涨幅 <b>{_dc:+.2f}%</b>'
-            f' · 历史 {WEAK_HIST_N} 笔抄底最高 <b>+{WEAK_HIST_MAX_CHG:.2f}%</b>'
-            + _tail + '</div>')
+        if int(ws.get("days") or 0) == 0:            # 建仓当日 → 操作提示
+            _cls = "wvol surge" if _over else "wvol"
+            _tail = (' · <b>超出历史区间（样本外）</b>，尾盘是否执行自行判断；'
+                     '规则仍为当日买入、次日不补' if _over else ' · 处于历史区间内')
+            _surge_row = (
+                f'<div class="{_cls}">建仓日涨幅 <b>{_dc:+.2f}%</b>'
+                f' · 历史 {WEAK_HIST_N} 笔抄底最高 <b>+{WEAK_HIST_MAX_CHG:.2f}%</b>'
+                + _tail + '</div>')
+        else:                                        # 锁定期内 → 中性复盘
+            _surge_row = (
+                f'<div class="wvol">建仓首日（'
+                f'{html.escape(str(ws.get("entry_date") or ""))}）涨幅 '
+                f'<b>{_dc:+.2f}%</b> · 历史 {WEAK_HIST_N} 笔上限 '
+                f'<b>+{WEAK_HIST_MAX_CHG:.2f}%</b>'
+                + ('（样本外）' if _over else '') + ' · 复盘记录</div>')
     return (
         '<div class="wstate">'
         '<div class="whd"><span class="wbadge">🎯 抄底持仓中</span>'
@@ -318,7 +328,7 @@ def _migrate_note_html(recent):
     if "2026-10-30" <= _asof_s <= "2026-11-06":
         _migrate_html = (
             '<details class="migrdet"><summary>⚠ 10-31 / 11-01 口径升级'
-            '（波动率闸门 45% + 空仓持 511010 国债）</summary>'
+            '（当时为总波动率闸门 45% + 空仓持 511010 国债）</summary>'
             '<div class="migr">'
             '<b>① 10-31：抄底加波动率闸门</b> —— 抄底触发前多一道检查：末位标的'
             '<b>60 日年化波动率须 ≤ 45%</b>，超过就不抄底。'
@@ -559,7 +569,7 @@ def _p3_card_html(p3, recent, cost):
         if bl.LIVE_COMPOSITE.get("weak_mode"):
             _vmv = float(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0)
             _weak_meta = (" + 抄底（全池动横20 全负→末位"
-                          + (f"，波动率≤{_vmv:.0f}%" if _vmv > 0 else "")
+                          + (f"，60 日下行波动率≤{_vmv:.0f}%" if _vmv > 0 else "")
                           + "）")
 
         IMP, WOR = "#3d57e5", "#b3351a"
@@ -3960,7 +3970,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                     f'<td class="num" style="color:{_color(_a)};font-weight:600">'
                     f'{_alpha_cell}</td>'
                     f'<td class="rs" style="min-width:150px">{html.escape(rw["reason"])}'
-                    + (f'<span class="rvol">波动 {rw["vol"]:.1f}%</span>'
+                    + (f'<span class="rvol">下行波动 {rw["vol"]:.1f}%</span>'
                        if rw.get("vol") is not None else "")
                     + '</td>'
                     "</tr>")
@@ -5036,6 +5046,10 @@ box-shadow:0 3px 10px rgba(61,87,229,.38)}
 (function(){
   var REPO="w972241768-coder/etf-daily", WF="daily.yml", REF="main";
   function el(id){return document.getElementById(id);}
+  // ★ 2026-11-04 修（专家审查指出）：st 必须在外层闭包声明 —— 原写法把
+  //   `var st=el("rfStatus")` 放在 run() 内部，pollGen() 是同级函数访问不到，
+  //   点刷新返回 204 后每秒定时器抛 ReferenceError，倒计时卡死且自动 reload 永远不执行。
+  var st=el("rfStatus");
   window.rfToggle=function(){var p=el("rfPanel");p.style.display=p.style.display==="none"?"block":"none";};
   var saved=localStorage.getItem("rfGhToken");
   if(saved){el("rfToken").value=saved;el("rfToken").placeholder="已保存（可留空直接刷新）";}
@@ -5066,7 +5080,6 @@ box-shadow:0 3px 10px rgba(61,87,229,.38)}
   }
   function run(){
     var tok=el("rfToken").value.trim()||localStorage.getItem("rfGhToken")||"";
-    var st=el("rfStatus");
     if(!tok){st.textContent="请先粘贴 GitHub Token。";return;}
     st.textContent="正在触发刷新…";
     fetch("https://api.github.com/repos/"+REPO+"/actions/workflows/"+WF+"/dispatches",{
@@ -5358,6 +5371,14 @@ def main():
     info_watch = [info_by_code[c] for c in wcodes if c in info_by_code]
     _wset = set(info_watch)
     info_main = [x for x in info if x not in _wset]
+    # ★ 2026-11-04 修（专家审查指出）：在线模式下 26 只标的的逐只体检明细存在
+    #   info_by_code，却只被 info_watch（备选池 15 只）取用 ⇒ ④ 主选池只有两行
+    #   [SRC]/[ONLINE] 汇总，与 ⑤ 备选项的折叠明细不对称。
+    #   补入「不在备选池」的 11 只（主选 9 + 防守 1 + 国债 1）；build_html 里
+    #   已有的 [OK] 折叠逻辑会自动收成「✅ 数据源 11 只全部正常（点击展开明细）」。
+    #   离线模式下 info 已含这些行，靠 `v not in info_main` 去重，不会重复平铺。
+    info_main += [v for v in info_by_code.values()
+                  if v not in _wset and v not in info_main]
 
     # ---- 指数口径对照（防守位 512040 跟踪 中证国信价值 931052）----
     idx = None
