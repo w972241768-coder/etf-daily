@@ -536,7 +536,7 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
 </div>
 {sub_html}
 {_pd_html}
-{_wstate_bar}"""
+{_wstate_bar}</div>"""
     except Exception:                          # noqa: BLE001
         return ""
 

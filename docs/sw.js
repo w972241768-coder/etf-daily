@@ -7,7 +7,7 @@
  *      · 图标等静态资源 → stale-while-revalidate（秒开 + 后台更新）。
  *    版本号变更时清理旧缓存。
  */
-const VER = 'etf-daily-v1';
+const VER = 'etf-daily-v2';   // v2：排除 state.json，并清掉 v1 里累积的轮询副本
 const SHELL = [
   './',
   './icon-192.png',
@@ -38,6 +38,13 @@ self.addEventListener('fetch', (e) => {
 
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;   // 跨域一律直连
+
+  // ★ 2026-11-04（专家审查指出）：state.json 是「刷新日报」轮询用的状态文件，
+  //   必须永远直连网络，不能进 CacheStorage：
+  //   ① 轮询 URL 带 ?t=时间戳，每次都不同 ⇒ cache-first 会不断写入新副本，缓存无限膨胀；
+  //   ② 不带参数的 state.json 若命中旧缓存，会让「检测 gen 是否更新」直接失效。
+  //   ⚠️ 不 respondWith 即代表交给浏览器默认网络请求（SW 不拦截）。
+  if (url.pathname.endsWith('state.json')) return;
 
   // HTML：网络优先（保证每天看到最新持仓）
   if (req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html')) {
