@@ -787,6 +787,14 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             weak_state = dict(
                 code=_wh, name=bl.NAMES.get(_wh, _wh),
                 entry_date=str(dates[_i0].date()),
+                # 建仓日涨幅（2026-11-04）：供日报「样本外」提示使用，纯展示。
+                # 抄底买的是 20 日跌最狠的末位，但它当天可能已强力反弹；
+                # 尾盘追进去是否合适，由用户自行判断，规则仍为当日买入。
+                day_chg=(round((float(panel[_wh].iloc[_i0]) /
+                                float(panel[_wh].iloc[_i0 - 1]) - 1.0) * 100, 2)
+                         if (_i0 > 0 and panel[_wh].iloc[_i0 - 1] ==
+                             panel[_wh].iloc[_i0 - 1] and panel[_wh].iloc[_i0 - 1] != 0)
+                         else None),
                 days=_days,
                 limit=_lim,
                 remain=(max(0, _lim - _days) if _lim else None),

@@ -69,6 +69,18 @@ CASH_SHORT = (f"国债{CASH_PROXY}" if CASH_PROXY else "空仓")
 # 在今日操作指引里多显示一行提示。不参与排名、不触发任何买卖、不影响回测口径。
 VOL_WARN = 85.0
 
+# ---- 抄底「建仓日涨幅」样本外提示（2026-11-04 用户拍板，纯展示、零参数）----
+# 背景：11-04 末位 159967 当日 +9.34%，用户担心尾盘追在反弹第一天、次日回撤。
+# 实测（_r20_weak_surge.py，2014 CSV 全样本 16 笔抄底）：
+#   · 建仓日涨幅区间 −4.40% ~ **+3.76%**，没有一笔超过 4% ⇒ 今天是首次样本外；
+#   · 全局延后一天买入四窗口 −27%/−27%/−14%/−2%，所有分组都是「次日买更差」；
+#   · 2022-04-26 当日买 +14.93% vs 次日买 +6.34%（差 8.59pp）⇒ 抄底吃的就是反弹第一天。
+# ⇒ 不改规则（保持当日买入），只在抄底卡片多显示一行：建仓日涨幅 + 历史基准 + 样本外标注。
+# ⚠️ 这是**截至 2026-10-30 的历史统计基准**，不是策略参数。日后若抄底样本增加，
+#    用 `_r20_weak_surge.py` 重算并更新下面两个常量（不影响任何回测结果）。
+WEAK_HIST_N = 16
+WEAK_HIST_MAX_CHG = 3.76
+
 
 # ---- 三条策略序列的统一配色（2026-10-25 改）----
 # 旧版「红 / 紫 / 品红」三种色相太近（紫 #7b3fe4 与品红 #c2185b 几乎分不开），
@@ -201,6 +213,19 @@ def _wstate_html(ws) -> str:
                 f'{_v:.1f}%</b>'
                 + (f' ≤ 闸门 {_vl:.0f}%' if _vl else '')
                 + ' · 符合入场条件</div>')
+    # ⑤ 建仓日涨幅（2026-11-04 新增，纯展示、零参数）
+    #   超历史最高时标注「样本外」，把信息交给用户自行判断，不改当日买入规则。
+    _surge_row = ""
+    _dc = ws.get("day_chg")
+    if _dc is not None:
+        _over = _dc > WEAK_HIST_MAX_CHG
+        _cls = "wvol surge" if _over else "wvol"
+        _tail = (' · <b>超出历史区间（样本外）</b>，尾盘是否执行自行判断；'
+                 '规则仍为当日买入、次日不补' if _over else ' · 处于历史区间内')
+        _surge_row = (
+            f'<div class="{_cls}">建仓日涨幅 <b>{_dc:+.2f}%</b>'
+            f' · 历史 {WEAK_HIST_N} 笔抄底最高 <b>+{WEAK_HIST_MAX_CHG:.2f}%</b>'
+            + _tail + '</div>')
     return (
         '<div class="wstate">'
         '<div class="whd"><span class="wbadge">🎯 抄底持仓中</span>'
@@ -210,6 +235,7 @@ def _wstate_html(ws) -> str:
         f'{"".join(rows)}'
         f'{_pnl_row}'
         f'{_vol_row}'
+        f'{_surge_row}'
         '<div class="wnote">满足任一出口即换回当日第 1 名；'
         '这是 2026-10-28 起的新口径（旧口径为「亏 3% 由 D3 止损」）。</div>'
         '</div>')
@@ -4331,6 +4357,8 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
   .wvol b{{color:#42474f;font-variant-numeric:tabular-nums}}
   .wvol.over{{color:#8a5312}}
   .wvol.over b{{color:#8a5312}}
+  .wvol.surge{{color:#b45309;font-weight:600}}
+  .wvol.surge b{{color:#b45309}}
   .wskipd{{font-size:10.5px;color:#98a1ad;margin-top:3px;line-height:1.5}}
   /* 闸门明细折叠（2026-11-02）：首屏只留一行结论，历史流水账收进这里 */
   /* 手机上 badge 与正文同行流动（flex 会把 badge 挤到单独一行） */
