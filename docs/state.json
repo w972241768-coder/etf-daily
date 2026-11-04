@@ -1,6 +1,6 @@
 {
  "asof": "2026-11-04",
- "calmar_default": 2.0718471260902276,
+ "calmar_default": 2.069717096041889,
  "cash_proxy": "511010",
  "cash_reason": null,
  "cash_src": null,
@@ -8,12 +8,12 @@
  "def_buy_pct": -3.0,
  "def_code": "512040",
  "def_dev": -0.6687971534938941,
- "gen": "2026-11-04 15:35",
+ "gen": "2026-11-04 09:41",
  "hold_base": "561700",
  "hold_base_name": "电力ETF博时",
- "hold_default": "561700",
- "hold_default_name": "电力ETF博时",
- "nav_default": 9.918804559518819,
+ "hold_default": "159967",
+ "hold_default_name": "创成长ETF",
+ "nav_default": 9.898966950399782,
  "overheat": false,
  "p3_active": false,
  "p3_back": null,
@@ -23,8 +23,8 @@
  "ve2_dev": 4.865789664080489,
  "ve2_holding": true,
  "ve2_zone": "mid",
- "weak_active": false,
- "weak_max_vol": 45.0,
- "weak_n": 15,
- "weak_skip_n": 5
+ "weak_active": true,
+ "weak_max_vol": 50.0,
+ "weak_n": 16,
+ "weak_skip_n": 4
 }
