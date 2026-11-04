@@ -664,7 +664,11 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                     weak_exit_days=bl.LIVE_COMPOSITE.get("weak_exit_days", 0),
                     # 抄底波动率闸门（2026-10-31 接入）：⚠️ 逐项传参必须同步，
                     #   否则 LIVE_COMPOSITE 改了这里不生效、日报静默退回旧口径。
+                    #   🔴 2026-11-04 踩过：改成下行口径时只传了 weak_max_vol=40，
+                    #      漏掉 weak_vol_mode ⇒ 引擎用默认 "total" 算波动率却配 40% 阈值
+                    #      ⇒ 等价于「总波动 40%」，weak_skip_n 从 4 暴增到 23、今日误拦 159967。
                     weak_max_vol=bl.LIVE_COMPOSITE.get("weak_max_vol", 0),
+                    weak_vol_mode=bl.LIVE_COMPOSITE.get("weak_vol_mode", "total"),
                     # 空仓期持国债（2026-11-01 接入）：已并入上面的 kw，此处不再重复传，
                     #   否则 Python 会因重复关键字参数报 TypeError。
                     **kw)
@@ -759,13 +763,24 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             if len(_win) == MA and not _win.isna().any() and _px:
                 _dev = (_px / float(_win.mean()) - 1.0) * 100
             _lim = int(bl.LIVE_COMPOSITE.get("weak_exit_days", 0) or 0)
-            # 60 日年化波动率（2026-10-31 接入波动率闸门后，抄底持仓必须显示它）
+            # 60 日波动率（2026-10-31 接入闸门后，抄底持仓必须显示它）
+            # ⚠️ 2026-11-04：**必须与引擎 LIVE_COMPOSITE.weak_vol_mode 同口径**。
+            #   只改引擎、这里仍算总波动率时，页面会显示「下行波动率 48.7% ＞ 闸门 40%」
+            #   而引擎其实按下行 37% 已放行买入 —— 提示与结论直接打架（今天实测踩过）。
             _v60 = None
             try:
                 _s = panel[_wh].pct_change(fill_method=None)
-                _sd = _s.iloc[max(0, _i1 - 59):_i1 + 1].std()
-                if _sd == _sd:
-                    _v60 = float(_sd) * (252 ** 0.5) * 100
+                _w60 = _s.iloc[max(0, _i1 - 59):_i1 + 1]
+                if bl.LIVE_COMPOSITE.get("weak_vol_mode") == "downside":
+                    # 半方差开方：只统计负收益日，正收益压成 0（保留 NaN 用 clip）
+                    _dn = _w60.clip(upper=0.0)
+                    _v60 = float(np.sqrt((_dn ** 2).mean())) * (252 ** 0.5) * 100
+                else:
+                    _sd = _w60.std()
+                    if _sd == _sd:
+                        _v60 = float(_sd) * (252 ** 0.5) * 100
+                if _v60 != _v60:
+                    _v60 = None
             except Exception:                      # noqa: BLE001
                 _v60 = None
             _vlim = float(bl.LIVE_COMPOSITE.get("weak_max_vol", 0) or 0)

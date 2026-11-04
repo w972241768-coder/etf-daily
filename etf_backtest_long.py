@@ -132,7 +132,17 @@ LIVE_COMPOSITE = dict(
     #   ⚠️ 不要改成「相对自身中位倍数」：588170 中位 42.6%，58.8% 时倍数仅 1.38，
     #     相对口径会把它放进来（而它正是 −15.93% 那笔）；创成长 47.5% 却是 1.58 倍会被拦。
     # 关掉：删掉本行即可（默认 0 = 关闭，逐位等价已验证 maxdiff 0.0）。
-    weak_max_vol=50.0,
+    # ★★ 2026-11-04 再改：总波动 50% → **下行波动 40%**（用户拍板）。
+    #   动机：11-04 创成长 159967 因下午大阳线把总波动从 44.1% 推到 48.7% 被误拦，
+    #     「大涨」被当成「危险」。下行口径（半方差，只统计负收益日）把上涨波动剔除：
+    #     588170 那 3 天 下行 46.2/48.1/46.1%（自身 90 分位）、159967 今天 下行仅 37%。
+    #   ✅ 历史零变化：下行 35/40/45 与总波动 50 在四窗口、IS/OOS、拦截明细上**逐位相同**
+    #     （全窗 38.2355 / MDD −18.60% / C1.77 / 抄底 16 / 拦 588170 那 3 天）。
+    #     ⇒ 这不是「改善」，是「修正度量」：价值在余量（159967 距阈值 3.0pp vs 总口径 1.3pp）。
+    #   ⚠️ 断崖在下行 46.1%：阈值 ≥48.1% 就放行 588170，MDD 崩回 −31.07%；30% 又太紧（拦 21 次）。
+    #   ⚠️ 半方差必须用 clip(upper=0)：where(r<0, 0.0) 会把 NaN 变成 0，中位数会被拉成 0.0%。
+    weak_max_vol=40.0,
+    weak_vol_mode="downside",
     # ---- 空仓期持国债（2026-11-01 用户拍板接入）----
     # 动机：全样本 545 日（17.5%）空仓，现金零收益是纯浪费。
     # 实测（单边万1，生产 CSV 2018-12 起）：全窗 18.5947→19.7361（+6.14%）C2.52→2.57；
@@ -343,6 +353,13 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              #    必须先过全样本 + IS/OOS 再谈接入。
              d3_gate: str = "",          # ""=关 | "ma20"=要求 P>MA20 | "roc5"=要求 ROC5>0
              d3_gate_fb: str = "next",   # "next"=顺延买次名 | "cash"=继续持债
+             # 抄底闸门用哪种波动率（2026-11-04 研究）：
+             #   "total"     = 总波动率（现行口径，std）
+             #   "downside"  = 下行波动率（半方差，只统计负收益日）
+             # 动机：11-04 创成长因下午大涨把总波动率从 44.1% 推到 48.7% 而被误拦 ——
+             #   绝对总波动率把「上涨波动」也当风险。下行口径能把两者分开：
+             #   588170 那 3 天 下行 46~48%（自身 90 分位）、159967 今天 下行仅 37%。
+             weak_vol_mode: str = "total",
 
              weak_exit_ma20: bool = False, weak_exit_days: int = 0,
              weak_exit_pos: bool = False,
@@ -404,8 +421,15 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     if (weak_max_vol and weak_max_vol > 0) or (mom_max_vol and mom_max_vol > 0) \
             or (vol_target and vol_target > 0):
         try:
-            _vol60 = (panel[pool].pct_change(fill_method=None).rolling(60).std()
-                      * (252 ** 0.5) * 100)
+            _ret60 = panel[pool].pct_change(fill_method=None)
+            if weak_vol_mode == "downside":
+                # 下行波动率 = 半方差开方，只统计负收益日；正收益压成 0。
+                # ⚠️ 必须用 clip(upper=0) 而不是 where(r<0, 0.0)：后者会把 NaN 也变成 0，
+                #    早期数据不足时半方差恒为 0、中位数被拉成 0.0%（2026-11-04 踩过）。
+                _dn = _ret60.clip(upper=0.0)
+                _vol60 = np.sqrt((_dn ** 2).rolling(60).mean()) * (252 ** 0.5) * 100
+            else:
+                _vol60 = _ret60.rolling(60).std() * (252 ** 0.5) * 100
         except Exception:                      # noqa: BLE001
             _vol60 = None
     weak_cd_map: dict = {}                # 标的 -> 上次抄底日索引（冷却用）

@@ -191,13 +191,13 @@ def _wstate_html(ws) -> str:
     if _v is not None:
         if _vl and _v > _vl:
             _vol_row = (
-                '<div class="wvol over">60 日波动率 '
+                '<div class="wvol over">60 日下行波动率 '
                 f'<b>{_v:.1f}%</b> ＞ 闸门 {_vl:.0f}%'
                 ' · <b>新口径不会买入本笔</b>，按你的决定继续持到满 '
                 f'{lim or 10} 日</div>')
         else:
             _vol_row = (
-                '<div class="wvol">60 日波动率 <b>'
+                '<div class="wvol">60 日下行波动率 <b>'
                 f'{_v:.1f}%</b>'
                 + (f' ≤ 闸门 {_vl:.0f}%' if _vl else '')
                 + ' · 符合入场条件</div>')
@@ -267,7 +267,7 @@ def _wskip_html(p3, asof: str) -> str:
             '<div class="wstate skip"><div class="whd">'
             '<span class="wbadge skipb">⛔ 波动率闸门</span>'
             f'<b>末位 {html.escape(str(sk.get("code") or ""))} '
-            f'波动率 {_v} ＞ {lim:.0f}% 不抄底</b>{_tail}'
+            f'下行波动率 {_v} ＞ {lim:.0f}% 不抄底</b>{_tail}'
             + (f'<span class="wtip">{_cnt}</span>' if _cnt else "")
             + f'<details class="wskd"><summary>明细</summary>'
               f'<div class="wskipd">{_detail}</div></details>'
@@ -296,6 +296,8 @@ def _migrate_note_html(recent):
             '<div class="migr">'
             '<b>① 10-31：抄底加波动率闸门</b> —— 抄底触发前多一道检查：末位标的'
             '<b>60 日年化波动率须 ≤ 45%</b>，超过就不抄底。'
+            '<span class="dimtxt">（注：11-04 起已升级为「60 日<b>下行</b>波动率 ≤ 40%」，'
+            '只统计下跌日；历史结论不变，仅口径更贴合「别接飞刀」的本意。）</span>'
             '理由是「跌得最狠的往往就是波动最大的」，'
             '历史上 17 笔抄底里只有 1 笔被这道闸门拦下'
             '（2026-10-26 的 588170，波动率 58.5%），'
@@ -492,7 +494,7 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
 {_wr_html}
 <div class="cbsn">{concl}
 <span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；{(f"<b>空仓期均自动转持 {CASH_PROXY} 国债ETF</b>（2026-11-01 起，不再是现金 0 收益）；") if CASH_PROXY else ""}
-抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做{(("、末位 60 日波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0)) + "%") if bl.LIVE_COMPOSITE.get("weak_max_vol", 0) else "")}）。
+抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做{(("、末位 60 日下行波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0)) + "%") if bl.LIVE_COMPOSITE.get("weak_max_vol", 0) else "")}）。
 三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
 </div>
@@ -701,9 +703,10 @@ def _p3_card_html(p3, recent, cost):
   ③ <b>抄底</b>（三道前置条件）：主选池 <b>全部</b> 标的动横20 都为负 ⇒ 当日换持<b>排名最后一名</b>
   （不是倒数第二）；{("同一标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 个交易日内不重复抄底；") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}
   池内可用标的少于 {bl.LIVE_COMPOSITE.get('weak_min_pool', 0)} 只时不做（小池子最弱恒为同一只，会连买暴跌品）；
-  {(("<b>末位标的 60 日年化波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0))
-     + "%</b>，超过则不抄底 —— 抄底买「跌最狠的」，往往就是「波动最大的」，"
-     "历史上 17 笔里仅 588170（58.5%）被此闸门拦下，而它正是唯一两位数亏损那笔。")
+  {(("<b>末位标的 60 日<u>下行</u>波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0))
+     + "%</b>，超过则不抄底 —— 下行波动率<b>只统计下跌日</b>的波动，把「涨出来的波动」剔除，"
+     "所以大涨推高总波动时不会误拦（2026-11-04 起）；"
+     "历史上 17 笔里仅 588170（下行 46.2%）被此闸门拦下，而它正是唯一两位数亏损那笔。")
     if bl.LIVE_COMPOSITE.get("weak_max_vol", 0) else "")}<br>
   {_weak_exit_txt}
   到期都按当日排名第 1 名恢复；只改「多久之后回来」，<b>不改卖出条件、不改选股</b>。
