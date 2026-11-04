@@ -324,6 +324,15 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              # 目的是滤掉低波动期的无效微调 —— 波动率每天只变千分之几，
              # 为 0.3% 的仓位变化来回买卖纯属磨损。
              vol_rebal_min: float = 0.0,
+             # ---- D3 回场门（2026-11-04 研究，默认关）----
+             # 背景：2026-08-31 那次，588170 刚在暴跌中被 D3 换出，5 天后冷却期满，
+             #   因 ROC20 仍含 15~20 天前的暴涨阳线而排第 1，系统买回正在下跌的它 ⇒ −6.55%。
+             # 思路：回场当日除「ROC20 第一」外，还要求头名站上自身 MA20（或 ROC5>0），
+             #   否则视为「前浪余威」，不顺延买它。
+             # ⚠️ 样本极小（18 次 D3 回场里满足条件的只有个位数），过拟合风险高，
+             #    必须先过全样本 + IS/OOS 再谈接入。
+             d3_gate: str = "",          # ""=关 | "ma20"=要求 P>MA20 | "roc5"=要求 ROC5>0
+             d3_gate_fb: str = "next",   # "next"=顺延买次名 | "cash"=继续持债
 
              weak_exit_ma20: bool = False, weak_exit_days: int = 0,
              weak_exit_pos: bool = False,
@@ -399,6 +408,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     cool_until = -1                      # 冷却到期日（含），仅 loss_cool 开启时用
     cools: List[dict] = []               # 冷却事件明细
     cool_days_n = 0
+    d3_gate_hits = 0                     # D3 回场门拦下的次数（研究用）
     roc_hold = roc_pct = roc_val = None
     if roc_q is not None:
         roc_hold, roc_pct, roc_val, _roc_thr = roc_head_state(
@@ -569,6 +579,37 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                             name=NAMES.get(held, held), ret=round(_cr * 100, 2),
                             until=str(dates[cool_until].date()),
                             days=int(np.searchsorted(dates, dates[cool_until]) - i)))
+            # ---- D3 回场门（2026-11-04 研究）：冷却期满当日，新头名若「仍在 MA20 下方」
+            #      或「近 5 日仍下跌」，视为前浪余威未消，不顺延买它。
+            #      ⚠️ 只在 i == cool_until 这一天生效；换仓日已由上面的 D3 触发分支处理。
+            if (d3_gate and i == cool_until and target != "CASH"
+                    and target in panel.columns):
+                _gp = panel[target].iloc[i]
+                _gok = True
+                try:
+                    if d3_gate == "ma20":
+                        _gma = panel[target].rolling(MA).mean().iloc[i]
+                        _gok = (not pd.isna(_gp)) and (not pd.isna(_gma)) \
+                            and float(_gp) > float(_gma)
+                    elif d3_gate == "roc5":
+                        if i >= 5:
+                            _g5 = panel[target].iloc[i - 5]
+                            _gok = (not pd.isna(_gp)) and (not pd.isna(_g5)) \
+                                and float(_gp) > float(_g5)
+                        else:
+                            _gok = True
+                except Exception:                  # noqa: BLE001
+                    _gok = True
+                if not _gok:
+                    _g_rk = sig["rank"]
+                    if d3_gate_fb == "cash" or len(_g_rk) < 2:
+                        target = "CASH"
+                        note_cool = " | 回场门:头名未站上均线 → 继续持债"
+                    else:
+                        target = _g_rk[1]
+                        note_cool = (f" | 回场门:头名 {_g_rk[0]} 未站上均线"
+                                     f" → 顺延 {_g_rk[1]}")
+                    d3_gate_hits += 1
             # ---- P3 追高止盈：头名 ROC(n) 进自身滚动 q 分位 -> 空仓 roc_days 日 ----
             # 与 D3 独立判定、独立计时；目标持仓优先级 D3 > P3（D3 已置 CASH 时不再覆盖）
             if roc_q is not None and _wt is None and held != "CASH" \
@@ -911,7 +952,8 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 weak_skips=weak_skips,
                 mom_skips=mom_skips,
                 vol_rebal_n=int(vol_rebal_n),
-                vol_rebal_cost=float(vol_rebal_cost))
+                vol_rebal_cost=float(vol_rebal_cost),
+                d3_gate_hits=int(d3_gate_hits))
 
 
 def bench_curve(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int,
