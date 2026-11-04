@@ -310,6 +310,20 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              # 科创半导体暴跌起点 ⇒ mom_max_vol 给「换入新头名」补上同一道闸。
              mom_max_vol: float = 0.0,
              mom_fallback: str = "cash",   # "cash"=转入空仓 | "hold"=保持原仓不动
+             # ---- 目标波动率配权（2026-11-04 研究，默认 0 = 完全关闭）----
+             # 机构 CTA 的 Inverse-Vol Sizing：w = min(100%, σ_target / σ60)，
+             # 余下 1−w 持 cash_proxy（国债）。与 0/1 硬闸门相比没有「84% 满仓 / 86% 空仓」
+             # 的阈值悬崖 —— 波动越高仓位越低，是连续的。
+             # ⚠️ 与 pos_frac（半仓补仓）互斥，不要同时开。
+             vol_target: float = 0.0,
+             # 配权重算频率（2026-11-04 对照实验）：
+             #   "lock"  = 建仓日按当日 σ60 定 w，持有期内锁定（零调仓成本，默认）
+             #   "daily" = 每个交易日按当日 σ60 重算 w，按 |Δw|×(buy+sell) 扣调仓摩擦
+             vol_rebal: str = "lock",
+             # daily 模式下的「调仓死区」：|Δw| 小于该值就不动（默认 0 = 每次变都调）。
+             # 目的是滤掉低波动期的无效微调 —— 波动率每天只变千分之几，
+             # 为 0.3% 的仓位变化来回买卖纯属磨损。
+             vol_rebal_min: float = 0.0,
 
              weak_exit_ma20: bool = False, weak_exit_days: int = 0,
              weak_exit_pos: bool = False,
@@ -358,6 +372,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                if value_engine else None)
     entry_px: Optional[float] = None     # 当前持仓的建仓价（收盘口径）
     pos_w = 1.0                          # 当前实际投入比例（仅 pos_frac 开启时可能 <1）
+    w_prev: Optional[float] = None        # 上一日的目标仓位（vol_rebal="daily" 用）
+    vol_rebal_n = 0                       # 每日重算模式下实际发生的调仓次数
+    vol_rebal_cost = 0.0                  # 这些调仓累计扣掉的摩擦成本（小数）
     pending_weak: Optional[str] = None    # 抄底模型的「次日买入」待执行标的
     weak_events: List[dict] = []          # 抄底触发明细（研究用）
     weak_skips: List[dict] = []           # 被波动率闸门拦下的抄底（日报展示用，2026-10-31）
@@ -365,7 +382,8 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     # 2026-11-03：mom_max_vol（动量买入闸门）也需要同一张矩阵 ⇒ 一并触发预计算。
     mom_skips: List[dict] = []            # 被动量波动率闸门拦下的换入（研究用）
     _vol60 = None
-    if (weak_max_vol and weak_max_vol > 0) or (mom_max_vol and mom_max_vol > 0):
+    if (weak_max_vol and weak_max_vol > 0) or (mom_max_vol and mom_max_vol > 0) \
+            or (vol_target and vol_target > 0):
         try:
             _vol60 = (panel[pool].pct_change(fill_method=None).rolling(60).std()
                       * (252 ** 0.5) * 100)
@@ -776,6 +794,17 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             # 新建仓时设定投入比例：pos_frac=None ⇒ 满仓（与旧版逐位一致）
             pos_w = (pos_frac if (pos_frac is not None and target != "CASH")
                      else 1.0)
+            # ★ 目标波动率配权（2026-11-04）：w = min(1, σ_target / σ60)，建仓日锁定。
+            #   只在换仓那一刻定 w、持有期内不变 ⇒ 零额外调仓成本（与实盘一致：
+            #   不会为了把 w 从 0.62 调到 0.64 而每天买卖）。
+            if (vol_target and vol_target > 0 and target != "CASH"
+                    and _vol60 is not None):
+                try:
+                    _vt = float(_vol60.at[dates[i], target])
+                except Exception:                  # noqa: BLE001
+                    _vt = None
+                if _vt is not None and _vt == _vt and _vt > 0:
+                    pos_w = min(1.0, float(vol_target) / _vt)
         ret = 0.0
         # ★★ 成交时点（2026-11-01 二次修正）：买卖必须同一时刻。
         # 旧实现只算新仓 open_T1→close_T1，漏了旧仓 close_T→open_T1 的隔夜跳空
@@ -821,7 +850,44 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             _apx = panel[held].iloc[i]
             if not pd.isna(_apx) and _apx / entry_px - 1.0 <= -add_drop:
                 pos_w = 1.0
-        nav *= (1.0 + pos_w * ret)
+        # ★ 每日重算模式（2026-11-04 对照）：每个交易日按**当日** σ60 重算 w，
+        #   并按 |Δw|×(buy+sell) 扣调仓摩擦（真实调仓要买卖两边，按双边计）。
+        #   换仓日已由上面的 switched 分支定好 pos_w 且已扣 buy+sell，这里不重复扣。
+        if (vol_rebal == "daily" and vol_target and vol_target > 0
+                and target != "CASH" and _vol60 is not None):
+            try:
+                _vd = float(_vol60.at[dates[i], target])
+            except Exception:                      # noqa: BLE001
+                _vd = None
+            if _vd is not None and _vd == _vd and _vd > 0:
+                _w_new = min(1.0, float(vol_target) / _vd)
+                _band = max(1e-6, float(vol_rebal_min or 0.0))
+                if (not switched) and w_prev is not None:
+                    _dw = abs(_w_new - w_prev)
+                    if _dw > _band:
+                        nav *= (1.0 - _dw * (buy + sell))
+                        vol_rebal_n += 1
+                        vol_rebal_cost += _dw * (buy + sell)
+                        pos_w = _w_new
+                    else:
+                        pos_w = w_prev        # 落在死区内 ⇒ 维持原仓位，不产生交易
+                else:
+                    pos_w = _w_new
+            w_prev = pos_w
+        # ★ 部分仓位收益合成（2026-11-04）：w 投 ETF、(1−w) 持国债。
+        #   ⚠️ 必须用临时变量 _w_eff，**不能改 pos_w 本身** —— pos_w 是「当前仓位状态」，
+        #      持有期内要一直保留（lock 模式锁定、daily 模式作下一日的 w_prev）。
+        #      第一版写成 `pos_w = 1.0` 合成完就清零，导致 lock 实际变成
+        #      「只在建仓当天缩仓、次日就恢复满仓」，与设计完全不符（2026-11-04 自查发现）。
+        _w_eff = pos_w
+        if (pos_w < 1.0 and target != "CASH"
+                and cash_proxy and cash_proxy in panel.columns):
+            _q0 = panel[cash_proxy].iloc[i]
+            _q1 = panel[cash_proxy].iloc[i + 1]
+            if not pd.isna(_q0) and not pd.isna(_q1) and _q0 != 0:
+                ret = pos_w * ret + (1.0 - pos_w) * (float(_q1) / float(_q0) - 1.0)
+                _w_eff = 1.0                   # 已合成完毕，下面不再乘
+        nav *= (1.0 + _w_eff * ret)
         held = target
         prev_eff = eff_head
         avail_log.append((dates[i + 1], len(sig["rank"])))
@@ -843,7 +909,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 weak_entry_px=weak_entry_px,
                 gate_days=gate_days_n, gate_trig=gate_trig_n,
                 weak_skips=weak_skips,
-                mom_skips=mom_skips)
+                mom_skips=mom_skips,
+                vol_rebal_n=int(vol_rebal_n),
+                vol_rebal_cost=float(vol_rebal_cost))
 
 
 def bench_curve(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int,
