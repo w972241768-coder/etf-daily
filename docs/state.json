@@ -8,7 +8,7 @@
  "def_buy_pct": -3.0,
  "def_code": "512040",
  "def_dev": -0.6687971534938941,
- "gen": "2026-11-04 10:07",
+ "gen": "2026-11-04 10:34",
  "hold_base": "561700",
  "hold_base_name": "电力ETF博时",
  "hold_default": "159967",
@@ -24,7 +24,7 @@
  "ve2_holding": true,
  "ve2_zone": "mid",
  "weak_active": true,
- "weak_max_vol": 40.0,
+ "weak_max_vol": 45.0,
  "weak_n": 16,
  "weak_skip_n": 4
 }
