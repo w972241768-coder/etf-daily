@@ -267,7 +267,7 @@ def _wskip_html(p3, asof: str) -> str:
             '<div class="wstate skip"><div class="whd">'
             '<span class="wbadge skipb">⛔ 波动率闸门</span>'
             f'<b>末位 {html.escape(str(sk.get("code") or ""))} '
-            f'波动率 {_v} ＞ {lim:.0f}% 不抄底{_tail}</b>'
+            f'波动率 {_v} ＞ {lim:.0f}% 不抄底</b>{_tail}'
             + (f'<span class="wtip">{_cnt}</span>' if _cnt else "")
             + f'<details class="wskd"><summary>明细</summary>'
               f'<div class="wskipd">{_detail}</div></details>'
@@ -2641,7 +2641,7 @@ def _vol_source_df(df):
         cur["date"] = pd.to_datetime(cur["date"])
         cur["code"] = cur["code"].astype(str)
         cut = cur["date"].min()
-        base = None
+        full = None                     # 完整长表（含与 cur 的重叠期，用于求缩放比）
         for cand in ("tdx_adj_long_2014_2026.csv", "tdx_adj_long_2019_2026.csv"):
             path = os.path.join(HERE, cand)
             if not os.path.exists(path):
@@ -2650,11 +2650,40 @@ def _vol_source_df(df):
                 continue
             ld = pd.read_csv(path, dtype={"code": str})
             ld["date"] = pd.to_datetime(ld["date"].astype(str), format="%Y%m%d")
-            base = ld.loc[ld["date"] < cut, ["date", "code", "close"]]
+            full = ld[["date", "code", "close"]]
             break                       # 只用第一份可用的（2014 优先）
-        if base is None or base.empty:
+        if full is None or full.empty:
             return cur
-        return pd.concat([base, cur], ignore_index=True)
+        # ★★ 2026-11-04 修（专家审查指出）：长 CSV 与当期 df 的**复权基准可能不同**，
+        #   硬拼接会在接缝处留一个跳空，而 60 日滚动波动率正好跨过它 ⇒ 波动率被污染。
+        #   实测重叠期比值：多数标的恰好 1.0000（完全一致），但 510300 达 1.0255±0.023、
+        #   511010 达 1.0195±0.011；588170 更极端（份额折算，2025-04~2026-04 恒为 3.00）。
+        #   做法：按 code 用**完整长表与 cur 的重叠期**求比值中位数，把待拼接段缩放到 cur 的基准；
+        #   比值偏离 [0.5, 2.0] 之外视为数据不可信，该标的直接放弃长历史（宁短勿错）。
+        #   ⚠️ 踩过的坑：若拿「已过滤成 date<cut 的 base」去和 cur 求交，交集恒为空 ⇒
+        #      比值恒 1.0、缩放静默失效。必须用未过滤的 full 求比值。
+        scaled = []
+        for code, g in full.groupby("code"):
+            b_all = g.set_index("date")["close"].astype(float)
+            c = cur.loc[cur["code"] == code].set_index("date")["close"].astype(float)
+            j = b_all.index.intersection(c.index)
+            ratio = 1.0
+            if len(j) >= 5:
+                r = (c[j] / b_all[j]).replace([np.inf, -np.inf], np.nan).dropna()
+                if len(r) >= 5:
+                    ratio = float(r.median())
+            if not (ratio == ratio) or ratio <= 0 or not (0.5 <= ratio <= 2.0):
+                continue                # 比值离谱 ⇒ 该标的不拼长历史
+            b = b_all[b_all.index < cut]
+            if b.empty:
+                continue
+            if abs(ratio - 1.0) > 1e-9:
+                b = b * ratio
+            scaled.append(pd.DataFrame({"date": b.index, "code": code,
+                                        "close": b.values}))
+        if not scaled:
+            return cur
+        return pd.concat(scaled + [cur], ignore_index=True)
     except Exception:                   # noqa: BLE001
         return df
 
@@ -3329,7 +3358,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                               last=(ve2_curve or {}).get("last_hold_days"),
                               live=(ve2_curve or {}).get("last_hold_live", False)))
             + (f'<div class="gidxnote {_tnote_cls}">{_tnote}</div>' if _tnote else "")
-            + (f'<div class="tvcdx">最近买入 {_lb}、{_ls}</div>'))
+            + (f'<div class="tvcdx">{_lb}、{_ls}</div>'))
         # 表格形态（仅在需要并进主表时使用，例如过热熔断期）
         _trow = (
             f"<tr class='tvmk {_tact_cls}'><td class='mono'>{_t['code']}</td>"
@@ -3805,10 +3834,26 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         wcol_txt = "、".join(
             f"横{n}:{sorted(watch, key=lambda r: r.momentum.get(n, -9e9), reverse=True)[0].code}"
             for n in cols)
-        winfo_txt = "<br>".join(html.escape(x) for x in (info_watch or [])) or "（无）"
+        # ★ 2026-11-04：备选池这 15 行 `[OK] xxx 481根` 默认收起（页头已有绿标），
+        #   有任何 FAIL/MISSING 则强制平铺。与主选池 ④ 节同一套规则。
+        _wok = [x for x in (info_watch or []) if str(x).startswith("[OK]")]
+        _wother = [x for x in (info_watch or []) if not str(x).startswith("[OK]")]
+        _wbad = any(("FAIL" in str(x)) or ("MISSING" in str(x)) for x in (info_watch or []))
+        if _wok and not _wbad:
+            _wh = "<br>".join(html.escape(x) for x in _wother)
+            _wfold = (f'<details style="margin-top:2px"><summary style="cursor:pointer;'
+                      f'color:#6c717f">✅ 数据源 {len(_wok)} 只全部正常'
+                      f'（点击展开明细）</summary>'
+                      f'<div style="margin-top:6px">'
+                      + "<br>".join(html.escape(x) for x in _wok)
+                      + '</div></details>')
+            winfo_txt = (_wh + _wfold) if _wh else _wfold
+        else:
+            winfo_txt = ("<br>".join(html.escape(x) for x in (info_watch or []))
+                         or "（无）")
         watch_block = f"""
 <div class="sep"></div>
-<h2 class="wh2">⑥ 备选观察池（{len(watch)} 只 · 不参与调仓，仅供"更替候选"参考）</h2>
+<h2 class="wh2">⑤ 备选观察池（{len(watch)} 只 · 不参与调仓，仅供"更替候选"参考）</h2>
 <div class="note" style="margin-bottom:10px">
 <b>本节与上面的主选池完全独立</b>：备选标的<b>不进入排名、不参与任何换仓判定</b>，
 只用来看它们的动量水位，判断有没有出现值得纳入主选池的标的。<br>
@@ -3980,7 +4025,23 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
      recent["d3"] 仍照常计算并保留在净值曲线里，只是不单独成卡。 -->
 """
 
-    info_txt = "<br>".join(html.escape(x) for x in info)
+    # ★ 2026-11-04：数据源全部正常时，把 26 行 `[OK] xxx 2733天 缺失0` 收进折叠条 ——
+    #   页头已有绿标「数据正常 · 截至 X」，平铺 26 行纯属噪音（用户多次提「不要臃肿」）。
+    #   · 任何 [FAIL] / [MISSING] 出现 ⇒ 强制全平铺展开；
+    #   · 非 [OK] 行（[指数口径] / [策略二回测] / [波动] 等）始终平铺，不藏。
+    _ok_lines = [x for x in info if str(x).startswith("[OK]")]
+    _other_lines = [x for x in info if not str(x).startswith("[OK]")]
+    _has_bad = any(("FAIL" in str(x)) or ("MISSING" in str(x)) for x in info)
+    if _ok_lines and not _has_bad:
+        _ok_body = "<br>".join(html.escape(x) for x in _ok_lines)
+        _head = "<br>".join(html.escape(x) for x in _other_lines)
+        _fold = (f'<details style="margin-top:2px"><summary style="cursor:pointer;'
+                 f'color:#6c717f">✅ 数据源 {len(_ok_lines)} 只全部正常'
+                 f'（点击展开明细）</summary>'
+                 f'<div style="margin-top:6px">{_ok_body}</div></details>')
+        info_txt = (_head + _fold) if _head else _fold
+    else:
+        info_txt = "<br>".join(html.escape(x) for x in info)
     _fs_stale, _fs_txt = freshness
     fresh_cls = "fresh stale" if _fs_stale else "fresh"
     _lv_on, _lv_txt = live
@@ -4816,7 +4877,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
 {_migrate_note_html(recent)}
 </section>
 
-<div class="lead">以下为主选池结论（第 ① ~ ⑤ 节），备选观察池在报告末尾第 ⑥ 节、与主选池完全独立。
+<div class="lead">以下为主选池结论（第 ① ~ ④ 节，含 📌 实盘跟踪 / 🛡 防守位 / 📈 策略二 三个子块），备选观察池在报告末尾第 ⑤ 节、与主选池完全独立。
 <details class="lgd"><summary>📖 表格字段与图例说明</summary>
 <div class="lgdb"><span class="dimtxt">① 排名表按 <b>动横{window}</b> 降序；
 <span style="color:{RED}">红</span>为涨、<span style="color:{GREEN}">绿</span>为跌；
@@ -4947,17 +5008,42 @@ box-shadow:0 3px 10px rgba(61,87,229,.38)}
   window.rfToggle=function(){var p=el("rfPanel");p.style.display=p.style.display==="none"?"block":"none";};
   var saved=localStorage.getItem("rfGhToken");
   if(saved){el("rfToken").value=saved;el("rfToken").placeholder="已保存（可留空直接刷新）";}
+  // ★ 2026-11-04：原来是死等 180 秒再 reload（云端通常 50~90 秒就好了，白等 2 分钟；
+  //   超过 3 分钟时又刷到旧页面）。改为轮询 state.json 的 gen 字段，一变就刷。
+  var baseGen=(el("rfGen").textContent||"").replace(/^.*?：/,"").trim();
+  function pollGen(){
+    var t0=Date.now(), done=false;
+    var tick=setInterval(function(){
+      var s=Math.round((Date.now()-t0)/1000);
+      if(done)return;
+      st.innerHTML="⏳ 云端计算中（已用 "+s+" 秒）…";
+      if(s>=200){done=true;clearInterval(tick);clearInterval(chk);
+        st.innerHTML="⚠️ 超过 200 秒仍未完成，请稍后手动刷新本页，或到 Actions 看运行日志。";}
+    },1000);
+    var chk=setInterval(function(){
+      if(done)return;
+      if(Date.now()-t0<35000)return;              // 前 35 秒不查，避免刚触发就命中旧文件
+      fetch("state.json?t="+Date.now(),{cache:"no-store"}).then(function(r){return r.json();})
+        .then(function(j){
+          if(done||!j||!j.gen)return;
+          if(baseGen && j.gen===baseGen)return;   // 还没更新
+          done=true;clearInterval(tick);clearInterval(chk);
+          st.innerHTML="✅ 已更新（"+j.gen+"），正在刷新…";
+          setTimeout(function(){location.reload();},700);
+        }).catch(function(){});
+    },10000);
+  }
   function run(){
     var tok=el("rfToken").value.trim()||localStorage.getItem("rfGhToken")||"";
     var st=el("rfStatus");
     if(!tok){st.textContent="请先粘贴 GitHub Token。";return;}
-    st.textContent="正在触发刷新，GitHub 云端约 2~3 分钟后重算完成，届时刷新本页即可。";
+    st.textContent="正在触发刷新…";
     fetch("https://api.github.com/repos/"+REPO+"/actions/workflows/"+WF+"/dispatches",{
       method:"POST",
       headers:{"Authorization":"token "+tok,"Accept":"application/vnd.github+json","Content-Type":"application/json"},
       body:JSON.stringify({ref:REF})
     }).then(function(r){
-      if(r.status===204){st.innerHTML="✅ 已触发！<b>约 2~3 分钟后</b>本页会自动刷新（或手动刷新）。";setTimeout(function(){location.reload();},180000);}
+      if(r.status===204){st.innerHTML="✅ 已触发，正在等待云端完成…";pollGen();}
       else if(r.status===401||r.status===403){st.textContent="❌ Token 无效或无权限（需 repo 权限）。";}
       else{st.textContent="⚠️ 返回状态 "+r.status+"，可能已触发或受限，请稍后看本页是否更新。";}
     }).catch(function(e){
@@ -5410,6 +5496,12 @@ def main():
             p3_active=bool(_p3.get("active")),
             p3_remain=_p3.get("remain"),
             p3_back=_p3.get("back"),
+            # ★ 2026-11-04：空仓原因必须一起落盘 —— p3_active 只表示「空仓中」，
+            #   不区分 D3 止损 / P3 止盈 / 防守期持币。notify 若只看 p3_active，
+            #   会把 D3 止损误报成「P3 追高止盈触发」并带上过期的回场日。
+            cash_src=_p3.get("cash_src"),
+            cash_reason=_p3.get("cash_reason"),
+            cash_until=_p3.get("cash_until"),
             # 抄底模块：weak_active=今日持仓由抄底产生；weak_n=窗口内触发总次数
             weak_active=bool(_p3.get("weak_active")),
             weak_n=_p3.get("weak_n"),

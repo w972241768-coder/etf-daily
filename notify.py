@@ -96,13 +96,26 @@ def diff_events(old, new):
     if bool(old.get("overheat")) != bool(new.get("overheat")):
         ev.append(("过热熔断" + ("触发 → 切防守" if new.get("overheat") else "解除 → 切回轮动"), []))
 
-    # ③ P3 追高止盈 新触发
+    # ③ 空仓冷却触发（2026-11-04 修：必须按 cash_src 区分，否则 D3 会被报成 P3）
+    #   背景：p3_active 只表示「当前空仓中」，含 D3 止损 / P3 止盈 / 防守期持币三种。
+    #   原实现一律按 P3 出文案，D3 止损时会推送「P3 追高止盈触发 · 约 2026-07-01 回场」
+    #   这种假消息（回场日取自上一次 P3 事件）。
     if new.get("p3_active") and not old.get("p3_active"):
+        _cs = new.get("cash_src")
         _r = new.get("p3_remain")
-        ev.append(("P3 追高止盈触发 → 空仓",
-                   [f"头名 ROC60 进入自身历史 95 分位"
-                    + (f"，还剩 {_r} 个交易日" if _r else "")
-                    + (f"，约 {new.get('p3_back')} 回场" if new.get("p3_back") else "")]))
+        _bk = new.get("p3_back")
+        _tail = ((f"，还剩 {_r} 个交易日" if _r else "")
+                 + (f"，约 {_bk} 回场" if _bk else ""))
+        _why = new.get("cash_reason") or ""
+        if _cs == "D3":
+            ev.append(("D3 单笔止损触发 → 空仓",
+                       [(f"{_why}{_tail}" if _why else f"换出亏损达阈值{_tail}")]))
+        elif _cs == "P3":
+            ev.append(("P3 追高止盈触发 → 空仓",
+                       [f"头名 ROC60 进入自身历史 95 分位{_tail}"]))
+        else:
+            ev.append(("转入空仓",
+                       [(f"{_why}{_tail}" if _why else f"规则要求空仓{_tail}")]))
 
     # ④ 512040 价值引擎穿越买线（默认 −3%）
     _o, _n = old.get("def_dev"), new.get("def_dev")

@@ -36,6 +36,11 @@ CANDIDATE_ADJ = [
 BENCH_CODE = "000001"          # 上证指数
 BASE_DATE = "2019-12-31"       # 与长周期回测保持一致的基点
 
+# 空仓段的显示名（2026-11-04 统一）：生产口径把 CASH 段换持国债 ETF，
+# 页面上再写「持币」会与「持币却亏 -0.18%」自相矛盾。全模块只此一处定义。
+CASH_NAME = ((f"{bl.LIVE_COMPOSITE.get('cash_proxy')} 国债(空仓)")
+             if (bl is not None and bl.LIVE_COMPOSITE.get("cash_proxy")) else "持币")
+
 
 def find_adj_csv(explicit: Optional[str] = None):
     """在候选位置里挑数据最新的前复权 CSV。返回 (path, data_end_str) 或 (None, None)。"""
@@ -399,7 +404,7 @@ def recent_rotation_pnl(*, pool: List[str], defensive: Optional[str], n: int = 3
                     calmar=_sm["calmar"], trades_n=len(_rm["trades"]),
                     weak_n=len(_rm.get("weak_events") or []),
                     hold=_cur,
-                    hold_name=("持币" if _cur == "CASH" else bl.NAMES.get(_cur, _cur)),
+                    hold_name=(CASH_NAME if _cur == "CASH" else bl.NAMES.get(_cur, _cur)),
                     capital=mine_capital,
                 )
             else:
@@ -556,8 +561,7 @@ def _d3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     n_days_all = max(1, len(navs) - 1)
     # 2026-11-03：空仓段实际持国债 ETF，显示成「持币」会让第 ② 节出现
     # 「持币却亏了 -0.18%」的自相矛盾（那 -0.18% 是国债涨跌 + 换仓成本）。
-    _cash_nm = (f"{bl.LIVE_COMPOSITE.get('cash_proxy')} 国债(空仓)"
-                if bl.LIVE_COMPOSITE.get("cash_proxy") else "持币")
+    _cash_nm = CASH_NAME
 
     return dict(
         ok=True, thr=D3_THR, days=D3_DAYS,
@@ -925,14 +929,30 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     last = rc[-1] if rc else None
     active = (hold == "CASH")
     remain, back = None, None
-    if active and last is not None:
-        try:
-            i_asof = int(dates.searchsorted(pd.Timestamp(asof), side="left"))
-            i_back = int(dates.searchsorted(pd.Timestamp(last["until"]), side="left"))
-            remain = max(0, i_back - i_asof)
-            back = last["until"]
-        except Exception:                              # noqa: BLE001
-            remain = None
+    if active:
+        # ⚠️ 2026-11-04 修（专家审查指出的通知乌龙）：
+        #   原来无条件用 `rc[-1]`（**只含 P3 事件**）算回场日 —— 一旦当天是 **D3 止损空仓**，
+        #   rc 里根本没有对应事件，却会把上一次 P3 的 until（可能是几个月前）当回场日，
+        #   notify 于是推送「P3 追高止盈触发 · 约 2026-07-01 回场（剩 0 交易日）」这种假消息。
+        #   改为以 cash_src / cash_until 为准（上面 698~722 已区分 D3 / P3）。
+        _until = cash_until if cash_src in ("D3", "P3") else None
+        if _until:
+            try:
+                i_asof = int(dates.searchsorted(pd.Timestamp(asof), side="left"))
+                i_back = int(dates.searchsorted(pd.Timestamp(_until), side="left"))
+                remain = max(0, i_back - i_asof)
+                back = _until
+            except Exception:                          # noqa: BLE001
+                remain = None
+        elif cash_src == "P3" and last is not None:
+            # 回退：P3 且 until 被虚拟行截断（cash_until 为 None）时仍用 last
+            try:
+                i_asof = int(dates.searchsorted(pd.Timestamp(asof), side="left"))
+                i_back = int(dates.searchsorted(pd.Timestamp(last["until"]), side="left"))
+                remain = max(0, i_back - i_asof)
+                back = last["until"]
+            except Exception:                          # noqa: BLE001
+                remain = None
     cool_days = int(sum(c["days"] for c in rc))
     n_days_all = max(1, len(navs) - 1)
 
@@ -1046,7 +1066,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
                    since=str(_d5.index[0].date()), days=len(_d5))
 
     def _hname(h):
-        return "持币" if h == "CASH" else bl.NAMES.get(h, h)
+        return CASH_NAME if h == "CASH" else bl.NAMES.get(h, h)
 
     return dict(
         ok=True, q=P3_Q, days=P3_DAYS, n=P3_N,
@@ -1074,7 +1094,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         cash_until=cash_until, cash_ret=cash_ret, cash_note=cash_note,
         weak_state=weak_state,
         prev_hold=prev_hold,
-        prev_hold_name=("持币" if prev_hold == "CASH"
+        prev_hold_name=(CASH_NAME if prev_hold == "CASH"
                         else (bl.NAMES.get(prev_hold, prev_hold) if prev_hold else None)),
         last=[dict(date=c["date"],
                    head=c.get("head"), head_name=c.get("head_name"),
