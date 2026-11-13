@@ -366,7 +366,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              weak_vol_mode: str = "total",
 
              weak_exit_ma20: bool = False, weak_exit_days: int = 0,
-             weak_exit_pos: bool = False,
+             weak_exit_pos: bool = False, weak_exit_trail: float = 0.0,
              pos_frac: Optional[float] = None,
              add_drop: float = 0.01,
              # 成交时点审计（2026-11-01 专家第四轮）：
@@ -448,6 +448,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     weak_hold: Optional[str] = None
     weak_hold_i: int = -1
     weak_entry_px: Optional[float] = None
+    weak_peak_px: Optional[float] = None   # 持有期最高收盘（weak_exit_trail 用）
     weak_exit_log: List[dict] = []        # 抄底退出事件明细（研究用）
     cool_until = -1                      # 冷却到期日（含），仅 loss_cool 开启时用
     cools: List[dict] = []               # 冷却事件明细
@@ -525,7 +526,8 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
             #   —— 否则 D3 的 3% 会在第 2 天就把它清掉，永远走不到 MA20 / 满N日 那两条出口。
             _wlock = bool(weak_mode is not None
                           and (weak_exit_ma20 or (weak_exit_days or 0) > 0
-                               or weak_exit_pos))
+                               or weak_exit_pos
+                               or (weak_exit_trail and weak_exit_trail > 0)))
             _wt = None
             if _wlock and weak_hold is not None:
                 _ex = None
@@ -548,6 +550,18 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                             _pos_ok = False
                     if _pos_ok:
                         _ex = "轮动转正"
+                # ★ 跟踪离场（2026-11-13 研究，默认关闭）：持有期最高收盘回撤 X% 即离场，
+                #   释放后回到正常轮动（换回当日头名）。与另三条出口是「任一成立」关系。
+                if (_ex is None and weak_exit_trail and weak_exit_trail > 0
+                        and _c in panel.columns):
+                    _pi = panel[_c].iloc[i]
+                    if _pi == _pi:
+                        if weak_peak_px is None or float(_pi) > weak_peak_px:
+                            weak_peak_px = float(_pi)
+                        if (weak_peak_px > 0
+                                and (float(_pi) / weak_peak_px - 1.0) * 100
+                                <= -weak_exit_trail):
+                            _ex = f"跟踪回撤{weak_exit_trail:.0f}%"
                 if _ex:
                     _pnl = None
                     if (weak_entry_px and _c in panel.columns
@@ -560,6 +574,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                         days=int(i - weak_hold_i), ret=_pnl))
                     weak_hold = None
                     weak_entry_px = None
+                    weak_peak_px = None
                 else:
                     _wt = _c                          # 继续锁定持有
             # ★ weak_first_d3：先算「抄底今天会买什么」，再判 D3 的「是否真的换出」。
@@ -777,6 +792,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                                     if (_weak in panel.columns
                                         and not pd.isna(panel[_weak].iloc[i]))
                                     else None)
+                                weak_peak_px = weak_entry_px
                             note_cool = ((note_cool + f" | 抄底{_weak}") if note_cool
                                          else f" | 抄底{_weak}")
                         else:
