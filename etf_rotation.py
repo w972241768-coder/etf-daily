@@ -2205,6 +2205,175 @@ def _ve_merged_series(df, code, ma=200):
     return s, notes
 
 
+# ---------------------------------------------------------------- 参考信号：同指数合成中位数
+# 用户 2026-11-15 要求：策略二卡片并列展示「合成信号」，供人工共同判断。
+# ★ 铁律：本模块只产出【展示数据】，绝不参与 build_ve_track / build_ve_curve /
+#   轮动状态机 / 任何调仓决策。取数失败一律返回 None，不影响主流程。
+# ★ 口径：腾讯 fqkline 前复权（生产自洽、可每日自动更新）。
+#   与研究看板 out/div_etf_20261114/signals.csv（新浪不复权 + F10 分红表还原）
+#   在有分红的克隆除息日附近可能有 ≤0.24pp 偏离差，临界处会改变状态判定；
+#   页面已标注，本页以腾讯生产口径为准，研究快照仅作历史参照。
+SYNTH_CLONES = ["512890", "563020", "159547", "560150", "159525",
+                "563690", "560730"]
+SYNTH_BARS = 480
+SYNTH_MA = 200
+
+
+def build_synth_med_signal(*, ma=SYNTH_MA, bars=SYNTH_BARS,
+                           buy=VE_TRACK_BUY, sell=VE_TRACK_SELL):
+    """同指数 7 只 ETF 日收益中位数合成价 → MA200 偏离与状态机（仅展示）。
+
+    返回 dict 或 None。字段与 build_ve_track 同规格，便于并排渲染。
+    ⚠ 该状态机是「参考口径」，与生产策略二的判定完全隔离。
+    """
+    try:
+        import online_data as od
+        res = od.fetch_tencent_raw(SYNTH_CLONES, datalen=bars)
+        raw = res.get("df")
+        if raw is None or raw.empty:
+            return None
+        raw = raw.copy()
+        raw["date"] = pd.to_datetime(raw["date"])
+        wide = raw.pivot(index="date", columns="code", values="close").sort_index()
+        if "512890" not in wide.columns:
+            return None
+        # ★ 日历必须以【执行标的 512890 自身】为准，不能用 7 只的并集：
+        #   克隆上市日不同，并集会混入 512890 没有的 bar，还会让首日 pct_change 连环 NaN。
+        cal = wide["512890"].dropna().index
+        rets = pd.DataFrame(index=cal)
+        for c in SYNTH_CLONES:
+            if c in wide.columns:
+                rets[c] = (wide[c].dropna().pct_change(fill_method=None)
+                           .reindex(cal))
+        ncomp = rets.notna().sum(axis=1)
+        # 只统计 MA200 成形之后的段（预热期不参与任何判定）
+        ncomp_valid = ncomp.iloc[ma - 1:]
+        ncomp_valid = ncomp_valid[ncomp_valid > 0]
+        med = rets.median(axis=1, skipna=True).fillna(0.0)
+        s = (1.0 + med).cumprod()
+        s = s / s.iloc[-1] * 100.0
+        if len(s) < ma + 20:
+            return None
+        mav = s.rolling(ma).mean()
+        dev = (s / mav - 1.0) * 100.0
+        if dev.dropna().empty:
+            return None
+        bl, sl = (buy - 1.0) * 100.0, (sell - 1.0) * 100.0
+        hold, states = False, []
+        for x in dev.values:
+            if x == x:
+                if x < bl:
+                    hold = True
+                elif hold and x > sl:
+                    hold = False
+            states.append(hold)
+        st = pd.Series(states, index=cal, dtype=bool)
+        last = cal[-1]
+        d, mv = float(dev.loc[last]), float(mav.loc[last])
+        if d != d or mv != mv:
+            return None
+        zone = "buy" if d < bl else ("sell" if d > sl else "mid")
+        sw = st.astype(int).diff().fillna(0)
+        lb, ls = cal[sw == 1], cal[sw == -1]
+        return dict(
+            date=last, close=float(s.loc[last]), ma200=mv, dev=d,
+            buy_line=mv * buy, sell_line=mv * sell,
+            to_buy=d - bl, to_sell=sl - d,
+            holding=bool(st.iloc[-1]), zone=zone,
+            last_buy=(lb[-1] if len(lb) else None),
+            last_sell=(ls[-1] if len(ls) else None),
+            n_components=int(ncomp.iloc[-1]),
+            n_components_min=(int(ncomp_valid.min()) if len(ncomp_valid) else 0),
+            n_components_max=int(ncomp.max()),
+            n_bars=len(s), d0=cal[0], d1=last,
+            n_ok=len([c for c in SYNTH_CLONES if c in wide.columns]),
+            fails=list(res.get("fails") or []),
+            ma=ma, buy=buy, sell=sell,
+        )
+    except Exception:                                       # noqa: BLE001
+        return None
+
+
+def _synth_ref_html(t, ref):
+    """策略二卡片里的「参考信号」并列块。纯展示，不改任何判定。"""
+    if not ref:
+        # 静默降级：取数失败或 --no-synth 时不占版面；诊断区已有 [参考信号] 记录。
+        return ""
+
+    def _d(x):
+        return f"{x:%Y-%m-%d}" if x is not None and hasattr(x, "strftime") else "—"
+
+    def _st(x):
+        return "持有中" if x else "空仓 / 持币"
+
+    ph, rh = bool(t["holding"]), bool(ref["holding"])
+    agree = ph == rh
+    # ★ 口径噪声是真实存在且会翻转状态的（2026-11-15 实测）：
+    #   两套数据源（腾讯前复权 vs 新浪不复权+F10 分红还原）在合成净值上最大分歧 ≤0.24pp；
+    #   2026-10-30 合成口径 +6.01% 已越 +6% 卖线、腾讯口径 +5.98% 未越 —— 0.03pp 之差
+    #   让两个状态机分叉（一个已空仓、一个仍持有）。故「余量 < 噪声量级」时，
+    #   同向/分歧都不构成有效信息，必须显式提示人工复核。
+    NOISE_PP = 0.30                      # 略高于实测上限 0.24pp，留一点安全边
+    marg_p = min(abs(t["to_sell"]), abs(t["dev"]))
+    marg_r = min(abs(ref["to_sell"]), abs(ref["dev"]))
+    marg = min(marg_p, marg_r)
+    crit = marg < NOISE_PP
+    if crit:
+        crit_html = (f"<div class='gidxnote hot'>⚡ <b>临界区</b>："
+                     f"最近一侧余量仅 <b>{marg:.2f}pp</b>，"
+                     f"已小于两套数据源的历史分歧量级（实测 ≤0.24pp）。"
+                     f"2026-10-30 就发生过一次：合成口径 <b>+6.01%</b> 越线、"
+                     f"腾讯口径 <b>+5.98%</b> 未越，<b>0.03pp 之差让状态机分叉</b>。"
+                     f"当日的同向/分歧都不足以下结论，<b>请人工复核当日收盘价与卖线</b>。</div>")
+    else:
+        crit_html = ""
+    if agree:
+        if crit:
+            note = (f"<div class='gidxnote hot'>✅ 两口径<b>同向</b>（都是{_st(ph)}），"
+                    f"但两者都<b>贴着阈值</b>，这个「同向」不构成互相印证。</div>")
+        else:
+            note = (f"<div class='gidxnote pos'>✅ 两口径<b>同向</b>"
+                    f"（都是{_st(ph)}）—— 可互相印证。</div>")
+    else:
+        note = (f"<div class='gidxnote hot'>⚠ 两口径<b>分歧</b>："
+                f"生产口径 <b>{_st(ph)}</b>、参考口径 <b>{_st(rh)}</b>。"
+                f"<b>策略二仍按生产口径执行</b>，合成信号只作参考，"
+                f"不触发任何买卖、不改参数与净值曲线。</div>")
+    return f"""
+<div class="synthbox">
+  <div class="syntitle">🔎 参考信号 · 同指数合成中位数
+    <span class="tag">仅供并列判断</span></div>
+  <table class="dgtbl">
+    <tr><th style="width:235px">口径</th><th>偏离 MA200</th><th>当前状态</th>
+        <th>距 +6% 卖线</th><th>最近买入</th></tr>
+    <tr><td><b>生产口径</b> · 512890 自身前复权价<br>
+        <span class="dimtxt">策略二实际执行依据（不变）</span></td>
+        <td><b>{t['dev']:+.2f}%</b></td><td><b>{_st(ph)}</b></td>
+        <td>{t['to_sell']:.2f}pp</td><td>{_d(t.get('last_buy'))}</td></tr>
+    <tr><td><b>参考口径</b> · 同指数 7 只 ETF 日收益中位数合成<br>
+        <span class="dimtxt">腾讯前复权 · 当日成分 {ref['n_components']} 只</span></td>
+        <td><b>{ref['dev']:+.2f}%</b></td><td><b>{_st(rh)}</b></td>
+        <td>{ref['to_sell']:.2f}pp</td><td>{_d(ref['last_buy'])}</td></tr>
+  </table>
+  {crit_html}
+  {note}
+  <div class="dgnote">
+    <b>这是什么</b>：把跟踪同一「中证红利低波动指数」的 7 只 ETF 每天各算一次涨跌、
+    取<b>中位数</b>，拼成一条不含单只分红/折溢价噪声的合成价，再用<b>同样</b>的
+    MA{ref['ma']} / {ref['buy']:.2f} / {ref['sell']:.2f} 状态机判定。
+    它<b>只用于并列观察</b>，不参与任何调仓、不改参数、不改净值曲线。<br>
+    <b>数据口径</b>：腾讯前复权日线 {ref['n_bars']} 根、T 日收盘可得，
+    成分 {ref['n_components_min']}~{ref['n_components_max']} 只动态。
+    与研究看板（新浪不复权 + F10 分红还原）在分红除息日附近有
+    <b>≤0.24pp</b> 偏离差，<b>临界日会真的翻转状态</b>（见上）；
+    <b>本页以腾讯生产口径为准</b>。<br>
+    <b>研究结论（v3~v7）</b>：合成信号不改造生产口径；仅在「将来换执行标的」
+    或 512890 数据异常/停牌/清盘时，登记为应急备选信号源。
+    <b>历史回测不代表未来，不构成投资建议。</b>
+  </div>
+</div>"""
+
+
 def build_ve_track(df, code, *, ma=200, buy=1.00, sell=1.06, name="",
                    cash_code=None):
     """单标的「价值引擎」每日跟踪快照（给 512890 这类第二条策略用）。
@@ -2764,7 +2933,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                 overheat_dev, overheat_lead, info, source, now,
                 watch=(), info_watch=(), freshness=(False, ""), live=(False, ""),
                 recent=None, adj_note="", yearly=None, idx=None, ve_curve=None,
-                ve_track=None, ve2_curve=None, vol_map=None):
+                ve_track=None, ve2_curve=None, vol_map=None, synth_ref=None):
     cells = [s.momentum for s in snap]
     vmax = max((abs(v) for m in cells for v in m.values() if v == v), default=1.0)
 
@@ -3742,6 +3911,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     # 与 512040 防守位同规格：规则表 + 今日状态 + 近 5 年回测曲线。
     # 但**独立成卡**，因为两者是两条互不替代的策略（买线不同、标的属性不同）。
     _ve2_card = ""
+    _synth_html = ""
     if ve_track or ve2_curve:
         if ve_track:
             _t = ve_track
@@ -3783,6 +3953,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     卖线 <b>{_t['sell_line']:.4f}</b>
   </div>
   <div class="gidxnote {_zcls}" style="margin-bottom:10px">{_z}</div>"""
+            _synth_html = _synth_ref_html(_t, synth_ref)
         else:
             _today = ('<div class="dgstate idle">MA200 数据不足，'
                       '暂时无法给出今日判定</div>')
@@ -3790,6 +3961,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
 <h2>📈 策略二 · {VE_TRACK_CODE} {html.escape(VE_TRACK_NAME)}（回踩买 / +6% 卖）</h2>
 <div class="dcard off">
 {_today}
+{_synth_html}
   <table class="dgtbl">
     <tr><th style="width:190px">触发条件（收盘价 vs MA200）</th><th style="width:150px">动作</th><th>说明</th></tr>
     <tr><td>收盘 <b>&lt; MA200×1.00</b><br><span class="dimtxt">回踩 200 日线</span></td>
@@ -4271,6 +4443,11 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
   .dgstate.hold{{background:#eef1fe;border-color:#cdd8fb;color:#2c4fb8}}
   .dgstate.cash{{background:#f2f4f7;border-color:#e0e4ea;color:#5b6472}}
   .dgstate.idle{{background:#fafbfc;border-color:#e9ecef;color:#6c717f}}
+  /* 参考信号 · 同指数合成中位数（2026-11-15，仅展示不改决策） */
+  .synthbox{{border:1px solid #ccd7fb;background:#f8faff;border-radius:10px;
+    padding:10px 13px;margin:12px 0 10px}}
+  .syntitle{{font-size:13.5px;font-weight:700;color:#2c4fb8;margin-bottom:7px}}
+  .synthbox table.dgtbl{{margin-bottom:7px}}
   /* 防守位：基金口径 vs 跟踪指数口径（MA200 偏离对照） */
   .dgcmp{{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}}
   .cmpc{{border:1px solid var(--bd);border-radius:10px;padding:10px 13px;background:#fff;
@@ -5124,6 +5301,8 @@ def main():
     ap.add_argument("--dump-csv", default=None,
                     help="把本次读取的长表(date,code,close,name,role)另存为 CSV")
     ap.add_argument("--no-open", action="store_true", help="不自动打开 HTML (后台必加)")
+    ap.add_argument("--no-synth", action="store_true",
+                    help="跳过策略二的「合成信号参考」并列展示（默认开启；仅展示，不改决策）")
     ap.add_argument("--offline", action="store_true",
                     help="强制离线: 只读本地通达信不复权数据（默认为在线前复权，"
                          "断网/限流时自动回退本地，不会中断）")
@@ -5437,6 +5616,28 @@ def main():
     else:
         info_main.append(f"[VE2] {VE_TRACK_CODE} 每日跟踪不可用（历史数据不足或标的缺失）")
 
+    # ---- 策略二「参考信号」：同指数合成中位数（2026-11-15 用户要求，仅并列展示）----
+    # ★ 完全独立：不写回 ve_track、不参与任何状态机 / 调仓 / 净值曲线。
+    #   取数失败时静默跳过，绝不影响主流程。
+    synth_ref = None
+    if a.no_synth:
+        info_main.append("[参考信号] --no-synth 已跳过（策略二判定不受影响）")
+    elif a.offline:
+        info_main.append("[参考信号] 离线模式无腾讯行情，本次不展示合成信号")
+    else:
+        try:
+            synth_ref = build_synth_med_signal()
+        except Exception as e:                          # noqa: BLE001
+            info_main.append(f"[参考信号] 合成信号计算异常: {type(e).__name__}: {e}")
+        if synth_ref:
+            info_main.append(
+                f"[参考信号] 合成中位数 {synth_ref['date']:%Y-%m-%d} 偏离 "
+                f"{synth_ref['dev']:+.2f}% → "
+                f"{'持有' if synth_ref['holding'] else '空仓'}｜"
+                f"成分 {synth_ref['n_components']} 只（仅展示，不改决策）")
+        else:
+            info_main.append("[参考信号] 合成信号不可用，本次不展示（不影响策略二）")
+
     # ---- 策略二 512890 的近 5 年回测曲线（与 512040 同规格，便于并排比较）----
     ve2_curve = None
     try:
@@ -5491,7 +5692,8 @@ def main():
         watch=watched, info_watch=info_watch,
         freshness=(is_stale, fresh_txt), live=(live_on, live_txt),
         recent=recent, adj_note=adj_note, yearly=yearly, idx=idx, ve_curve=ve_curve,
-        ve_track=ve_track, ve2_curve=ve2_curve, vol_map=vol_map)
+        ve_track=ve_track, ve2_curve=ve2_curve, vol_map=vol_map,
+        synth_ref=synth_ref)
 
     out_dir = a.out and os.path.dirname(os.path.abspath(a.out)) or DEFAULT_OUT_DIR
     os.makedirs(out_dir, exist_ok=True)
