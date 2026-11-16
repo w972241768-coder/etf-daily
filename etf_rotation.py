@@ -2304,7 +2304,8 @@ def _synth_ref_html(t, ref):
         return f"{x:%Y-%m-%d}" if x is not None and hasattr(x, "strftime") else "—"
 
     def _st(x):
-        return "持有中" if x else "空仓 / 持币"
+        # 2026-11-16：空仓期实为持 511010 国债，不再写「空仓 / 持币」
+        return "持有中" if x else ((f"持 {CASH_PROXY} 国债") if CASH_PROXY else "空仓 / 持币")
 
     ph, rh = bool(t["holding"]), bool(ref["holding"])
     agree = ph == rh
@@ -2410,12 +2411,18 @@ def build_ve_track(df, code, *, ma=200, buy=1.00, sell=1.06, name="",
     # 距两条线的位置（pp）
     to_buy = dev - (buy - 1.0) * 100.0       # >0 = 高于买线（还差多少才能买）
     to_sell = (sell - 1.0) * 100.0 - dev     # >0 = 距卖线还有多少
+    # ★ 2026-11-16（用户要求）：空仓不是「持币躺现金」，而是**换持 cash_code 国债ETF**。
+    #   原来这里硬编码「保持持币 / 继续持币」，与同卡片规则行的「空仓持 511010 国债」
+    #   直接矛盾（2026-11-16 512890 越线当日页面就是「保持持币」，用户当场指出）。
+    #   回测口径一直是 cash_code 计息（build_ve_curve / _ve_fixed_income 都传了
+    #   cash_code=CASH_PROXY），所以这里只是把**文案**对齐到真实执行，不动任何信号。
+    _cash_act = (f"转持 {CASH_PROXY} 国债" if CASH_PROXY else "空仓持币")
     if dev < (buy - 1.0) * 100.0:
         zone, act = "buy", ("买入" if not holding else "继续持有")
     elif dev > (sell - 1.0) * 100.0:
-        zone, act = "sell", ("卖出" if holding else "保持持币")
+        zone, act = "sell", ("卖出并" + _cash_act if holding else _cash_act + "（等回踩）")
     else:
-        zone, act = "mid", ("继续持有" if holding else "继续持币（不追）")
+        zone, act = "mid", ("继续持有" if holding else _cash_act + "（不追）")
 
     # 上一次状态切换日（买点/卖点发生的日期）
     sw = st.astype(int).diff().fillna(0)
@@ -2512,9 +2519,9 @@ def build_ve_curve(df, def_code, *, ma=200, buy=0.97, sell=1.06, years=5,
 
     规则与报告里「防守位操作指南」表格完全一致：
       · 收盘 < MA200×0.97  → 买入（进入持有状态）
-      · 收盘 > MA200×1.06  → 卖出（转为持币）
+      · 收盘 > MA200×1.06  → 卖出（转为空仓；传 cash_code 时转持该国债ETF）
       · 中间区间            → 维持上一状态
-      · 未满足买点          → 持币（不追高）
+      · 未满足买点          → 空仓（不追高；传 cash_code 时转持该国债ETF）
     口径：**前复权**、**零手续费**、初始净值 = 1。
 
     cash_code（2026-11-01 用户要求）：**空仓期改持该标的**（生产为 511010 国债ETF），
@@ -3516,7 +3523,9 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             _tbuy_txt = f"已破 <b>{-_tdev:.2f}pp</b>"
         else:
             _tbuy_txt = f"还差 <b>{_tdev:.2f}pp</b>"
-        _tsell_txt = f"还差 <b>{_t['to_sell']:.2f}pp</b>"
+        # 2026-11-16：sell 区间且已空仓时 to_sell 为负，原来会显示「还差 -1.23pp」，改成「已越 1.23pp」
+        _tsell_txt = (f"已越 <b>{-_t['to_sell']:.2f}pp</b>" if _t["to_sell"] < 0
+                      else f"还差 <b>{_t['to_sell']:.2f}pp</b>")
         if _t["zone"] == "mid":
             # ★ 2026-10-26：mid 区间原本还有一句「介于买入线~卖出线之间 → 继续持有，
             #   距卖线还差 X pp」，但「偏离/距买线/距卖线/状态」在上面的 .tvbar 里已给全，
@@ -3532,15 +3541,48 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             _tnote_cls = "pos"
         else:
             if _t["holding"]:
-                _tnote = (f"⚠️ 收盘已涨破 +6% 卖线 → <b>按规则该卖出</b>，卖出后需重新回踩才买回。")
+                _tnote = (f"⚠️ 收盘已涨破 +6% 卖线 → <b>按规则该卖出</b>，"
+                          f"卖出后资金换持 <b>{CASH_PROXY} 国债</b>，需重新回踩才买回。")
             else:
-                _tnote = f"已涨破卖线但当前空仓 → <b>保持持币，不追高</b>。"
+                _tnote = (f"已涨破卖线、当前空仓 → <b>空仓期持 {CASH_PROXY} 国债</b>，"
+                          f"不追高，等回踩 MA200 再买。")
             _tnote_cls = "hot"
         _lb = (f"最近买入 {_t['last_buy']:%Y-%m-%d}" if _t["last_buy"] is not None
                else "窗口内无买入信号")
         _ls = (f"最近卖出 {_t['last_sell']:%Y-%m-%d}" if _t["last_sell"] is not None
                else "窗口内无卖出信号")
-        _tstate = "持有中" if _t["holding"] else "持币中"
+        _tstate = ("持有中" if _t["holding"]
+                   else (f"持 {CASH_PROXY} 国债" if CASH_PROXY else "持币中"))
+        # ---- 参考口径对比（2026-11-16 用户要求）----
+        # 用户原话：「在策略二的极值与规则的胶囊里增加上参考口径的对比，简单对比一下
+        # 当前价格与买线与卖线」。合成价是「7 只同指数 ETF 日收益中位数」拼出来的
+        # **归一化指数**（量级 ~100），绝对价位与 512890 真实价（~1.26）不可直接比，
+        # 所以统一**折算到 512890 当日价位**再并列：
+        #   折算买线 = 512890 现价 /(1 + 参考偏离%)  （偏离 0% 即参考口径的买线）
+        #   折算卖线 = 折算买线 × sell
+        # 这样两套口径的三条线落在同一价格坐标上，一眼能看出差多少。
+        # ⚠ 纯展示：不参与 _t 的任何判定，也不改写 zone/action。
+        _rref_txt = ""
+        if synth_ref:
+            _rv = float(synth_ref["dev"])
+            _rbase = float(_t["close"]) / (1.0 + _rv / 100.0)
+            _rbl = _rbase * float(synth_ref.get("buy") or 1.0)
+            _rsl = _rbase * float(synth_ref.get("sell") or 1.06)
+            _rcl = RED if _rv > 0 else GREEN
+            _rb_txt = (f"已破 {abs(float(synth_ref['to_buy'])):.2f}pp"
+                       if float(synth_ref["to_buy"]) < 0
+                       else f"还差 {float(synth_ref['to_buy']):.2f}pp")
+            _rs_txt = (f"已越 {abs(float(synth_ref['to_sell'])):.2f}pp"
+                       if float(synth_ref["to_sell"]) < 0
+                       else f"还差 {float(synth_ref['to_sell']):.2f}pp")
+            _rst = ("持有中" if synth_ref["holding"]
+                    else (f"持 {CASH_PROXY} 国债" if CASH_PROXY else "持币"))
+            _rref_txt = (
+                f'<span class="v refk">参考口径 <i>7 只同指数合成·折算价</i>'
+                f'买线 <b>{_rbl:.4f}</b><i>{_rb_txt}</i>'
+                f'　卖线 <b>{_rsl:.4f}</b><i>{_rs_txt}</i>'
+                f'　偏离 <b style="color:{_rcl}">{_rv:+.2f}%</b>'
+                f'　<b>{_rst}</b></span>')
         # ★ 2026-11-02（用户要求第 2 点）：512890 从折叠框里**提出来常显**，
         #   并把原来的「主行 + 进度条」压成一张 2 行小卡：标题行给结论与现价，
         #   数据条给两条线的距离 + 胜率 + 固收+，其余（规则/极值/最近买卖）收进 <details>。
@@ -3553,6 +3595,8 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             f'<i>{_tsell_txt}</i></span>'
             f'<span class="v">偏离 <b style="color:{_tcls}">{_tdev:+.2f}%</b></span>'
             f'<span class="v">状态 <b>{_tstate}</b></span>'
+            # 参考口径（同指数合成中位数）并列对照 —— 2026-11-16 用户要求
+            + _rref_txt
             # 历史胜率（2026-10-29 用户要求）：512890 也实持，同样给命中率
             + (f'<span class="v">历史胜率 <b style="color:#42474f">{ve2_curve["win_rate"]:.0f}%</b>'
                f'<i>{ve2_curve["trips_n"]} 笔已平仓 · 均 {ve2_curve["trip_avg"]:+.2f}%</i></span>'
@@ -3916,16 +3960,17 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         if ve_track:
             _t = ve_track
             _tdc = RED if _t["dev"] > 0 else GREEN
-            _tst = "持有中" if _t["holding"] else "持币中"
+            _tst = ("持有中" if _t["holding"]
+                    else (f"持 {CASH_PROXY} 国债" if CASH_PROXY else "持币中"))
             if _t["zone"] == "buy":
                 _z = (f'<b class="good">已跌破买线（回踩 MA200）→ 该买入</b>'
                       if not _t["holding"] else
                       f'<b class="good">已跌破买线 → 继续持有 / 可补仓</b>')
                 _zcls = "pos"
             elif _t["zone"] == "sell":
-                _z = (f'<b class="warn">已涨破 +6% 卖线 → 该卖出</b>'
+                _z = (f'<b class="warn">已涨破 +6% 卖线 → 该卖出，资金换持 {CASH_PROXY} 国债</b>'
                       if _t["holding"] else
-                      f'<b class="warn">已涨破卖线但空仓 → 保持持币，不追高</b>')
+                      f'<b class="warn">已涨破卖线、当前空仓 → 持 {CASH_PROXY} 国债，不追高</b>')
                 _zcls = "hot"
             else:
                 # ★ 2026-11-01（用户要求）：临界预警 —— 与折叠面板里的跟踪行口径一致。
@@ -3971,7 +4016,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             跌破 −3% 的天数只占约 4%，用 −3% 买线会长期打不到、大段时间空仓。
             <b>买入后进入持有状态。</b></td></tr>
     <tr><td>收盘 <b>&gt; MA200×1.06</b><br><span class="dimtxt">高于 200 日线 6 个点</span></td>
-        <td class="warn"><b>跑 → 卖出 / 转为空仓</b></td>
+        <td class="warn"><b>跑 → 卖出 / 转持 {CASH_PROXY} 国债</b></td>
         <td>与 512040 完全一致。<b>卖出后不会自动买回</b>，必须重新回踩到 MA200 才可再买。
             卖出所得资金<b>转入 {CASH_PROXY} 国债ETF 生息</b>（2026-11-01 起），不再是零收益现金。</td></tr>
     <tr><td>收盘 介于 <b>MA200 ~ 1.06×MA200</b></td>
@@ -4631,6 +4676,9 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     details.tvcd{{max-width:100%;min-width:0}}
   }}
   .tvbar .v i{{font-style:normal;color:#5d6a86;margin-left:4px;font-size:11px}}
+  /* 参考口径（2026-11-16 用户要求）：与生产口径并列，加一道竖虚线以示「另一套口径」 */
+  .tvbar .v.refk{{color:#5d6a86;border-left:1px dashed #c3ccdc;padding-left:9px}}
+  .tvbar .v.refk b{{color:#3a4560}}
   .tag.tvt{{background:#e8edfb;border:1px solid #c8d4f5;color:#2c4fb8}}
   table.dgtbl{{font-size:12.5px;margin-bottom:10px}}
   table.dgtbl th,table.dgtbl td{{white-space:normal;vertical-align:top;line-height:1.7}}
@@ -5154,7 +5202,7 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
 口径: 动横(n)=P_t/P_(t-n)−1 ｜ 乖离=P_t/MA20−1 ｜ 阶梯=假设未来价格冻结、窗口向历史滑移 ｜
 今日涨跌=P_t/P_(t-1)−1 ｜ 过热熔断: 乖离&gt;{overheat_dev:.0f}% 或 领先&gt;{overheat_lead:.0f}pp<br>
 防守位 = 512040 价值ETF富国（原 512880 证券ETF国泰，2026-09-24 替换）｜ 防守期叠加价值引擎:
-收盘 &lt; MA200×0.97 买入持有、&gt; MA200×1.06 卖出、中间区间维持上一状态；未触发买入条件时持币。
+收盘 &lt; MA200×0.97 买入持有、&gt; MA200×1.06 卖出、中间区间维持上一状态；未触发买入条件时转持 {CASH_PROXY} 国债。
 <br>{adj_note}<br>
 本报告仅供研究参考，不构成个人投资建议。
 </div>
@@ -5612,7 +5660,7 @@ def main():
         print(f"[策略二跟踪] {_tt['code']} {_tt['date']:%Y-%m-%d} 收 {_tt['close']:.3f} vs "
               f"MA200 {_tt['ma200']:.4f} → 偏离 {_tt['dev']:+.2f}% ｜ "
               f"买线 {_tt['buy_line']:.4f} / 卖线 {_tt['sell_line']:.4f} ｜ "
-              f"状态 {'持有中' if _tt['holding'] else '持币中'} ｜ 动作 {_tt['action']}")
+              f"状态 {'持有中' if _tt['holding'] else ('持 ' + str(CASH_PROXY) + ' 国债' if CASH_PROXY else '持币中')} ｜ 动作 {_tt['action']}")
     else:
         info_main.append(f"[VE2] {VE_TRACK_CODE} 每日跟踪不可用（历史数据不足或标的缺失）")
 
