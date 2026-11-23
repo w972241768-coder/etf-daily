@@ -43,6 +43,14 @@ BASE = "https://www.zgnb.top"
 ENDPOINT = BASE + "/api/v1/market/amv/dashboard"
 KEY = "market"
 TIMEOUT = 15
+# ★ 2026-11-23 实测：只带 Bearer token 会被判「当前请求被限流」(403)；
+#   必须同时带浏览器 UA + Origin/Referer 才放行（ego 浏览器同源 fetch 成功、裸 requests 403）。
+BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"),
+    "Origin": BASE,
+    "Referer": BASE + "/home",
+}
 
 
 def beijing_now() -> datetime:
@@ -63,7 +71,8 @@ def fetch(token: str) -> dict:
         r = requests.get(
             ENDPOINT,
             params={"key": KEY},
-            headers={"Authorization": "Bearer " + token.strip(),
+            headers={**BROWSER_HEADERS,
+                     "Authorization": "Bearer " + token.strip(),
                      "Accept": "application/json"},
             timeout=TIMEOUT,
         )
@@ -87,9 +96,16 @@ def fetch(token: str) -> dict:
     except Exception:
         return payload_error("返回内容不是有效 JSON")
 
-    cur = (body or {}).get("current") if isinstance(body, dict) else None
+    # ★ 2026-11-23 实测修正：接口是「{status, data:{...}, error, ts}」包一层，
+    #   current 在 data 里；若直接读顶层 current 会恒报「结构变化」（ego 实测确认）。
+    if not isinstance(body, dict):
+        return payload_error("返回内容结构异常")
+    if body.get("status") not in (None, "ok"):
+        return payload_error("接口返回状态：" + str(body.get("status")))
+    data = body.get("data")
+    cur = data.get("current") if isinstance(data, dict) else None
     if not isinstance(cur, dict):
-        return payload_error("返回结构变化：缺少 current")
+        return payload_error("返回结构变化：缺少 data.current")
 
     raw_val = cur.get("amv_yi")
     try:
@@ -107,19 +123,24 @@ def fetch(token: str) -> dict:
         except (TypeError, ValueError):
             pct = None
 
-    state_num = cur.get("state")
-    try:
-        state = "多头" if int(state_num) == 1 else "空头"
-    except (TypeError, ValueError):
-        state = ""
+    # 实测：state 0=空头 / 1=多头，且有官方 state_label 可直接用
+    state = str(cur.get("state_label") or "")
+    if not state:
+        try:
+            state = "多头" if int(cur.get("state")) == 1 else "空头"
+        except (TypeError, ValueError):
+            state = ""
+    # 实测字段名是 date（不是 trade_date）；updated 在 data 层而非 current 层
+    trade_date = str(cur.get("date") or cur.get("trade_date") or "")
+    updated = str(cur.get("updated") or data.get("updated") or "")
 
     return {
         "ok": True,
         "value": round(val, 1),
         "change_pct": pct,
         "state": state,
-        "trade_date": str(cur.get("trade_date") or ""),
-        "updated_at": str(cur.get("updated") or ""),
+        "trade_date": trade_date,
+        "updated_at": updated,
         "source": "zgnb.top",
         "fetched_at": beijing_now().strftime("%Y-%m-%d %H:%M:%S"),
     }

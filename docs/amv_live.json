@@ -1,6 +1,10 @@
 {
-  "ok": false,
-  "error": "未配置 ZGNB_TOKEN",
+  "ok": true,
+  "value": 129386.4,
+  "change_pct": 1.48,
+  "state": "空头区间",
+  "trade_date": "2026-11-23",
+  "updated_at": "2026-11-23",
   "source": "zgnb.top",
-  "fetched_at": "2026-11-23 12:03:41"
+  "fetched_at": "2026-11-23 12:23:26"
 }
