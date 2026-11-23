@@ -5238,6 +5238,9 @@ def _fmt_factors(res):
 # 不直连第三方站 —— zgnb.top 全站 API 有登录墙且 CSP connect-src 'self'，
 # 浏览器跨域直连必然失败；把 token 写进公开页面更是不可接受。
 # 一切异常（网络/HTTP/JSON/字段缺失/数值异常/数据过期）都在卡片内显式提示。
+# ★ 2026-11-23：按用户要求去掉前端 setInterval / visibilitychange 自动刷新 ——
+#   只在「首次打开页面」「手动 F5/刷新页面」「点失败卡片的重试」「点🔄刷新日报触发整页 reload」时取数，
+#   数值与百分比始终由同一次 load() 一起写入，不再出现无人操作时的数据跳动。
 # ⚠️ 同样必须是普通字符串：JS 里的 { } 在 f-string 中会被当格式字段。
 AMV_LIVE_WIDGET = """
 <style>
@@ -5259,7 +5262,10 @@ AMV_LIVE_WIDGET = """
 .amv-num{margin-top:2px;font-size:26px;font-weight:700;line-height:1.22;
   font-variant-numeric:tabular-nums;letter-spacing:.5px}
 .amv-num small{font-size:12px;font-weight:400;margin-left:5px;opacity:.82}
-.amv-chg{font-size:12.5px;margin-left:10px;font-weight:600;white-space:nowrap}
+.amv-chg{display:inline-flex;align-items:baseline;gap:1px;margin-left:9px;
+  font-weight:600;white-space:nowrap;vertical-align:1px}
+.amv-chg .amv-pctnum{font-size:11px;font-variant-numeric:tabular-nums}  /* 数值调小 */
+.amv-chg .amv-pctsym{font-size:17px;line-height:1}                      /* % 放大，强调单位 */
 .amv-chg.up{color:#ffcdbf}      /* 中国习惯：涨=红 */
 .amv-chg.down{color:#b9f0d0}    /* 跌=绿 */
 .amv-ft{margin-top:2px;font-size:10.5px;color:rgba(255,255,255,.74);
@@ -5279,7 +5285,7 @@ AMV_LIVE_WIDGET = """
   var TAG=document.getElementById('amvTag'), VAL=document.getElementById('amvVal'),
       CHG=document.getElementById('amvChg'), FOOT=document.getElementById('amvFoot'),
       SRC=document.getElementById('amvSrc');
-  var DATA_URL='amv_live.json', PERIOD=5*60*1000, busy=false;
+  var DATA_URL='amv_live.json', busy=false;   // 2026-11-23：去掉定时自动刷新，仅手动触发
 
   function fmt(n){
     try{ return Number(n).toLocaleString('zh-CN',{minimumFractionDigits:1,maximumFractionDigits:1}); }
@@ -5312,7 +5318,9 @@ AMV_LIVE_WIDGET = """
       VAL.innerHTML=fmt(v);
       if(chg===null){ CHG.textContent=''; }
       else{
-        CHG.textContent=(chg>0?'+':'')+chg.toFixed(2)+'%';
+        // 2026-11-23：数值小、% 符号大（强调单位），基线对齐
+        CHG.innerHTML='<span class="amv-pctnum">'+(chg>0?'+':'')+chg.toFixed(2)+'</span>'+
+                      '<span class="amv-pctsym">%</span>';
         CHG.className='amv-chg '+(chg>0?'up':(chg<0?'down':''));
       }
       var st=String(j.state||'');
@@ -5328,7 +5336,7 @@ AMV_LIVE_WIDGET = """
         if(days>5) warn='⚠ 数据可能过期 · ';
       }
       FOOT.className='amv-ft'+(warn?' warn':'');
-      FOOT.textContent=warn+'数据日 '+(d||'--')+' · 更新 '+(u||'--')+' · 每5分钟自动刷新';
+      FOOT.textContent=warn+'数据日 '+(d||'--')+' · 更新 '+(u||'--')+' · 刷新页面更新';
     }catch(e){
       var m=(e && e.name==='AbortError')?'请求超时':((e && e.message)?e.message:'未知错误');
       fail('读取失败：'+m);
@@ -5336,9 +5344,7 @@ AMV_LIVE_WIDGET = """
       clearTimeout(to); busy=false;
     }
   }
-  load();
-  setInterval(load,PERIOD);
-  document.addEventListener('visibilitychange',function(){ if(!document.hidden) load(); });
+  load();   // 仅此一次：打开页面/刷新页面时取数。不再 setInterval，也不监听 visibilitychange。
 })();
 </script>
 """

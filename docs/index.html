@@ -695,8 +695,8 @@
 <div class="hero-main">
 <h1>ETF 动横阶梯轮动报告</h1>
 <div class="sub"><b>动横20</b> · 粘性带 <b>1.0pp</b> · 主选 <b>9+1</b> 只
- ｜ 生成 2026-11-23 12:03</div>
-<div class="fdot fdot-live"><span class="fdot-i"></span>⚡ 盘中快照 · 截至 <b>11-23 12:03</b> · 26/26 正常<details class="fdet"><summary>ⓘ</summary><div class="fdetb">⚡ <b>盘中实时数据</b>（未收盘）　数据源 <b>新浪财经 日线(在线, 前复权校正, 盘中实时)</b>　｜　最后一根 = <b>2026-11-23</b> 盘中快照　｜　成功 26/26 只。⚠ <b>价格为盘中快照、非收盘价</b>，动横与信号会随盘中波动；收盘后请再跑一次以收盘价复算。</div></details></div>
+ ｜ 生成 2026-11-23 13:00</div>
+<div class="fdot fdot-live"><span class="fdot-i"></span>⚡ 盘中快照 · 截至 <b>11-23 13:00</b> · 26/26 正常<details class="fdet"><summary>ⓘ</summary><div class="fdetb">⚡ <b>盘中实时数据</b>（未收盘）　数据源 <b>新浪财经 日线(在线, 前复权校正, 盘中实时)</b>　｜　最后一根 = <b>2026-11-23</b> 盘中快照　｜　成功 26/26 只。⚠ <b>价格为盘中快照、非收盘价</b>，动横与信号会随盘中波动；收盘后请再跑一次以收盘价复算。</div></details></div>
 </div>
 <div class="hero-amv" id="amvCard">
 <div class="amv-hd"><span class="amv-ttl">活跃市值</span><span class="amv-tag" id="amvTag">连接中</span><span class="amv-src" id="amvSrc">zgnb.top</span></div>
@@ -1316,7 +1316,10 @@ table.d3tbl.sm{font-size:11.5px}
 .amv-num{margin-top:2px;font-size:26px;font-weight:700;line-height:1.22;
   font-variant-numeric:tabular-nums;letter-spacing:.5px}
 .amv-num small{font-size:12px;font-weight:400;margin-left:5px;opacity:.82}
-.amv-chg{font-size:12.5px;margin-left:10px;font-weight:600;white-space:nowrap}
+.amv-chg{display:inline-flex;align-items:baseline;gap:1px;margin-left:9px;
+  font-weight:600;white-space:nowrap;vertical-align:1px}
+.amv-chg .amv-pctnum{font-size:11px;font-variant-numeric:tabular-nums}  /* 数值调小 */
+.amv-chg .amv-pctsym{font-size:17px;line-height:1}                      /* % 放大，强调单位 */
 .amv-chg.up{color:#ffcdbf}      /* 中国习惯：涨=红 */
 .amv-chg.down{color:#b9f0d0}    /* 跌=绿 */
 .amv-ft{margin-top:2px;font-size:10.5px;color:rgba(255,255,255,.74);
@@ -1336,7 +1339,7 @@ table.d3tbl.sm{font-size:11.5px}
   var TAG=document.getElementById('amvTag'), VAL=document.getElementById('amvVal'),
       CHG=document.getElementById('amvChg'), FOOT=document.getElementById('amvFoot'),
       SRC=document.getElementById('amvSrc');
-  var DATA_URL='amv_live.json', PERIOD=5*60*1000, busy=false;
+  var DATA_URL='amv_live.json', busy=false;   // 2026-11-23：去掉定时自动刷新，仅手动触发
 
   function fmt(n){
     try{ return Number(n).toLocaleString('zh-CN',{minimumFractionDigits:1,maximumFractionDigits:1}); }
@@ -1369,7 +1372,9 @@ table.d3tbl.sm{font-size:11.5px}
       VAL.innerHTML=fmt(v);
       if(chg===null){ CHG.textContent=''; }
       else{
-        CHG.textContent=(chg>0?'+':'')+chg.toFixed(2)+'%';
+        // 2026-11-23：数值小、% 符号大（强调单位），基线对齐
+        CHG.innerHTML='<span class="amv-pctnum">'+(chg>0?'+':'')+chg.toFixed(2)+'</span>'+
+                      '<span class="amv-pctsym">%</span>';
         CHG.className='amv-chg '+(chg>0?'up':(chg<0?'down':''));
       }
       var st=String(j.state||'');
@@ -1385,7 +1390,7 @@ table.d3tbl.sm{font-size:11.5px}
         if(days>5) warn='⚠ 数据可能过期 · ';
       }
       FOOT.className='amv-ft'+(warn?' warn':'');
-      FOOT.textContent=warn+'数据日 '+(d||'--')+' · 更新 '+(u||'--')+' · 每5分钟自动刷新';
+      FOOT.textContent=warn+'数据日 '+(d||'--')+' · 更新 '+(u||'--')+' · 刷新页面更新';
     }catch(e){
       var m=(e && e.name==='AbortError')?'请求超时':((e && e.message)?e.message:'未知错误');
       fail('读取失败：'+m);
@@ -1393,9 +1398,7 @@ table.d3tbl.sm{font-size:11.5px}
       clearTimeout(to); busy=false;
     }
   }
-  load();
-  setInterval(load,PERIOD);
-  document.addEventListener('visibilitychange',function(){ if(!document.hidden) load(); });
+  load();   // 仅此一次：打开页面/刷新页面时取数。不再 setInterval，也不监听 visibilitychange。
 })();
 </script>
 
@@ -1419,7 +1422,7 @@ box-shadow:0 3px 10px rgba(61,87,229,.38)}
 <div id="rfFab"><button id="rfBtn" onclick="rfToggle()">🔄 刷新日报</button></div>
 <div id="rfPanel">
   <h4>一键刷新（触发云端重算）</h4>
-  <div id="rfGen">本页生成于：2026-11-23 12:03</div>
+  <div id="rfGen">本页生成于：2026-11-23 13:00</div>
   <p>首次使用粘贴一次 <b>GitHub Token</b>（仅需 repo 权限）。<b>仅存你本机浏览器</b>，不进仓库、不发给任何第三方，只发往 api.github.com。</p>
   <input id="rfToken" type="password" placeholder="ghp_... 或 github_pat_..." />
   <button onclick="rfSaveRun()">保存并刷新</button>
