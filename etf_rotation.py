@@ -5121,10 +5121,17 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
   .tblwrap{{overflow-x:auto}}
 </style></head><body><div class="wrap">
 <div class="hero">
+<div class="hero-main">
 <h1>ETF 动横阶梯轮动报告</h1>
 <div class="sub"><b>动横{window}</b> · 粘性带 <b>{sticky:.1f}pp</b> · 主选 <b>{len(ranked)}+{len([r for r in snap if r.role == 'defensive'])}</b> 只
  ｜ 生成 {now}</div>
 {fresh_inline}
+</div>
+<div class="hero-amv" id="amvCard">
+<div class="amv-hd"><span class="amv-ttl">活跃市值</span><span class="amv-tag" id="amvTag">连接中</span><span class="amv-src" id="amvSrc">zgnb.top</span></div>
+<div class="amv-num"><span id="amvVal">--</span><small>亿</small><span class="amv-chg" id="amvChg"></span></div>
+<div class="amv-ft" id="amvFoot">正在获取当日数据…</div>
+</div>
 </div>
 {fresh_alert}
 
@@ -5226,6 +5233,116 @@ def _fmt_factors(res):
 # 注意：report 主体是一个 f-string（其中 { } 会被当格式字段），本常量必须是
 # 普通字符串（非 f-string），并在写文件时用 .replace 注入到 </body> 前，
 # 以避免 JS 里的 { }（如 JSON.stringify({ref:...})）被 f-string 误解析。
+# === 顶部「活跃市值」实时卡（2026-11-23）===
+# 数据通道：前端只读同目录 amv_live.json（由取数脚本/CI 定时写入），
+# 不直连第三方站 —— zgnb.top 全站 API 有登录墙且 CSP connect-src 'self'，
+# 浏览器跨域直连必然失败；把 token 写进公开页面更是不可接受。
+# 一切异常（网络/HTTP/JSON/字段缺失/数值异常/数据过期）都在卡片内显式提示。
+# ⚠️ 同样必须是普通字符串：JS 里的 { } 在 f-string 中会被当格式字段。
+AMV_LIVE_WIDGET = """
+<style>
+/* === 顶部活跃市值卡：蓝底玻璃拟态，与 hero 同源 === */
+.hero{display:flex;align-items:center;justify-content:space-between;gap:18px}
+.hero-main{flex:1 1 auto;min-width:0}
+.hero-amv{flex:0 0 470px;min-width:0;box-sizing:border-box;
+  border:1px solid rgba(255,255,255,.26);border-radius:12px;
+  background:rgba(255,255,255,.10);padding:10px 15px;color:#fff;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.12)}
+.amv-hd{display:flex;align-items:center;gap:8px;font-size:11.5px;line-height:1.4}
+.amv-ttl{font-weight:700;letter-spacing:.5px;white-space:nowrap}
+.amv-tag{font-size:10px;padding:1px 7px;border-radius:8px;white-space:nowrap;
+  background:rgba(255,255,255,.17);color:rgba(255,255,255,.9)}
+.amv-tag.is-long{background:rgba(255,120,100,.30);color:#fff}
+.amv-tag.is-short{background:rgba(120,235,175,.24);color:#fff}
+.amv-tag.is-err{background:rgba(255,205,90,.24);color:#ffe4a3}
+.amv-src{margin-left:auto;color:rgba(255,255,255,.60);font-size:10px;white-space:nowrap}
+.amv-num{margin-top:2px;font-size:26px;font-weight:700;line-height:1.22;
+  font-variant-numeric:tabular-nums;letter-spacing:.5px}
+.amv-num small{font-size:12px;font-weight:400;margin-left:5px;opacity:.82}
+.amv-chg{font-size:12.5px;margin-left:10px;font-weight:600;white-space:nowrap}
+.amv-chg.up{color:#ffcdbf}      /* 中国习惯：涨=红 */
+.amv-chg.down{color:#b9f0d0}    /* 跌=绿 */
+.amv-ft{margin-top:2px;font-size:10.5px;color:rgba(255,255,255,.74);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.amv-ft.warn{color:#ffe08a}
+.amv-retry{pointer-events:auto;cursor:pointer;text-decoration:underline;
+  text-underline-offset:2px;margin-left:6px}
+@media(max-width:760px){
+  .hero{flex-direction:column;align-items:stretch;gap:13px}
+  .hero-amv{flex:1 1 auto;width:100%}
+}
+</style>
+<script>
+(function(){
+  var card=document.getElementById('amvCard');
+  if(!card) return;
+  var TAG=document.getElementById('amvTag'), VAL=document.getElementById('amvVal'),
+      CHG=document.getElementById('amvChg'), FOOT=document.getElementById('amvFoot'),
+      SRC=document.getElementById('amvSrc');
+  var DATA_URL='amv_live.json', PERIOD=5*60*1000, busy=false;
+
+  function fmt(n){
+    try{ return Number(n).toLocaleString('zh-CN',{minimumFractionDigits:1,maximumFractionDigits:1}); }
+    catch(e){ return String(n); }
+  }
+  function fail(msg){
+    TAG.textContent='数据异常'; TAG.className='amv-tag is-err';
+    VAL.innerHTML='--'; CHG.textContent='';
+    FOOT.className='amv-ft warn';
+    FOOT.innerHTML=msg+' <span class="amv-retry" id="amvRetry">重试</span>';
+    var rb=document.getElementById('amvRetry');
+    if(rb) rb.addEventListener('click',function(){ load(); });
+  }
+  async function load(){
+    if(busy) return; busy=true;
+    var ctrl=(typeof AbortController!=='undefined')?new AbortController():null;
+    var to=setTimeout(function(){ if(ctrl) ctrl.abort(); },9000);
+    try{
+      var opt={cache:'no-store'}; if(ctrl) opt.signal=ctrl.signal;
+      var res=await fetch(DATA_URL+'?t='+Date.now(),opt);
+      if(!res.ok) throw new Error('HTTP '+res.status);
+      var j=await res.json();
+      if(!j || typeof j!=='object') throw new Error('数据为空');
+      if(j.ok===false) throw new Error(j.error||'数据源不可用');
+      var v=Number(j.value);
+      if(!isFinite(v) || v<=0) throw new Error('活跃市值数值异常');
+      var chg=(j.change_pct===null||j.change_pct===undefined)?null:Number(j.change_pct);
+      if(chg!==null && !isFinite(chg)) throw new Error('涨跌幅格式异常');
+
+      VAL.innerHTML=fmt(v);
+      if(chg===null){ CHG.textContent=''; }
+      else{
+        CHG.textContent=(chg>0?'+':'')+chg.toFixed(2)+'%';
+        CHG.className='amv-chg '+(chg>0?'up':(chg<0?'down':''));
+      }
+      var st=String(j.state||'');
+      TAG.textContent=st||'已更新';
+      TAG.className='amv-tag'+(st.indexOf('多')>=0?' is-long':(st.indexOf('空')>=0?' is-short':''));
+
+      var d=String(j.trade_date||''), u=String(j.updated_at||'');
+      SRC.textContent=j.source?String(j.source):'zgnb.top';
+      var warn='';
+      if(d){
+        // 数据日期超过 5 个自然日 ⇒ 明确提示可能过期（交易日/节假日会正常滞后）
+        var days=(Date.now()-new Date(d+'T00:00:00+08:00').getTime())/86400000;
+        if(days>5) warn='⚠ 数据可能过期 · ';
+      }
+      FOOT.className='amv-ft'+(warn?' warn':'');
+      FOOT.textContent=warn+'数据日 '+(d||'--')+' · 更新 '+(u||'--')+' · 每5分钟自动刷新';
+    }catch(e){
+      var m=(e && e.name==='AbortError')?'请求超时':((e && e.message)?e.message:'未知错误');
+      fail('读取失败：'+m);
+    }finally{
+      clearTimeout(to); busy=false;
+    }
+  }
+  load();
+  setInterval(load,PERIOD);
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) load(); });
+})();
+</script>
+"""
+
 # PWA：注册 Service Worker（注入到 </body> 前）。
 # ⚠️ 用普通字符串、不用 f-string —— JS 的花括号在 f-string 里要写成双括号，极易出错。
 # sw.js 是 network-first：保证「添加到主屏幕」后每天看到的是最新持仓，不是首次缓存。
@@ -5748,7 +5865,8 @@ def main():
     out_path = a.out or os.path.join(out_dir, f"etf_rotation_{pivot}.html")
     html_doc = html_doc.replace(
         "</body>",
-        REFRESH_WIDGET.replace("__RF_GEN__", gen_now) + PWA_TAIL + "\n</body>", 1)
+        AMV_LIVE_WIDGET + REFRESH_WIDGET.replace("__RF_GEN__", gen_now)
+        + PWA_TAIL + "\n</body>", 1)
     with open(out_path, "w", encoding="utf-8", newline="\n") as f:
         f.write(html_doc)
 
