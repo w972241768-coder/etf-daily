@@ -5259,13 +5259,15 @@ AMV_LIVE_WIDGET = """
 .amv-tag.is-short{background:rgba(120,235,175,.24);color:#fff}
 .amv-tag.is-err{background:rgba(255,205,90,.24);color:#ffe4a3}
 .amv-src{margin-left:auto;color:rgba(255,255,255,.60);font-size:10px;white-space:nowrap}
-.amv-num{margin-top:2px;font-size:26px;font-weight:700;line-height:1.22;
+.amv-num{margin-top:2px;font-size:23px;font-weight:700;line-height:1.22;
   font-variant-numeric:tabular-nums;letter-spacing:.5px}
-.amv-num small{font-size:12px;font-weight:400;margin-left:5px;opacity:.82}
-.amv-chg{display:inline-flex;align-items:baseline;gap:1px;margin-left:9px;
-  font-weight:600;white-space:nowrap;vertical-align:1px}
-.amv-chg .amv-pctnum{font-size:11px;font-variant-numeric:tabular-nums}  /* 数值调小 */
-.amv-chg .amv-pctsym{font-size:17px;line-height:1}                      /* % 放大，强调单位 */
+.amv-num small{font-size:11px;font-weight:400;margin-left:4px;opacity:.82}
+/* 2026-11-23 二次调整：数值与 % 作为整体统一字号同步放大（不再只放大 %），
+   主数值「数字+亿」相应缩小，层级仍以主数值为主、涨跌幅为辅 */
+.amv-chg{display:inline-flex;align-items:baseline;gap:1px;margin-left:10px;
+  font-size:16px;font-weight:600;white-space:nowrap;vertical-align:1px}
+.amv-chg .amv-pctnum{font-variant-numeric:tabular-nums}
+.amv-chg .amv-pctsym{line-height:1}
 .amv-chg.up{color:#ffcdbf}      /* 中国习惯：涨=红 */
 .amv-chg.down{color:#b9f0d0}    /* 跌=绿 */
 .amv-ft{margin-top:2px;font-size:10.5px;color:rgba(255,255,255,.74);
