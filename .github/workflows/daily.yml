@@ -8,6 +8,12 @@ name: ETF 轮动日报 · 手动刷新
 # ★★ 2026-11-03 用户拍板：**停用全部定时自动更新**，只保留手动触发。
 #    触发方式 = 日报页面右下角「🔄 刷新日报」按钮 → GitHub API 调 workflow_dispatch
 #    （REPO=w972241768-coder/etf-daily，WF=daily.yml，REF=main，见 etf_rotation.py 的 rfRun）。
+#
+# ★ 2026-11-23 修「刷新后活跃市值仍是旧值」：amv.yml 的 cron 从未真正触发过
+#    （GitHub schedule 尽力而为、公开仓库长期无提交会被丢弃），导致 amv_live.json 停在上次
+#    手动 dispatch 的时间戳。既然用户只在「点刷新日报」时读该文件，就把取数并进本流程 ——
+#    每次刷新日报先抓一次活跃市值，与 index.html/state.json 同批提交，保证联动更新。
+#    amv.yml 保留作为额外补充（若其 cron 偶尔触发则更多一层新鲜度），不冲突。
 #    停用理由：
 #      ① 用户已固定用手动刷新，觉得时机自己掌控、更及时；
 #      ② 自动跑每天最多 3 次会在 docs/ 产生提交，与本地手动跑互相 rebase 打架
@@ -57,6 +63,22 @@ jobs:
           # 不锁 pandas 3.0：其 idxmax 对全 NA 行的破坏性变更已在源码层修正，见下方说明。
           pip install "pandas==2.3.3" "numpy==2.5.2"
           python -c "import sys,pandas,numpy;print('ENV OK',sys.version.split()[0],'pandas',pandas.__version__,'numpy',numpy.__version__)"
+
+      - name: 抓取活跃市值（并入刷新日报，保证同批联动更新）
+        # 2026-11-23：与日报同批更新，解决「刷新页面后活跃市值仍是旧值」。
+        # 失败时 fetch_amv.py 会写 ok:false —— 这里明确打印警告但不中断日报：
+        # 保留旧 JSON（git checkout 还原）比显示错误更稳，页面仍有上次有效数值。
+        env:
+          ZGNB_TOKEN: ${{ secrets.ZGNB_TOKEN }}
+        run: |
+          python -m pip install --quiet requests
+          python fetch_amv.py --out docs/amv_live.json
+          if python -c "import json,sys; d=json.load(open('docs/amv_live.json')); sys.exit(0 if d.get('ok') else 1)"; then
+            echo "活跃市值已更新"
+          else
+            echo "::warning::活跃市值取数失败，保留上次有效数据"
+            git checkout -- docs/amv_live.json
+          fi
 
       - name: 生成日报
         env:
