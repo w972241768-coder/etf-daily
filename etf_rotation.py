@@ -3505,15 +3505,21 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             _NEAR = 0.5
             _tsell = _t.get("to_sell")
             _tbuy = _t.get("to_buy")
+            # ★ 2026-11-24 修复：临界文案必须跟随 holding 状态。
+            #   原版无条件写「继续持有」，空仓（持国债等入场）且价格逼近卖线/买线时
+            #   会误显示成持有 ETF，与下方详解「空仓期持国债」直接矛盾，误导实盘。
+            _hold_txt = "继续持有" if _t["holding"] else f"持 {CASH_PROXY} 国债等入场"
             if isinstance(_tsell, (int, float)) and 0 <= _tsell < _NEAR:
-                _tact = (f"<b class='warn'>继续持有</b>"
+                _near_tip = ("留意挂单止盈" if _t["holding"] else "未持有，不追、等回踩")
+                _tact = (f"<b class='warn'>{_hold_txt}</b>"
                          f"<span class='near'>⚠ 距 +6% 卖线仅差 "
-                         f"{_tsell:.2f}pp，留意挂单止盈</span>")
+                         f"{_tsell:.2f}pp，{_near_tip}</span>")
                 _tact_cls = "tvnear"
             elif isinstance(_tbuy, (int, float)) and 0 <= _tbuy < _NEAR:
-                _tact = (f"<b class='warn'>继续持有</b>"
+                _near_tip = ("可留意回踩买点" if _t["holding"] else "临近买线，准备入场")
+                _tact = (f"<b class='warn'>{_hold_txt}</b>"
                          f"<span class='near'>⚠ 距 MA200 买线仅差 "
-                         f"{_tbuy:.2f}pp，留意回踩买点</span>")
+                         f"{_tbuy:.2f}pp，{_near_tip}</span>")
                 _tact_cls = "tvnear"
             else:
                 _tact = f"<b>{_t['action']}</b>"
