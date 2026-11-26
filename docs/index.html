@@ -1313,15 +1313,15 @@ table.d3tbl.sm{font-size:11.5px}
 .amv-tag.is-short{background:rgba(120,235,175,.24);color:#fff}
 .amv-tag.is-err{background:rgba(255,205,90,.24);color:#ffe4a3}
 .amv-src{margin-left:auto;color:rgba(255,255,255,.60);font-size:10px;white-space:nowrap}
-.amv-num{margin-top:2px;font-size:23px;font-weight:700;line-height:1.22;
+/* 2026-11-26 用户拍板：主数值「数字+亿」不再显示，只保留涨跌幅并放大为主视觉 */
+.amv-num{margin-top:0;font-size:42px;font-weight:800;line-height:1.12;
   font-variant-numeric:tabular-nums;letter-spacing:.5px}
-.amv-num small{font-size:11px;font-weight:400;margin-left:4px;opacity:.82}
-/* 2026-11-23 二次调整：数值与 % 作为整体统一字号同步放大（不再只放大 %），
-   主数值「数字+亿」相应缩小，层级仍以主数值为主、涨跌幅为辅 */
-.amv-chg{display:inline-flex;align-items:baseline;gap:1px;margin-left:10px;
-  font-size:16px;font-weight:600;white-space:nowrap;vertical-align:1px}
+.amv-num #amvVal,.amv-num small{display:none!important}
+.amv-chg{display:inline-flex;align-items:baseline;gap:2px;margin-left:0;
+  font-size:42px;font-weight:800;white-space:nowrap;vertical-align:0}
 .amv-chg .amv-pctnum{font-variant-numeric:tabular-nums}
-.amv-chg .amv-pctsym{line-height:1}
+.amv-chg .amv-pctsym{line-height:1;font-size:.62em;font-weight:700;
+  margin-left:2px;opacity:.92}
 .amv-chg.up{color:#ffcdbf}      /* 中国习惯：涨=红 */
 .amv-chg.down{color:#b9f0d0}    /* 跌=绿 */
 .amv-ft{margin-top:2px;font-size:10.5px;color:rgba(255,255,255,.74);
