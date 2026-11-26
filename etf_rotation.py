@@ -549,7 +549,10 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
         elif _h_p3 == "CASH":
             pill_cls = "diff"
             # 2026-11-03：空仓已不是「躺现金」，统一用 CASH_LABEL（空仓·持 511010 国债）
-            pill = f"⚠ 今日<b>{CASH_LABEL}</b>（D3 止损 或 P3 追高触发）"
+            # 2026-11-26 二次精简：原来括号里挂「D3 止损 或 P3 追高触发」，
+            #   与下面「今日建议持仓 = CASH…」那句重复，且把一行挤成两行。
+            #   原因改由 final_note 用一句话给出（D3/P3 + 已空仓几天），此处只留结论。
+            pill = f"⚠ 今日<b>{CASH_LABEL}</b>"
         else:
             pill_cls = "diff"
             pill = f"⚠ <b>今日调整为 {_h_disp}</b>（D3 / P3 / 抄底 叠加）"
@@ -562,8 +565,9 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
                 _mode = "防守期" if overheated else "正常轮动"
                 pill += (f'<span class="pillcal">（{_mode} · Calmar '
                          f'<b>{_cal:.2f}</b>）</span>')
-            else:
-                pill += (f'<span class="pillcal">　历史 Calmar <b>{_cal:.2f}</b></span>')
+            # 2026-11-26（用户反馈「很乱」）：换仓/空仓日主句本来就长，
+            #   再挂「历史 Calmar」会把「回测对比 · 规则」挤到第二行。
+            #   改由下方数据行统一承载（见 _pd_html 的「历史 Calmar」），主句独占一行。
         _det_open = ""      # 2026-10-29：回测对比表一律默认折叠（用户要求），不再按口径自动展开
 
         # ---- 胶囊数据行（2026-11-03 用户要求）----
@@ -583,6 +587,7 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
                 f'<span>累计 <b style="color:{_color(_pdt)}">{_pdt:+.1f}%</b></span>'
                 + (f'<span>平均年收益 <b style="color:{_color(_pda)}">'
                    f'{_pda:+.1f}%</b></span>' if _pda is not None else "")
+                + (f'<span>历史 Calmar <b>{_cal:.2f}</b></span>' if _cal else "")
                 + '</div>')
 
         # 抄底状态条：处于锁定期显示进度；不处于锁定期但近期有「被闸门拦下」的记录，
@@ -594,7 +599,7 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
         # 2026-11-26：空仓期低吸状态条（未接入时返回空串）
         _dip_bar = _dip_html(((recent.get("p3") or {})))
         return f"""<div class="cbsum {pill_cls}">
-<div class="cbpill">{pill}
+<div class="cbpill"><span class="pillmain">{pill}</span>
 <details class="cbdet"{_det_open}><summary>回测对比 · 规则</summary>
 <div class="tblwrap"><table class="cbst"><thead><tr>
 <th>方案</th><th>今日应持</th><th class="num">净值</th>
@@ -3489,10 +3494,14 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         _ph, _ph_nm = _p3v["hold"], (_p3v.get("hold_name") or "")
         if _ph == "CASH":
             # 2026-10-28 用户需求：空仓期要直观显示「已经空仓几天」
+            # 2026-11-26 二次精简：不再重复「今日空仓」（胶囊已说），只补「什么原因 + 几天」
             _cd = _p3v.get("cash_days")
             _cd_txt = (f"，<b>已空仓 {int(_cd)} 个交易日</b>"
                        if isinstance(_cd, (int, float)) and _cd > 0 else "")
-            final_note = (f"主口径处于空仓冷却期{_cd_txt} → <b>今日空仓</b>")
+            _src = str(_p3v.get("cash_src") or "").upper()
+            _src_txt = ("D3 止损" if _src == "D3"
+                        else ("P3 追高止盈" if _src == "P3" else "规则冷却"))
+            final_note = f"<b>{_src_txt}</b>触发的冷却期{_cd_txt}"
         elif _weak_active:
             # 不再重复「排名末位 XXX」——「今日建议持仓 = XXX」与胶囊已说过（2026-10-28 去重）
             final_note = "依据：主选池动横20 <b>全部为负</b>，抄底规则取末位"
@@ -3901,27 +3910,28 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
                      or _weak_active)
     if _guide_normal:
         guide_note = ""
+    elif final_code == "CASH":
+        # 2026-11-26（用户反馈「页面很乱」）：胶囊已说「今日空仓·持 511010」，
+        #   这里不再重复「今日建议持仓 = CASH … → 今日空仓」（同一件事说两遍）。
+        #   只留一句灰字：为什么空仓 + 要不要管防守位。
+        #   原「ℹ️ 头名未过热…下方操作指南已列出备用」占整整两行，是常驻解释 ⇒ 压成括号短语。
+        guide_note = (f"<span class='dimtxt'>{final_note}"
+                      f"<span style='color:#c8ced6;margin:0 6px'>｜</span>"
+                      f"头名未过热，本轮无需关注防守位"
+                      f"（仅过热熔断时启用，可在下方展开）</span>")
     else:
         guide_note = f"今日建议持仓 = <b>{final_code} {html.escape(final_nm)}</b>。{final_note}。"
         if not overheated:
-            # ★ 2026-10-28：空仓（D3/P3 冷却）时不能说「你现在持有的是排名第一的轮动 ETF」
-            #   —— 那时手里是现金，这句话与「今日空仓」直接矛盾。按是否空仓分两种措辞。
-            if final_code == "CASH":
-                guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热，"
-                               "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
-                               "下方操作指南已列出备用。</span>")
-            elif _weak_active:
+            if _weak_active:
                 # ★ 2026-10-28：抄底时手里是**末位**，不是「排名第一」——
                 #   旧文案在这里直接说错话（用户截图里就撞上了）。
-                guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热，"
+                guide_note += ("<span class='dimtxt'><br>ℹ️ 头名未过热，"
                                "你现在持有的是<b>抄底选出的末位标的</b>（不是头名），"
-                               "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
-                               "下方操作指南已列出备用。</span>")
+                               "本轮无需关注防守位（仅过热熔断时启用）。</span>")
             else:
-                guide_note += ("<br><span class='dimtxt'>ℹ️ 头名未过热、"
+                guide_note += ("<span class='dimtxt'><br>ℹ️ 头名未过热，"
                                "你现在持有的是排名第一的轮动 ETF，"
-                               "<b>本轮无需关注防守位</b>；防守位仅在过热熔断时才启用，"
-                               "下方操作指南已列出备用。</span>")
+                               "本轮无需关注防守位（仅过热熔断时启用）。</span>")
 
     # ---- 防守位操作指南（规则常驻报告，不必记；强度随是否进入防守期切换）----
     if ve_state == "数据不足":
@@ -4513,10 +4523,18 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     _plain_hold = (not _need_switch) and (not overheated)
     _sop_bar = ""
     if _need_switch:
-        _sop_bar = (
-            '<div class="sopbar">⏱ <b>今日需换仓</b>：当日尾盘 '
-            '<b>14:50~14:57</b> 执行最优；只能次日则 <b>9:32~9:35</b> 开盘'
-            '（勿抢 9:25 竞价，跨境标的先看 IOPV 溢价 ≤2%）。</div>')
+        if final_code == "CASH":
+            # 2026-11-26：空仓日只是「卖出换国债」，不是买入新标的 ⇒ 琥珀色高亮太重，
+            #   会跟上面的红色空仓结论一起抢注意力。降级成淡灰提示：信息不丢，视觉让位。
+            _sop_bar = (
+                '<div class="sopbar light">⏱ 今日<b>卖出</b>换持 '
+                f'<b>{CASH_PROXY} 国债</b>：尾盘 <b>14:50~14:57</b> 执行最优；'
+                '只能次日则 <b>9:32~9:35</b> 开盘。</div>')
+        else:
+            _sop_bar = (
+                '<div class="sopbar">⏱ <b>今日需换仓</b>：当日尾盘 '
+                '<b>14:50~14:57</b> 执行最优；只能次日则 <b>9:32~9:35</b> 开盘'
+                '（勿抢 9:25 竞价，跨境标的先看 IOPV 溢价 ≤2%）。</div>')
     _guide_table_html = ""
     _guide_sub = ""          # 2026-11-02：孤儿行已并入主胶囊（「（正常轮动 · Calmar X）」）
     if not _plain_hold:
@@ -4726,10 +4744,16 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     margin:2px 0 0;font-size:11px;color:#8b93a1;line-height:1.6}}
   .pilldata span{{white-space:nowrap}}
   .pilldata b{{font-weight:700;font-variant-numeric:tabular-nums}}
-  .cbpill{{font-size:15px;line-height:1.58;color:#202020;white-space:normal;font-weight:500}}
+  /* 2026-11-26（用户反馈「很乱」）：主句与「回测对比 · 规则」两端对齐。
+     原来链接紧跟结论，读起来像一句话没说完（「…国债（D3 止损 或 P3 追高触发）▸回测对比」）；
+     改成左结论 / 右入口，视线落点清楚，也不会因为结论变长把链接挤到第二行。 */
+  .cbpill{{font-size:15px;line-height:1.58;color:#202020;white-space:normal;
+    font-weight:500;display:flex;align-items:baseline;justify-content:space-between;
+    gap:2px 12px;flex-wrap:wrap}}
+  .cbpill .pillmain{{flex:1 1 auto;min-width:0}}
   .cbpill b{{font-weight:800}}
   .cbsum.diff .cbpill{{font-size:15px}}
-  .cbdet{{display:inline}}
+  .cbdet{{display:inline;flex:0 0 auto}}
   .cbdet>summary{{cursor:pointer;color:#3d57e5;font-size:11.5px;font-weight:600;
     list-style:none;display:inline-block;margin-left:8px}}
   .cbdet>summary::-webkit-details-marker{{display:none}}
@@ -4767,6 +4791,17 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
   @media(max-width:680px){{
     .dipmeta{{display:none}}
     .dipk{{flex:0 0 30px}}
+    /* 2026-11-26：窄屏溢出修复 —— 操作表「依据」列 min-width:260px 会把整页撑破
+       （420px 屏实测右侧被裁），手机上改由文字自然换行。 */
+    .rs{{min-width:0 !important}}
+    /* 两端对齐在手机上会把「回测对比」推到很远的右边，改回自然紧随 */
+    .cbpill{{justify-content:flex-start}}
+    /* 关键：pillmain 的 flex-grow 会把剩余宽度全吃掉，把右侧链接顶到容器最右 ——
+       窄屏改为按内容宽度，链接才能紧跟在结论后面（否则会被挤出屏幕）。 */
+    .cbpill .pillmain{{flex:0 1 auto}}
+    /* 净值曲线 SVG 原设 min-width:560px（桌面为保可读性），在 420px 手机上会把整页撑宽、
+       导致顶部结论右侧被裁。窄屏改为按容器缩放（height:auto 保比例）。 */
+    .csvg{{min-width:0 !important}}
   }}
   .cbsh{{font-size:12px;font-weight:600;color:#202020;margin-bottom:5px}}
   .cbsh span{{font-weight:400;color:#6c717f;font-size:11px}}
@@ -4940,6 +4975,10 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     background:#fff8e6;border:1px solid #ffe0a3;border-left:3px solid #f0a020;
     font-size:11.5px;line-height:1.65;color:#7a5217}}
   .sopbar b{{color:#8a5a00}}
+  /* 空仓日专用：只是「卖出换国债」，用淡灰蓝降级，不与红色空仓结论抢视觉 */
+  .sopbar.light{{background:#f7f9fc;border-color:#e5eaf1;border-left-color:#9aa5b5;
+    color:#5b6472}}
+  .sopbar.light b{{color:#3b4453}}
   /* 排名表 + 年度卡：并排、等高（年度卡被拉伸到排名表高度，底边齐平） */
   .split2{{display:flex;gap:14px;align-items:stretch;margin:14px 0 0}}
   .s2l{{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;min-height:0}}
