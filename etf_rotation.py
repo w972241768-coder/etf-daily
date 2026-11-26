@@ -152,9 +152,12 @@ table.d3tbl.sm{font-size:11.5px}
 
 
 def _dip_html(p3) -> str:
-    """空仓期低吸状态条（2026-11-26 接入）。
+    """空仓期低吸折叠胶囊（2026-11-26 接入，同日按用户要求改为默认收起）。
 
-    回答三件事：① 是否已接入 ② 现在是否正在持有（第几天）③ 历史上跑了几次、赚了多少。
+    理由：它是「说明性内容」，每天摊开占三行会盖住真正的结论（今日持什么）。
+    改成纯 HTML <details> 药丸折叠（无 JS）：收起只留「已接入 + N + 触发次数」，
+    点开才看阈值/表现/今日判定/最近一笔。今日正在持有则转暖色，直接显示标的与进度。
+
     数据来自 recent["p3"]：dip5_active / dip5_day / dip5_hold_n / dip5_log / dip5_last / dip5_thr。
     未接入（dip5_thr 为 None）时返回空串，不影响版面。
     """
@@ -165,37 +168,57 @@ def _dip_html(p3) -> str:
         lg = (p3 or {}).get("dip5_log") or []
         act = bool((p3 or {}).get("dip5_active"))
         day = (p3 or {}).get("dip5_day")
-        hold_n = (p3 or {}).get("dip5_hold_n") or 5
+        hold_n = int((p3 or {}).get("dip5_hold_n") or 5)
         rets = [x.get("ret") for x in lg if isinstance(x.get("ret"), (int, float))]
         avg = (sum(rets) / len(rets)) if rets else None
         win = (sum(1 for r in rets if r > 0) / len(rets) * 100) if rets else None
         last = (p3 or {}).get("dip5_last") or {}
+        neg = lambda s: str(s).replace("-", "\u2212")      # 负号用 − (U+2212) 更整齐
+
+        # ---- 收起态：一行药丸 ----
         if act and isinstance(day, (int, float)):
-            st_txt = (f'<b style="color:#d4380d">今日持有 {last.get("code", "")} '
-                      f'{html.escape(str(last.get("name", "")))}'
-                      f'（第 {int(day)}/{int(hold_n)} 天，到期回国债）</b>')
+            head = (f'今日持有 {last.get("code", "")} '
+                    f'{html.escape(str(last.get("name", "")))}'
+                    f'（{int(day)}/{hold_n}）')
+            meta = "到期回国债"
         else:
-            st_txt = ('今日未触发（需「轮动要空仓 + 当前已空仓 + 池内 5 日跌幅触线」'
-                      '三条件同时成立）')
-        parts = [f"阈值 <b>{thr:.0f}%</b>", f"持有 <b>{int(hold_n)}</b> 日"]
+            head = f"空仓期低吸 · N={hold_n}"
+            meta = (f"{len(lg)} 次" if lg else "未触发过")
+
+        # ---- 展开态：四行键值 ----
+        rows = [
+            f'<div class="diprow"><span class="dipk">触发</span>'
+            f'<span class="dipv">阈值 <b>{neg(f"{thr:.0f}%")}</b>'
+            f'<span class="sep">｜</span>持有 <b>{hold_n}</b> 个交易日'
+            f'<span class="sep">｜</span>软持：D3 止损 / 基线回场可提前释放</span></div>'
+        ]
         if lg:
-            parts.append(f"窗口内触发 <b>{len(lg)}</b> 次")
-        if avg is not None:
-            parts.append(f"单笔均值 <b>{avg:+.2f}%</b>")
-        if win is not None:
-            parts.append(f"胜率 <b>{win:.0f}%</b>")
-        last_txt = ""
+            rows.append(
+                f'<div class="diprow"><span class="dipk">窗口</span>'
+                f'<span class="dipv">触发 <b>{len(lg)}</b> 次'
+                f'<span class="sep">｜</span>单笔均值 <b>{neg(f"{avg:+.2f}%")}</b>'
+                f'<span class="sep">｜</span>胜率 <b>{win:.0f}%</b></span></div>')
+        rows.append(
+            f'<div class="diprow"><span class="dipk">今日</span>'
+            f'<span class="dipv">'
+            + ('持有中（到期或基线回场即释放）' if act else
+               '未触发（需「轮动要空仓 + 当前已空仓 + 池内 5 日跌幅触线」三条件同时成立）')
+            + '</span></div>')
         if last and isinstance(last.get("ret"), (int, float)):
-            last_txt = (f'<br>最近一笔：{html.escape(str(last.get("date", "")))} '
-                        f'{last.get("code", "")} {html.escape(str(last.get("name", "")))} '
-                        f'<b>{last["ret"]:+.2f}%</b>'
-                        f'（{html.escape(str(last.get("why", "")))}）')
-        return (f'<div class="cbsum" style="margin-top:10px;border-left:4px solid #722ed1;'
-                f'background:#faf7ff">'
-                f'<div style="font-weight:700;color:#531dab;margin-bottom:4px">'
-                f'空仓期低吸 · 已接入（2026-11-26 软持 N={int(hold_n)}）</div>'
-                f'<div style="font-size:12.5px;color:#42474f;line-height:1.7">'
-                f'{" ｜ ".join(parts)}<br>{st_txt}{last_txt}</div></div>')
+            _lr = neg("%+.2f%%" % last["ret"])
+            rows.append(
+                f'<div class="diprow"><span class="dipk">最近</span>'
+                f'<span class="dipv">{html.escape(str(last.get("date", "")))}'
+                f'<span class="sep">·</span>{last.get("code", "")} '
+                f'{html.escape(str(last.get("name", "")))} '
+                f'<b>{_lr}</b>'
+                f'（{html.escape(str(last.get("why", "")))}）</span></div>')
+
+        return (f'<div class="dipwrap"><details class="{"dipdet hot" if act else "dipdet"}">'
+                f'<summary><i class="dipdot"></i><span>{head}</span>'
+                f'<span class="dipmeta">{meta}</span>'
+                f'<i class="dipar">▾</i></summary>'
+                f'<div class="dipbody">{"".join(rows)}</div></details></div>')
     except Exception:                          # noqa: BLE001
         return ""
 
@@ -4713,6 +4736,38 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
   .cbdet>summary::before{{content:"▸ "}}
   .cbdet[open]>summary::before{{content:"▾ "}}
   .cbdet .tblwrap{{margin-top:7px}}
+  /* 空仓期低吸折叠胶囊（2026-11-26 用户要求：说明内容不必每天占版面）
+     设计：收起=一行药丸（只留「已接入 + 阈值 + 触发次数」），点开才看明细；
+     颜色用低饱和紫，与抄底的琥珀色、告警的橙红色区分，不抢主结论。 */
+  .dipwrap{{margin:8px 0 0}}
+  .dipdet>summary{{list-style:none;cursor:pointer;display:inline-flex;align-items:center;
+    flex-wrap:wrap;gap:5px;max-width:100%;padding:3px 10px 3px 9px;border-radius:999px;
+    background:#f7f4ff;border:1px solid #e6ddfb;font-size:11.5px;line-height:1.55;
+    color:#5b3fb0;font-weight:600;transition:background .15s,border-color .15s;
+    -webkit-tap-highlight-color:transparent}}
+  .dipdet>summary::-webkit-details-marker{{display:none}}
+  .dipdet>summary:hover{{background:#f0e9ff;border-color:#cfbef6}}
+  .dipdet>summary:focus-visible{{outline:2px solid #b39ae8;outline-offset:1px}}
+  .dipdot{{width:6px;height:6px;border-radius:50%;background:#722ed1;flex:0 0 6px;
+    box-shadow:0 0 0 2.5px #ebe3fb}}
+  .dipmeta{{color:#8b7ab8;font-weight:500;font-variant-numeric:tabular-nums}}
+  .dipmeta::before{{content:"·";margin-right:5px;opacity:.65}}
+  .dipar{{font-size:9px;opacity:.6;transition:transform .15s}}
+  .dipdet[open] .dipar{{transform:rotate(180deg)}}
+  .dipbody{{margin-top:7px;padding:9px 12px 8px;background:#fbf9ff;border:1px solid #ece4fb;
+    border-radius:7px;font-size:12px;line-height:1.85;color:#42474f}}
+  .diprow{{display:flex;gap:0 8px;align-items:baseline;flex-wrap:wrap}}
+  .dipk{{flex:0 0 34px;color:#8a7ab8;font-weight:600}}
+  .dipv{{flex:1 1 60%;min-width:0}}
+  .dipv b{{font-weight:800;color:#202020;font-variant-numeric:tabular-nums}}
+  .dipv .sep{{color:#c8c2d6;margin:0 5px}}
+  /* 今日正在持有：胶囊转暖色，一眼看出「今天这笔是低吸买的」 */
+  .dipdet.hot>summary{{background:#fff7f4;border-color:#f6d7cb;color:#b4401d}}
+  .dipdet.hot .dipdot{{background:#d4380d;box-shadow:0 0 0 2.5px #fbe3da}}
+  @media(max-width:680px){{
+    .dipmeta{{display:none}}
+    .dipk{{flex:0 0 30px}}
+  }}
   .cbsh{{font-size:12px;font-weight:600;color:#202020;margin-bottom:5px}}
   .cbsh span{{font-weight:400;color:#6c717f;font-size:11px}}
   /* 抄底影子信号卡片样式已于 2026-10-29 删除（该卡片已随口径转正一并移除） */
