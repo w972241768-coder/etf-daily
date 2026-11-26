@@ -157,6 +157,28 @@ LIVE_COMPOSITE = dict(
     # ⚠️ 必须保证 511010 在长历史 CSV 里（etf_pool.csv role=cash 只用于在线取数，
     #    不参与排名）；缺列时 backtest 会静默退回 0 收益现金。
     cash_proxy="511010",
+    # ---- 空仓期低吸（2026-11-26 用户拍板接入，软持口径）----
+    # 触发：轮动策略当日**要空仓且当前已空仓**（target=="CASH" 且 held=="CASH"）
+    #       且主选池内任一只 roc5 = P_t/P_{t-5}-1 <= dip5_thr
+    # 动作：尾盘买入**跌最惨那只**（roc5 最小），持满 dip5_hold 个交易日
+    # 优先级：抄底 > 低吸。抄底持仓期 held != "CASH"，本块条件自动为假，
+    #        天然不会出现「两个模块抢同一笔仓位」的冲突（2026-11-26 专项验证：
+    #        用户方案「让位给低吸」在 −6/−8/−10% 三档全负，−0.49 / −1.81 / −3.35pp）。
+    # 实测（引擎内，非净值叠加，主选池 9 只，单边万1，2019-12-31~2026-10-30）：
+    #   现状 19.7361 / −18.00% / C2.57 / 换仓249 / 抄底16
+    #   软持 22.9398 / −17.92% / C2.74 / 换仓288 / 抄底15 / 低吸30  ← 本口径
+    #   硬持 23.2791 / −17.92% / C2.75 / 换仓285 / 抄底14 / 低吸31
+    # ⚠️ 用**软持**（dip5_hard=False）：只比硬持少 0.34x，但 D3 止损与「基线回场」
+    #    仍可提前释放，不牺牲风控。硬持会无视 D3 止损，不建议。
+    # ⚠️ 已知取舍（用户 2026-11-26 确认接受）：
+    #   · IS 段（2020-2023）为负：5.141 → 4.452x，全窗 +3.2x 全靠 2024 年后；
+    #   · 样本仅 30 笔，剔掉前 10 笔后转负（−1.42pp）；2021H1 半年 −7.40pp；
+    #   · 抄底次数 16 → 15（低吸占位期间 held!=CASH，抄底分支被跳过）；回撤仅改善 0.08pp。
+    # 关掉：把 dip5_thr 改成 None 即可（默认 None = 完全关闭，逐位等价已验证 19.7361）。
+    # ⚠️ 阈值 −4% / −5% 实测都亏（11~21x），不要放松；−6~−8% 才是平台。
+    dip5_thr=-6.0,
+    dip5_hold=5,
+    dip5_hard=False,
 )
 
 
@@ -367,6 +389,10 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
 
              weak_exit_ma20: bool = False, weak_exit_days: int = 0,
              weak_exit_pos: bool = False, weak_exit_trail: float = 0.0,
+             # ---- 2026-11-26 空仓期低吸（默认 None = 完全关闭，逐位等价）----
+             dip5_thr: Optional[float] = None,
+             dip5_hold: int = 5,
+             dip5_hard: bool = False,
              pos_frac: Optional[float] = None,
              add_drop: float = 0.01,
              # 成交时点审计（2026-11-01 专家第四轮）：
@@ -450,6 +476,16 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     weak_entry_px: Optional[float] = None
     weak_peak_px: Optional[float] = None   # 持有期最高收盘（weak_exit_trail 用）
     weak_exit_log: List[dict] = []        # 抄底退出事件明细（研究用）
+    # ★ 2026-11-26 空仓期低吸状态（dip5_thr=None 时全程不进入，逐位等价）
+    dip5_code: Optional[str] = None
+    dip5_entry_i = -1
+    dip5_log: List[dict] = []
+    _dip_roc5 = None
+    if dip5_thr is not None:
+        _dip_cols = [c for c in pool if c in panel.columns]
+        if _dip_cols:
+            # roc5 = P_t / P_{t-5} - 1（%），与原策略「动横20」同源但看 5 日
+            _dip_roc5 = (panel[_dip_cols] / panel[_dip_cols].shift(5) - 1.0) * 100.0
     cool_until = -1                      # 冷却到期日（含），仅 loss_cool 开启时用
     cools: List[dict] = []               # 冷却事件明细
     cool_days_n = 0
@@ -865,6 +901,48 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                              f" | 头名波动{_mv:.0f}%>{mom_max_vol:.0f}%不追")
         reason = (reason or "池内头名变更(粘性带外)") + note_cool
 
+        # ================= 2026-11-26 空仓期低吸 =================
+        # 触发：target=="CASH" 且 held=="CASH" 且池内任一只 roc5 <= dip5_thr
+        # 优先级：抄底 > 低吸（抄底持仓期 held!=CASH，本块自动不触发）
+        # 释放：满 N 日 / 基线要回场 / D3止损（dip5_hard=True 时只认满 N 日）
+        if _dip_roc5 is not None:
+            if dip5_code is not None:
+                _expire = (i - dip5_entry_i) >= dip5_hold
+                _base_back = (target != "CASH" and target != dip5_code)
+                _stop = ("D3" in (reason or "")) or ("止损" in (reason or ""))
+                if dip5_hard:
+                    _base_back = False
+                    _stop = False
+                if _expire or _base_back or _stop:
+                    if (dip5_code in panel.columns
+                            and not pd.isna(panel[dip5_code].iloc[i])):
+                        _p0 = float(panel[dip5_code].iloc[dip5_entry_i])
+                        _p1 = float(panel[dip5_code].iloc[i])
+                        dip5_log.append(dict(
+                            date=str(dates[dip5_entry_i].date()), code=dip5_code,
+                            name=NAMES.get(dip5_code, dip5_code),
+                            days=int(i - dip5_entry_i),
+                            ret=(round((_p1 / _p0 - 1.0) * 100, 2)
+                                 if _p0 > 0 else None),
+                            why=("满N日" if _expire
+                                 else ("D3止损" if _stop else "基线回场"))))
+                    dip5_code = None
+            if dip5_code is None and target == "CASH" and held == "CASH":
+                _row = _dip_roc5.iloc[i]
+                _cand = [c for c in _row.index
+                         if pd.notna(_row[c]) and float(_row[c]) <= dip5_thr]
+                if _cand:
+                    _c = min(_cand, key=lambda x: _row[x])
+                    dip5_code = _c
+                    dip5_entry_i = i
+                    target = _c
+                    reason = f"空仓期低吸(roc5 {float(_row[_c]):+.1f}%)"
+            elif dip5_code is not None and (target == "CASH" or dip5_hard):
+                target = dip5_code
+                reason = ((reason + " | ") if reason else "") \
+                    + f"空仓期低吸持有({i - dip5_entry_i + 1}/{dip5_hold})"
+        # =========================================================
+
         switched = (target != held)
         if switched:
             c = buy + sell                       # 每次换仓按双边计 (2026 版口径)
@@ -1004,6 +1082,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 cools=cools, cool_n=cool_days_n,
                 roc_cools=roc_cools, roc_n=roc_days_n,
                 weak_events=weak_events, weak_exit_log=weak_exit_log,
+                dip5_log=dip5_log,
                 # 2026-10-28：暴露「当前是否处于抄底锁定期」——日报要像 D3 一样
                 # 显示抄底现在处在什么状态（第几天 / 距离场还差什么）。
                 weak_hold=weak_hold, weak_hold_i=int(weak_hold_i),

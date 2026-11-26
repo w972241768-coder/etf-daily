@@ -151,6 +151,55 @@ table.d3tbl.sm{font-size:11.5px}
 """
 
 
+def _dip_html(p3) -> str:
+    """空仓期低吸状态条（2026-11-26 接入）。
+
+    回答三件事：① 是否已接入 ② 现在是否正在持有（第几天）③ 历史上跑了几次、赚了多少。
+    数据来自 recent["p3"]：dip5_active / dip5_day / dip5_hold_n / dip5_log / dip5_last / dip5_thr。
+    未接入（dip5_thr 为 None）时返回空串，不影响版面。
+    """
+    try:
+        thr = (p3 or {}).get("dip5_thr")
+        if thr is None:
+            return ""
+        lg = (p3 or {}).get("dip5_log") or []
+        act = bool((p3 or {}).get("dip5_active"))
+        day = (p3 or {}).get("dip5_day")
+        hold_n = (p3 or {}).get("dip5_hold_n") or 5
+        rets = [x.get("ret") for x in lg if isinstance(x.get("ret"), (int, float))]
+        avg = (sum(rets) / len(rets)) if rets else None
+        win = (sum(1 for r in rets if r > 0) / len(rets) * 100) if rets else None
+        last = (p3 or {}).get("dip5_last") or {}
+        if act and isinstance(day, (int, float)):
+            st_txt = (f'<b style="color:#d4380d">今日持有 {last.get("code", "")} '
+                      f'{html.escape(str(last.get("name", "")))}'
+                      f'（第 {int(day)}/{int(hold_n)} 天，到期回国债）</b>')
+        else:
+            st_txt = ('今日未触发（需「轮动要空仓 + 当前已空仓 + 池内 5 日跌幅触线」'
+                      '三条件同时成立）')
+        parts = [f"阈值 <b>{thr:.0f}%</b>", f"持有 <b>{int(hold_n)}</b> 日"]
+        if lg:
+            parts.append(f"窗口内触发 <b>{len(lg)}</b> 次")
+        if avg is not None:
+            parts.append(f"单笔均值 <b>{avg:+.2f}%</b>")
+        if win is not None:
+            parts.append(f"胜率 <b>{win:.0f}%</b>")
+        last_txt = ""
+        if last and isinstance(last.get("ret"), (int, float)):
+            last_txt = (f'<br>最近一笔：{html.escape(str(last.get("date", "")))} '
+                        f'{last.get("code", "")} {html.escape(str(last.get("name", "")))} '
+                        f'<b>{last["ret"]:+.2f}%</b>'
+                        f'（{html.escape(str(last.get("why", "")))}）')
+        return (f'<div class="cbsum" style="margin-top:10px;border-left:4px solid #722ed1;'
+                f'background:#faf7ff">'
+                f'<div style="font-weight:700;color:#531dab;margin-bottom:4px">'
+                f'空仓期低吸 · 已接入（2026-11-26 软持 N={int(hold_n)}）</div>'
+                f'<div style="font-size:12.5px;color:#42474f;line-height:1.7">'
+                f'{" ｜ ".join(parts)}<br>{st_txt}{last_txt}</div></div>')
+    except Exception:                          # noqa: BLE001
+        return ""
+
+
 def _wstate_html(ws) -> str:
     """抄底锁定状态条（2026-10-28 用户需求：像 D3 一样显示「现在处在什么状态」）。
 
@@ -384,7 +433,7 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
                 _n_p3days = len(p3["navs"]) - 1
             except Exception:                  # noqa: BLE001
                 _n_p3days = None
-            rows.append(("D3+P3+抄底", p3.get("hold_name"), p3.get("hold") == "CASH",
+            rows.append(("D3+P3+抄底+低吸", p3.get("hold_name"), p3.get("hold") == "CASH",
                          dict(final=p3.get("final"), mdd=p3.get("mdd"),
                               calmar=p3.get("calmar"), total=p3.get("total"),
                               ann=_ann_pct(p3.get("total"), _n_p3days)), True))
@@ -519,6 +568,8 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
         if not _wstate_bar:
             _wstate_bar = _wskip_html(((recent.get("p3") or {})),
                                       str(recent.get("asof") or ""))
+        # 2026-11-26：空仓期低吸状态条（未接入时返回空串）
+        _dip_bar = _dip_html(((recent.get("p3") or {})))
         return f"""<div class="cbsum {pill_cls}">
 <div class="cbpill">{pill}
 <details class="cbdet"{_det_open}><summary>回测对比 · 规则</summary>
@@ -531,12 +582,14 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
 <div class="cbsn">{concl}
 <span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；{(f"<b>空仓期均自动转持 {CASH_PROXY} 国债ETF</b>（2026-11-01 起，不再是现金 0 收益）；") if CASH_PROXY else ""}
 抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做{(("、末位 60 日下行波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0)) + "%") if bl.LIVE_COMPOSITE.get("weak_max_vol", 0) else "")}）。
-三条独立判定、叠加使用。详细规则与触发明细见下方 ② 的卡片。</span></div>
+{(f"低吸＝<b>空仓期补仓</b>：轮动本来就要空仓、且当前已空仓时，若主选池任一只 5 日跌幅 ≤{bl.LIVE_COMPOSITE.get('dip5_thr'):.0f}%，则买入<b>跌最惨那只</b>、持 {int(bl.LIVE_COMPOSITE.get('dip5_hold', 5))} 个交易日后回国债（2026-11-26 接入，软持口径，D3 止损与回场仍可提前释放）；") if bl.LIVE_COMPOSITE.get("dip5_thr") is not None else ""}
+<b>优先级：D3/P3 冷却 &gt; 抄底 &gt; 低吸 &gt; 轮动</b>——抄底持仓期不是空仓，低吸自动不触发，两者不会抢同一笔仓位。
+详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
 </div>
 {sub_html}
 {_pd_html}
-{_wstate_bar}</div>"""
+{_wstate_bar}{_dip_bar}</div>"""
     except Exception:                          # noqa: BLE001
         return ""
 
@@ -754,7 +807,7 @@ def _p3_card_html(p3, recent, cost):
     <th class="num">净值</th><th class="num">区间收益</th>
     <th class="num" title="区间总收益按 244 个交易日/年折算的几何平均年收益，与「净值」同一口径">平均年收益</th>
     <th class="num">最大回撤</th><th class="num">夏普</th><th class="num">Calmar</th></tr></thead><tbody>
-    <tr class="hi"><td><b>D3+P3+抄底（现行口径）</b></td>
+    <tr class="hi"><td><b>D3+P3+抄底+低吸（现行口径）</b></td>
       <td class="num">{p3['final']:.4f}</td>
       <td class="num" style="color:{col(p3['total'])}">{p3['total']:+.2f}%</td>
       {_ann_cell}
@@ -1276,7 +1329,7 @@ ZOOM_DAYS = 62            # 「近 2 个月」放大窗口（自然日）
 CURVE_SERIES = [
     ("nv",  "策略净值（规则复算）",  CLR_STRAT, 2.4),
     ("dp",  "D3+P3（不含抄底）",     CLR_D3, 1.9),
-    ("p3",  "D3+P3+抄底（默认口径）", CLR_P3, 1.9),
+    ("p3",  "D3+P3+抄底+低吸（默认口径）", CLR_P3, 1.9),
     ("sh",  "上证指数",              CLR_BENCH_SH, 1.4),
     ("ndx", "纳斯达克综合指数",      CLR_BENCH_NDX, 1.4),
 ]
@@ -3403,7 +3456,13 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
     # 故以 recent["p3"]（同一次回测算出的真实持仓）为准覆盖。
     _p3v = ((recent or {}).get("p3") or {})
     _weak_active = bool(_p3v.get("weak_active"))
-    if _p3v.get("ok") and _p3v.get("hold") and _p3v["hold"] != final_code:
+    # 2026-11-26 空仓期低吸接入：与抄底互斥（抄底持仓期 held!=CASH，低吸不触发）
+    _dip_active = bool(_p3v.get("dip5_active"))
+    _dip_day = _p3v.get("dip5_day")
+    _dip_hold_n = _p3v.get("dip5_hold_n")
+    _dip_thr = _p3v.get("dip5_thr")
+    if _p3v.get("ok") and _p3v.get("hold") and (_p3v["hold"] != final_code
+                                               or _dip_active):
         _ph, _ph_nm = _p3v["hold"], (_p3v.get("hold_name") or "")
         if _ph == "CASH":
             # 2026-10-28 用户需求：空仓期要直观显示「已经空仓几天」
@@ -3414,6 +3473,16 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
         elif _weak_active:
             # 不再重复「排名末位 XXX」——「今日建议持仓 = XXX」与胶囊已说过（2026-10-28 去重）
             final_note = "依据：主选池动横20 <b>全部为负</b>，抄底规则取末位"
+        elif _dip_active:
+            # 2026-11-26 空仓期低吸：明确写出「不是轮动头名，而是空仓期补仓」
+            _dn = (f"，第 <b>{int(_dip_day)}/{int(_dip_hold_n)}</b> 天"
+                   if isinstance(_dip_day, (int, float))
+                   and isinstance(_dip_hold_n, (int, float)) else "")
+            _thr_txt = (f"roc5 ≤ {_dip_thr:.0f}%" if isinstance(_dip_thr, (int, float))
+                        else "池内急跌")
+            final_note = (f"依据：主口径处于空仓期，且主选池有标的 <b>{_thr_txt}</b> → "
+                          f"低吸买入最弱标的、持 {int(_dip_hold_n) if isinstance(_dip_hold_n, (int, float)) else 5} "
+                          f"个交易日{_dn}（非轮动头名，到期回国债）")
         else:
             final_note = (f"主口径调整为 <b>{_ph} {html.escape(_ph_nm)}</b>")
         final_code, final_nm = _ph, _ph_nm
@@ -5942,6 +6011,15 @@ def main():
             # 波动率闸门（2026-10-31 接入）：阈值 + 窗口内被拦次数
             weak_max_vol=_p3.get("weak_max_vol"),
             weak_skip_n=_p3.get("weak_skip_n"),
+            # 空仓期低吸（2026-11-26 接入）：active=今日持仓由低吸产生；
+            # n=窗口内触发次数；last=最近一笔建仓标的。notify.py 暂不消费这些字段，
+            # 但落盘是必须的 —— 否则「页面说有低吸、state 里查不到」无法对账。
+            dip5_active=bool(_p3.get("dip5_active")),
+            dip5_thr=_p3.get("dip5_thr"),
+            dip5_hold=_p3.get("dip5_hold_n")
+            or bl.LIVE_COMPOSITE.get("dip5_hold", 5),
+            dip5_n=len(_p3.get("dip5_log") or []),
+            dip5_last=(_p3.get("dip5_last") or {}).get("code"),
             nav_default=_p3.get("final"),
             calmar_default=_p3.get("calmar"),
             # 防守位（512040）MA200 偏离与买线（%，买线 = (VE_BUY−1)×100 = −3.0）

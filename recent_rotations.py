@@ -648,7 +648,14 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
               value_engine=value_engine,
               # ★ 2026-11-01：空仓期持国债必须进 kw，否则「仅P3 / D3+P3」等参照线
               #   仍是现金口径，与主口径的净值曲线不可比。
-              cash_proxy=bl.LIVE_COMPOSITE.get("cash_proxy"))
+              cash_proxy=bl.LIVE_COMPOSITE.get("cash_proxy"),
+              # ★ 2026-11-26：空仓期低吸同理必须进 kw —— 三条净值线（主口径 /
+              #   D3+P3 / 仅P3）都含低吸，彼此仍然「只差抄底一个变量」，否则
+              #   曲线差异会混入低吸，读图时无法归因。唯一事实源仍是 LIVE_COMPOSITE。
+              #   🔴 逐项传参铁律：LIVE_COMPOSITE 加参必须同步这里，否则日报静默退回旧口径。
+              dip5_thr=bl.LIVE_COMPOSITE.get("dip5_thr"),
+              dip5_hold=bl.LIVE_COMPOSITE.get("dip5_hold", 5),
+              dip5_hard=bl.LIVE_COMPOSITE.get("dip5_hard", False))
     # 主口径：D3 + P3 叠加 + 抄底模块（抄底参数同样来自 LIVE_COMPOSITE，唯一事实源）
     r = bl.backtest(panel, dates, start_i, end_i, pool, defensive,
                     loss_cool=D3_THR, loss_days=D3_DAYS,
@@ -923,6 +930,19 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
             break
     weak_active = bool(_lt and "抄底" in str(_lt.get("reason") or ""))
     weak_last = _we[-1] if _we else None
+    # ---- 空仓期低吸（2026-11-26 接入）：当前持仓是否由低吸产生 + 第几天 ----
+    # reason 形如「空仓期低吸(roc5 -7.3%)」或「空仓期低吸持有(3/5)」。
+    # 抄底与低吸互斥（抄底持仓期 held!=CASH，低吸不触发），故两者不会同时为 True。
+    _dip_rsn = str((_lt or {}).get("reason") or "")
+    dip5_active = ("低吸" in _dip_rsn)
+    dip5_day = dip5_hold_n = None
+    if "低吸持有(" in _dip_rsn:
+        try:
+            _a, _b = _dip_rsn.split("低吸持有(", 1)[1].split(")", 1)[0].split("/", 1)
+            dip5_day, dip5_hold_n = int(_a), int(_b)
+        except Exception:                      # noqa: BLE001
+            dip5_day = dip5_hold_n = None
+    dip5_log = r.get("dip5_log") or []
     rc = r.get("roc_cools") or []
     rci = ri.get("roc_cools") or []
 
@@ -1107,6 +1127,12 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         # weak_last=最近一次抄底（date/code/name/m/**vol**）；weak_n=窗口内总触发次数
         # weak_skips=被「波动率闸门」拦下的次数（2026-10-31 接入 weak_max_vol）
         weak_active=weak_active, weak_last=weak_last, weak_n=len(_we),
+        # 空仓期低吸（2026-11-26 接入）：dip5_active=今天这笔持仓是否由低吸产生；
+        # dip5_day/dip5_hold_n=当前持有第几天/总天数；dip5_log=窗口内全部低吸明细；
+        # dip5_last=最近一次低吸建仓记录（供卡片显示标的名与 roc5）
+        dip5_active=dip5_active, dip5_day=dip5_day, dip5_hold_n=dip5_hold_n,
+        dip5_log=dip5_log, dip5_last=(dip5_log[-1] if dip5_log else None),
+        dip5_thr=bl.LIVE_COMPOSITE.get("dip5_thr"),
         weak_skip_n=len(_ws), weak_skip_last=_wsk,
         weak_max_vol=bl.LIVE_COMPOSITE.get("weak_max_vol", 0),
         weak_cd=bl.LIVE_COMPOSITE.get("weak_cd", 0),
