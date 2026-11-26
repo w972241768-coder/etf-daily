@@ -4527,9 +4527,8 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             # 2026-11-26：空仓日只是「卖出换国债」，不是买入新标的 ⇒ 琥珀色高亮太重，
             #   会跟上面的红色空仓结论一起抢注意力。降级成淡灰提示：信息不丢，视觉让位。
             _sop_bar = (
-                '<div class="sopbar light">⏱ 今日<b>卖出</b>换持 '
-                f'<b>{CASH_PROXY} 国债</b>：尾盘 <b>14:50~14:57</b> 执行最优；'
-                '只能次日则 <b>9:32~9:35</b> 开盘。</div>')
+                '<div class="sopbar light">⏱ 执行时点：尾盘 <b>14:50~14:57</b> 最优；'
+                '只能次日则 <b>9:32~9:35</b> 开盘（勿抢 9:25 竞价）。</div>')
         else:
             _sop_bar = (
                 '<div class="sopbar">⏱ <b>今日需换仓</b>：当日尾盘 '
