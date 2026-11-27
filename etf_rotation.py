@@ -182,9 +182,20 @@ def _dip_html(p3) -> str:
 
         # ---- 收起态：一行药丸 ----
         if act and isinstance(day, (int, float)):
-            head = (f'今日持有 {last.get("code", "")} '
-                    f'{html.escape(str(last.get("name", "")))}'
+            # 🔴 2026-11-27 修复（首页两个标的打架）：原来标题用 last["code"]，
+            #   而 last = dip5_log[-1] 是「最后一笔**已平仓**记录」——正在持仓的那笔
+            #   还没进 dip5_log，于是标题显示上一笔的历史标的（如 563300），
+            #   天数却来自当前持仓 ⇒ 「持 A（1/5）」与主胶囊「持 B」互相矛盾。
+            #   持仓中必须用引擎给的当前代码 dip5_code，缺失时才退回 last。
+            _cur = (p3 or {}).get("dip5_code") or last.get("code", "")
+            _cur_nm = (p3 or {}).get("dip5_name") or last.get("name", "")
+            head = (f'今日持有 {_cur} {html.escape(str(_cur_nm))}'
                     f'（{int(day)}/{hold_n}）')
+            # 2026-11-27：低吸标的恰好=当日轮动头名时（历史 6/35 笔），
+            # 两处说的是同一笔仓位，别让用户以为要买两次。
+            _rot_code = (p3 or {}).get("hold")
+            if _rot_code and _cur and _rot_code == _cur:
+                head += '<span class="dipmeta">（与轮动持仓同一笔）</span>'
             meta = ("<b>今日尾盘卖出</b>" if due else "到期回国债")
         else:
             head = f"空仓期低吸 · N={hold_n}"

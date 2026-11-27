@@ -401,6 +401,11 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              dip5_hold: int = 5,
              dip5_hard: bool = False,
              dip5_stop_pct: Optional[float] = None,   # A2 独立止损（相对建仓价），None/0=关
+             # 🔴 2026-11-27：日报为了「求值锚定日信号」会在末尾补一根同价虚拟 K 线。
+             #   虚拟行与末根同价 ⇒ roc5 完全相同 ⇒ 会**重复触发**一次低吸建仓（假信号），
+             #   并让 dip5_state 在虚拟行上记出一个不存在的持仓。
+             #   传 True 时：最后一根 K 线只允许「延续已有低吸仓」，禁止新开仓。
+             dip5_no_new_on_last: bool = False,
              pos_frac: Optional[float] = None,
              add_drop: float = 0.01,
              # 成交时点审计（2026-11-01 专家第四轮）：
@@ -954,9 +959,12 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                                  ("独立止损" if _stop else "基线回场"))))
                     dip5_code = None
             if dip5_code is None and target == "CASH" and held == "CASH":
+                # 虚拟末行禁止新开仓（见 dip5_no_new_on_last 说明）
+                _no_new = bool(dip5_no_new_on_last and i >= (end_i - 1))
                 _row = _dip_roc5.iloc[i]
-                _cand = [c for c in _row.index
-                         if pd.notna(_row[c]) and float(_row[c]) <= dip5_thr]
+                _cand = ([] if _no_new else
+                         [c for c in _row.index
+                          if pd.notna(_row[c]) and float(_row[c]) <= dip5_thr])
                 if _cand:
                     _c = min(_cand, key=lambda x: _row[x])
                     dip5_code = _c
@@ -1099,14 +1107,15 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
         head_log.append((dates[i + 1], eff_head))
         held_log.append((dates[i + 1], target))
         navs.append((dates[i + 1], nav))
-        # 2026-11-27：逐日低吸持仓状态，键与 held_log 一致（dates[i+1] = 该日收盘持仓）。
+        # 2026-11-27：逐日低吸持仓状态。🔴 键必须用 dates[i]（= 决策/成交日），
+        # 与 trades.date 同语义；先前误用 dates[i+1]（= 持仓生效日，held_log/navs 的口径），
+        # 导致日报查 dip5_state 与查 trades 相差一天 ⇒ 主胶囊与低吸胶囊显示两个标的。
         # day = i - entry_i + 1（建仓当日算 1/N），与 reason 的「持有(k/N)」同口径。
-        # 日报按 asof 直接查，不再从 trades.reason 反推（续持日不进 trades 的 bug）。
         if dip5_code is not None and target == dip5_code:
-            dip5_state.append((dates[i + 1], dip5_code,
+            dip5_state.append((dates[i], dip5_code,
                                int(i - dip5_entry_i + 1), int(dip5_hold)))
         else:
-            dip5_state.append((dates[i + 1], None, None, int(dip5_hold)))
+            dip5_state.append((dates[i], None, None, int(dip5_hold)))
 
     nd = pd.Series({d.strftime("%Y-%m-%d"): v for d, v in navs})
     return dict(navs=nd, trades=trades, held_log=held_log,

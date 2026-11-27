@@ -671,7 +671,11 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
               dip5_thr=bl.LIVE_COMPOSITE.get("dip5_thr"),
               dip5_hold=bl.LIVE_COMPOSITE.get("dip5_hold", 5),
               dip5_hard=bl.LIVE_COMPOSITE.get("dip5_hard", False),
-              dip5_stop_pct=bl.LIVE_COMPOSITE.get("dip5_stop_pct"))
+              dip5_stop_pct=bl.LIVE_COMPOSITE.get("dip5_stop_pct"),
+              # 🔴 2026-11-27：本函数的 panel 末尾有一根**同价虚拟行**（求值锚定日信号）。
+              #   虚拟行 roc5 与末根相同 ⇒ 会重复触发一次低吸建仓，并让首页出现
+              #   「主胶囊持 A、低吸胶囊持 B」的矛盾。故禁止虚拟行新开仓。
+              dip5_no_new_on_last=True)
     # 主口径：D3 + P3 叠加 + 抄底模块（抄底参数同样来自 LIVE_COMPOSITE，唯一事实源）
     r = bl.backtest(panel, dates, start_i, end_i, pool, defensive,
                     loss_cool=D3_THR, loss_days=D3_DAYS,
@@ -954,18 +958,27 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     #   仍写「低吸买入」。改为引擎返回的逐日 dip5_state 按 asof 直接查。
     dip5_log = r.get("dip5_log") or []
     _dip_state = r.get("dip5_state") or []
+    # 🔴 2026-11-27 修复（首页两个标的打架）：asof 可能**晚于**回测末日
+    #   （盘中快照补了当日 K 线，但回测循环只跑到 panel 末根）。此时不能沿用
+    #   最后一条 dip5_state —— 那条属于上一个交易日，会与 trades 的当日持仓错位，
+    #   出现「主胶囊说持 A、低吸胶囊说持 B」。改为：asof 严格晚于末日 ⇒ 判无低吸。
     _dip_today = None
-    for _d, _c, _day, _hold in _dip_state:
-        if str(_d)[:10] <= asof:
-            _dip_today = (_c, _day, _hold)
-        else:
-            break
+    _dip_last_d = (str(_dip_state[-1][0])[:10] if _dip_state else None)
+    _dip_beyond = bool(_dip_last_d and asof > _dip_last_d)
+    if not _dip_beyond:
+        for _d, _c, _day, _hold in _dip_state:
+            if str(_d)[:10] <= asof:
+                _dip_today = (_c, _day, _hold)
+            else:
+                break
     if _dip_today and _dip_today[0]:
         dip5_active = True
         dip5_day, dip5_hold_n = _dip_today[1], _dip_today[2]
+        dip5_code, dip5_name = _dip_today[0], bl.NAMES.get(_dip_today[0], _dip_today[0])
     else:
         dip5_active = False
         dip5_day = dip5_hold_n = None
+        dip5_code = dip5_name = None
     rc = r.get("roc_cools") or []
     rci = ri.get("roc_cools") or []
 
@@ -1154,6 +1167,9 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         # dip5_day/dip5_hold_n=当前持有第几天/总天数；dip5_log=窗口内全部低吸明细；
         # dip5_last=最近一次低吸建仓记录（供卡片显示标的名与 roc5）
         dip5_active=dip5_active, dip5_day=dip5_day, dip5_hold_n=dip5_hold_n,
+        # 🔴 2026-11-27：当前正在持仓的代码/名称。页面标题必须用它，
+        #   不能用 dip5_last（那是最后一笔已平仓记录，持仓中会错位成上一笔）。
+        dip5_code=dip5_code, dip5_name=dip5_name,
         dip5_log=dip5_log, dip5_last=(dip5_log[-1] if dip5_log else None),
         dip5_thr=bl.LIVE_COMPOSITE.get("dip5_thr"),
         dip5_stop_pct=bl.LIVE_COMPOSITE.get("dip5_stop_pct"),
