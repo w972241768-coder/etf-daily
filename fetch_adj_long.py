@@ -67,10 +67,68 @@ UNIVERSE = {
     "399006": ("创业板指", "sz"),
     # ---- 防守位 (2026-09-24 起: 512040 价值ETF富国, 别名"国信价值") ----
     "512040": ("价值ETF富国", "sh"),
+    # ---- 空仓载体 511010 国债ETF（🔴 2026-11-27 补）----
+    # 之前清单漏了它：照 online_data 提示「重跑 fetch」会把国债列从生产 CSV 抹掉，
+    # backtest 的 cash_proxy 静默退回 0 收益 ⇒ 整条净值曲线被压低（实测 −5.8%）。
+    # 注意：它 role=cash，不参与排名（read_pools 只读 role 为空/defensive/watch）。
+    "511010": ("国债ETF国泰", "sh"),
+}
+
+# 🔴 2026-11-27：生产 CSV 必需的列。缺任何一列 ⇒ 拒绝覆盖，防止「某个接口失败
+# 先把旧文件写坏」。固定包含 9 只主选 + 防守 + 空仓载体 + 基准。
+REQUIRED_CODES = {
+    "510300", "159967", "563300", "518880", "513100",
+    "588170", "516080", "561700", "513660",  # 主选 9
+    "512040",                                  # 防守
+    "511010",                                  # 空仓载体
+    "000001",                                  # 基准
 }
 
 URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
 HEAD = {"User-Agent": "Mozilla/5.0", "Referer": "https://gu.qq.com/"}
+
+# 🔴 2026-11-27：腾讯 qfq 对**现金分红**用「减法前复权」（P−ΣD），只有拆分才等比。
+# 后果是除息日之前的价格路径被压低 ⇒ 早期到后期涨幅被放大，历史净值高估 11~15%。
+# 落盘前必须把这三只还原成等比复权，否则重跑本脚本会把生产 CSV 改回减法口径。
+# 分红表来自 R4 核对、R5 自检（不复权价 ÷ 指数逐年中位 0.001003~0.001016）。
+CASH_DIV = {
+    "510300": [("2014-01-21", 0.048), ("2015-01-20", 0.035), ("2016-01-20", 0.051),
+               ("2017-01-23", 0.055), ("2018-01-23", 0.046), ("2019-01-16", 0.059),
+               ("2019-12-11", 0.062), ("2021-01-18", 0.072), ("2022-01-19", 0.075),
+               ("2023-01-16", 0.064), ("2024-01-18", 0.069), ("2025-06-18", 0.088),
+               ("2026-01-19", 0.123)],
+    "512040": [("2023-12-13", 0.104)],
+    "511010": [("2025-09-23", 1.45), ("2025-12-26", 0.6542), ("2026-03-25", 0.5715),
+               ("2026-06-25", 0.8144), ("2026-09-18", 0.6204)],
+}
+
+
+def to_ratio(rows, divs):
+    """rows=[(code,date,o,h,l,c)]（减法前复权）→ 现金分红标的改等比，四价同乘。"""
+    import pandas as pd
+    df = pd.DataFrame(rows, columns=["code", "date", "o", "h", "l", "c"])
+    df["_d"] = pd.to_datetime(df["date"], format="%Y%m%d")
+    df = df.sort_values("_d").reset_index(drop=True)
+    close = df["c"].astype(float)
+    s = pd.Series(0.0, index=df.index)
+    for d, D in divs:
+        dt = pd.Timestamp(d)
+        if df["_d"].iloc[0] < dt:
+            s[df["_d"] < dt] += D
+    raw = close + s
+    fac = pd.Series(1.0, index=df.index)
+    for d, D in divs:
+        dt = pd.Timestamp(d)
+        mask = df["_d"] == dt
+        if mask.any():
+            fac[df["_d"] < dt] *= 1.0 - D / float(raw[mask].iloc[0])
+    mult = (raw * fac / close).clip(lower=1e-6)
+    out = []
+    for i, r in df.iterrows():
+        m = float(mult.iloc[i])
+        out.append((r["code"], r["date"], round(r["o"] * m, 6),
+                    round(r["h"] * m, 6), round(r["l"] * m, 6), round(r["c"] * m, 6)))
+    return out
 
 # 分段: 每段 2 年, 段间重叠约 1 年 (腾讯单次上限 ~730 根)
 # ★ 2026-10-26：起点改为可由环境变量 ADJ_BEG 覆盖（默认 2018-12-01，行为不变），
@@ -145,6 +203,9 @@ def main():
             report.append((code, name, "FAIL", 0, "", "", str(errs)))
             print(f"[FAIL] {code} {name}: {errs}", flush=True)
             continue
+        # 🔴 2026-11-27：现金分红标的落盘前从减法前复权改等比（与生产 CSV 口径一致）
+        if code in CASH_DIV:
+            rows = to_ratio(rows, CASH_DIV[code])
         allrows.extend(rows)
         report.append((code, name, "OK", len(rows), rows[0][1], rows[-1][1],
                        rows[-1][5]))
@@ -152,16 +213,38 @@ def main():
               f"{rows[0][1]}~{rows[-1][1]}  last={rows[-1][5]}", flush=True)
 
     allrows.sort(key=lambda x: (x[0], x[1]))
-    with open(OUT, "w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh)
-        w.writerow(["code", "date", "open", "high", "low", "close"])
-        w.writerows(allrows)
+
+    # 🔴 2026-11-27：写前硬校验 + 原子替换。旧逻辑是「先覆盖生产 CSV，再判断失败」，
+    # 任何一个 codes 取数失败都会把生产文件写坏，且 backtest 缺列时静默退 0 收益。
+    got = set(r[0] for r in allrows)
+    missing = sorted(REQUIRED_CODES - got)
+    if missing:
+        print(f"[ABORT] 必需列缺失，拒绝覆盖 {OUT}: {missing}", flush=True)
+        print("FAILED CODES:", [r for r in report if r[2] != "OK"], flush=True)
+        sys.exit(2)
+    # 同原子写入：先写临时文件 + fsync，再 os.replace。中途异常不碰生产文件。
+    tmp = OUT + ".tmp"
+    try:
+        with open(tmp, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["code", "date", "open", "high", "low", "close"])
+            w.writerows(allrows)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, OUT)
+    except Exception as e:                     # noqa: BLE001
+        print(f"[ABORT] 写入失败，生产文件未改动: {e}", flush=True)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        sys.exit(3)
     print(f"\nWROTE {OUT}  rows={len(allrows)}  "
-          f"codes={len(set(r[0] for r in allrows))}")
+          f"codes={len(got)}  required=OK({len(REQUIRED_CODES)})")
     bad = [r for r in report if r[2] != "OK"]
     if bad:
-        print("FAILED CODES:", bad)
-        sys.exit(1)
+        # 必需列都在，非必需列失败只告警（不再写坏文件）
+        print("WARN 非必需 codes 取数失败:", bad, flush=True)
 
 
 if __name__ == "__main__":

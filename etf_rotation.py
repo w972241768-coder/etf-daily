@@ -175,34 +175,43 @@ def _dip_html(p3) -> str:
         last = (p3 or {}).get("dip5_last") or {}
         neg = lambda s: str(s).replace("-", "\u2212")      # 负号用 − (U+2212) 更整齐
 
+        # 2026-11-27：A2 独立止损参数（None/0 = 关闭）
+        stop_pct = (p3 or {}).get("dip5_stop_pct")
+        # 满 N 日当日 = 今日尾盘卖出、下一交易日生效 ⇒ 必须显式预警（旧版无）
+        due = bool(act and isinstance(day, (int, float)) and day >= hold_n)
+
         # ---- 收起态：一行药丸 ----
         if act and isinstance(day, (int, float)):
             head = (f'今日持有 {last.get("code", "")} '
                     f'{html.escape(str(last.get("name", "")))}'
                     f'（{int(day)}/{hold_n}）')
-            meta = "到期回国债"
+            meta = ("<b>今日尾盘卖出</b>" if due else "到期回国债")
         else:
             head = f"空仓期低吸 · N={hold_n}"
             meta = (f"{len(lg)} 次" if lg else "未触发过")
 
         # ---- 展开态：四行键值 ----
+        _stop_txt = (f"独立止损 <b>{stop_pct*100:.0f}%</b>" if isinstance(stop_pct, (int, float))
+                     and stop_pct > 0 else "无独立止损")
         rows = [
             f'<div class="diprow"><span class="dipk">触发</span>'
             f'<span class="dipv">阈值 <b>{neg(f"{thr:.0f}%")}</b>'
             f'<span class="sep">｜</span>持有 <b>{hold_n}</b> 个交易日'
-            f'<span class="sep">｜</span>软持：D3 止损 / 基线回场可提前释放</span></div>'
+            f'<span class="sep">｜</span>软持：{_stop_txt} / 基线回场可提前释放</span></div>'
         ]
         if lg:
             rows.append(
                 f'<div class="diprow"><span class="dipk">窗口</span>'
                 f'<span class="dipv">触发 <b>{len(lg)}</b> 次'
-                f'<span class="sep">｜</span>单笔均值 <b>{neg(f"{avg:+.2f}%")}</b>'
+                f'<span class="sep">｜</span>单笔均值(毛) <b>{neg(f"{avg:+.2f}%")}</b>'
                 f'<span class="sep">｜</span>胜率 <b>{win:.0f}%</b></span></div>')
         rows.append(
             f'<div class="diprow"><span class="dipk">今日</span>'
             f'<span class="dipv">'
-            + ('持有中（到期或基线回场即释放）' if act else
-               '未触发（需「轮动要空仓 + 当前已空仓 + 池内 5 日跌幅触线」三条件同时成立）')
+            + (f'<b>持有第 {int(day)}/{hold_n} 天，今日尾盘卖出回国债</b>' if due else
+               (f'持有中第 {int(day)}/{hold_n} 天（独立止损或基线回场可提前释放）'
+                if act and isinstance(day, (int, float)) else
+                '未触发（需「轮动要空仓 + 当前已空仓 + 池内 5 日跌幅触线」三条件同时成立）'))
             + '</span></div>')
         if last and isinstance(last.get("ret"), (int, float)):
             _lr = neg("%+.2f%%" % last["ret"])
@@ -515,8 +524,17 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
             #   ⇒ 渲染出 <b><b>电力ETF博时</b></b>。改为只在外层加粗。
             _same = (CASH_LABEL if p3.get("hold") == "CASH"
                      else html.escape(str(p3_hold_nm)))
-            concl = (f"今日持仓 <b>{_same}</b> → <b>无需任何操作</b>。")
-            tone = "ok"
+            # 🔴 2026-11-27 修复：只看「目标==基础持仓」不足以判「无需动作」——
+            #   基线回场日昨天手里是低吸/抄底仓，今天目标虽与基础口径一致，但要卖出换回。
+            #   必须同时看昨日实际持仓 prev_hold。
+            _prev = p3.get("prev_hold")
+            if _prev is not None and _prev != p3.get("hold"):
+                concl = (f"昨日实际持 <b>{html.escape(str(p3.get('prev_hold_name') or _prev))}</b>，"
+                         f"今日目标 <b>{_same}</b> → <b>需换仓</b>（基线回场）。")
+                tone = "diff"
+            else:
+                concl = (f"今日持仓 <b>{_same}</b> → <b>无需任何操作</b>。")
+                tone = "ok"
         elif p3.get("hold") == "CASH":
             concl = (f"<b>今日空仓</b>（D3 止损 或 P3 追高触发）→ "
                      f"<b>卖出换持 {CASH_PROXY} 国债</b>。" if CASH_PROXY else
@@ -539,8 +557,16 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
             pill_cls = "warn"
             pill = "⚠ 默认口径本次未算出 · 暂按基础轮动执行"
         elif _h_p3 == _h_base:
-            pill_cls = "ok"
-            pill = f"✓ 今日持 <b>{_h_disp}</b> → <b>无需动作</b>"
+            # 🔴 2026-11-27：昨日实际持仓 != 今日目标（基线回场日）时，
+            #   目标虽与基础口径一致，但要动手卖出，不能说「无需动作」。
+            _prev = p3.get("prev_hold")
+            if _prev is not None and _prev != _h_p3:
+                pill_cls = "diff"
+                pill = (f"⚠ 昨日持 <b>{html.escape(str(p3.get('prev_hold_name') or _prev))}</b>"
+                        f" → 今日<b>换回 {_h_disp}</b>（基线回场）")
+            else:
+                pill_cls = "ok"
+                pill = f"✓ 今日持 <b>{_h_disp}</b> → <b>无需动作</b>"
         elif _weak:
             # 抄底触发：这不是「口径打架」，而是规则主动换持末位，要说得像件事
             pill_cls = "diff"
@@ -608,9 +634,9 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
 </tr></thead><tbody>{body}</tbody></table></div>
 {_wr_html}
 <div class="cbsn">{concl}
-<span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；{(f"<b>空仓期均自动转持 {CASH_PROXY} 国债ETF</b>（2026-11-01 起，不再是现金 0 收益）；") if CASH_PROXY else ""}
+<span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底+低吸</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；{(f"<b>空仓期均自动转持 {CASH_PROXY} 国债ETF</b>（2026-11-01 起，不再是现金 0 收益）；") if CASH_PROXY else ""}
 抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做{(("、末位 60 日下行波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0)) + "%") if bl.LIVE_COMPOSITE.get("weak_max_vol", 0) else "")}）。
-{(f"低吸＝<b>空仓期补仓</b>：轮动本来就要空仓、且当前已空仓时，若主选池任一只 5 日跌幅 ≤{bl.LIVE_COMPOSITE.get('dip5_thr'):.0f}%，则买入<b>跌最惨那只</b>、持 {int(bl.LIVE_COMPOSITE.get('dip5_hold', 5))} 个交易日后回国债（2026-11-26 接入，软持口径，D3 止损与回场仍可提前释放）；") if bl.LIVE_COMPOSITE.get("dip5_thr") is not None else ""}
+{(f"低吸＝<b>空仓期补仓</b>：轮动本来就要空仓、且当前已空仓时，若主选池任一只 5 日跌幅 ≤{bl.LIVE_COMPOSITE.get('dip5_thr'):.0f}%，则买入<b>跌最惨那只</b>、持 {int(bl.LIVE_COMPOSITE.get('dip5_hold', 5))} 个交易日后回国债（2026-11-26 接入；2026-11-27 改为<b>独立止损 {bl.LIVE_COMPOSITE.get('dip5_stop_pct', 0)*100:.0f}%</b>——相对建仓价、不占 D3 冷却、防守期也生效，基线回场仍可提前释放）；") if bl.LIVE_COMPOSITE.get("dip5_thr") is not None else ""}
 <b>优先级：D3/P3 冷却 &gt; 抄底 &gt; 低吸 &gt; 轮动</b>——抄底持仓期不是空仓，低吸自动不触发，两者不会抢同一笔仓位。
 详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
@@ -1965,8 +1991,8 @@ def _curve_block(curve):
                "<b>不含抄底模块</b>），与主口径只差「抄底」一个变量 —— "
                "两条线的差距就是抄底的实际贡献") \
         if "dp" in pct else ""
-    p3_note = ("；<b style=\"color:#c2185b\">D3+P3+抄底</b>是<b>当前的默认执行组合</b>"
-               "（在 D3+P3 之上再叠加「主选池动横20 全为负时换持末位」），"
+    p3_note = ("；<b style=\"color:#c2185b\">D3+P3+抄底+低吸</b>是<b>当前的默认执行组合</b>"
+               "（在 D3+P3 之上再叠加「主选池动横20 全为负时换持末位」与「空仓期低吸」），"
                "与 ② 里的卡片同源") \
         if "p3" in pct else ""
 
@@ -3510,11 +3536,19 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             _dn = (f"，第 <b>{int(_dip_day)}/{int(_dip_hold_n)}</b> 天"
                    if isinstance(_dip_day, (int, float))
                    and isinstance(_dip_hold_n, (int, float)) else "")
-            _thr_txt = (f"roc5 ≤ {_dip_thr:.0f}%" if isinstance(_dip_thr, (int, float))
-                        else "池内急跌")
-            final_note = (f"依据：主口径处于空仓期，且主选池有标的 <b>{_thr_txt}</b> → "
-                          f"低吸买入最弱标的、持 {int(_dip_hold_n) if isinstance(_dip_hold_n, (int, float)) else 5} "
-                          f"个交易日{_dn}（非轮动头名，到期回国债）")
+            _due = (isinstance(_dip_day, (int, float)) and isinstance(_dip_hold_n, (int, float))
+                    and _dip_day >= _dip_hold_n)
+            if _due:
+                # 🔴 2026-11-27：满 N 日当日必须显式提示卖出，否则用户不知道今天要动手。
+                final_note = (f"低吸已满 <b>{int(_dip_hold_n)}/{int(_dip_hold_n)}</b> 天 → "
+                              f"<b>今日尾盘卖出 {html.escape(str(_ph))}、换回国债</b>"
+                              f"（次日收盘才卖不如不买）")
+            else:
+                _thr_txt = (f"roc5 ≤ {_dip_thr:.0f}%" if isinstance(_dip_thr, (int, float))
+                            else "池内急跌")
+                final_note = (f"依据：主口径处于空仓期，且主选池有标的 <b>{_thr_txt}</b> → "
+                              f"低吸买入最弱标的、持 {int(_dip_hold_n) if isinstance(_dip_hold_n, (int, float)) else 5} "
+                              f"个交易日{_dn}（非轮动头名，到期回国债）")
         else:
             final_note = (f"主口径调整为 <b>{_ph} {html.escape(_ph_nm)}</b>")
         final_code, final_nm = _ph, _ph_nm
@@ -4528,12 +4562,14 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
             #   会跟上面的红色空仓结论一起抢注意力。降级成淡灰提示：信息不丢，视觉让位。
             _sop_bar = (
                 '<div class="sopbar light">⏱ 执行时点：尾盘 <b>14:50~14:57</b> 最优；'
-                '只能次日则 <b>9:32~9:35</b> 开盘（勿抢 9:25 竞价）。</div>')
+                '只能次日则 <b>9:32~9:35</b> 开盘（勿抢 9:25 竞价）。'
+                '低吸/抄底<b>次日收盘买不如不做</b>。</div>')
         else:
             _sop_bar = (
                 '<div class="sopbar">⏱ <b>今日需换仓</b>：当日尾盘 '
                 '<b>14:50~14:57</b> 执行最优；只能次日则 <b>9:32~9:35</b> 开盘'
-                '（勿抢 9:25 竞价，跨境标的先看 IOPV 溢价 ≤2%）。</div>')
+                '（勿抢 9:25 竞价，跨境标的先看 IOPV 溢价 ≤2%）。'
+                '低吸/抄底<b>次日收盘买不如不做</b>。</div>')
     _guide_table_html = ""
     _guide_sub = ""          # 2026-11-02：孤儿行已并入主胶囊（「（正常轮动 · Calmar X）」）
     if not _plain_hold:
@@ -6109,6 +6145,8 @@ def main():
             # 但落盘是必须的 —— 否则「页面说有低吸、state 里查不到」无法对账。
             dip5_active=bool(_p3.get("dip5_active")),
             dip5_thr=_p3.get("dip5_thr"),
+            dip5_stop_pct=_p3.get("dip5_stop_pct"),   # 2026-11-27 A2 独立止损参数
+            dip5_day=_p3.get("dip5_day"),             # 持有第几天（满 N 日为卖出日）
             dip5_hold=_p3.get("dip5_hold_n")
             or bl.LIVE_COMPOSITE.get("dip5_hold", 5),
             dip5_n=len(_p3.get("dip5_log") or []),

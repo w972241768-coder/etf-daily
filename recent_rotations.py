@@ -109,31 +109,46 @@ def _extend_panel(panel: pd.DataFrame, live_df, pivot: Optional[str]):
 
     live = live_df.copy()
     live["date"] = pd.to_datetime(live["date"])
-    live = live[live["date"] > tail_cut]
-    if not len(live):
-        return panel, f"长历史已含 {tail_cut:%Y-%m-%d} 之后数据"
-
-    frames, notes, bad = {}, [], []
+    # 🔴 2026-11-27 修复：原代码先 `live = live[date > tail_cut]` 再做重叠校验，
+    #   于是 ov 恒空、ratio 恒等于 1 ⇒ 零防护。改为**过滤前**校验重叠末日。
+    frames, notes, bad, warn = {}, [], [], []
     for code, g in live.groupby("code"):
         code = str(code).zfill(6)
         if code not in panel.columns:
             continue
         g = g.sort_values("date").drop_duplicates("date", keep="last")
-        s = g.set_index("date")["close"].astype(float)
-        s = s[s.index <= end_d]
-        if not len(s):
+        s_all = g.set_index("date")["close"].astype(float)
+        s_all = s_all[s_all.index <= end_d]
+        if not len(s_all):
             continue
-        # 口径校验：重叠末日两边必须同价
+        # 口径校验：重叠末日两边必须同价（取 panel 最后一个交易日，未必等于 pivot）
         base = float(panel[code].loc[tail_cut])
-        ov = s[s.index == tail_cut]
+        ov = s_all[s_all.index >= tail_cut]
         if len(ov) and base > 0:
             ratio = float(ov.iloc[0]) / base
             if abs(ratio - 1.0) > 3e-3:
                 bad.append(f"{code}(r={ratio:.4f})")
                 continue
-        s = s[s.index > tail_cut]
-        if len(s):
-            frames[code] = s
+        s = s_all[s_all.index > tail_cut]
+        if not len(s):
+            continue
+        # 🔴 T0 后除息/拆分防护：在线段首日相对长历史末日的跳变，若为负且幅度
+        #   超过该 ETF 合理日波动（用长历史近 60 日 |收益| 的 3 倍 + 3% 作阈值），
+        #   判为疑似除息/拆分未复权 ⇒ 该列不拼接，只告警，不引入假跌触发低吸。
+        try:
+            _h = panel[code].dropna().tail(61).astype(float)
+            _vol = float(_h.pct_change().abs().median() or 0.0)
+            _lim = min(0.20, max(0.03, 3.0 * _vol))
+            _jump = float(s.iloc[0]) / base - 1.0
+            if _jump <= -_lim:
+                warn.append(f"{code}(首日跳变 {_jump*100:+.1f}%)")
+                continue
+        except Exception:                      # noqa: BLE001
+            pass
+        frames[code] = s
+    if warn:
+        notes.append("⚠ 以下标的 T0 后首日异常跳变，疑似除息/拆分未复权，未拼接："
+                     + ", ".join(warn))
 
     if bad:
         notes.append("⚠ 以下标的在线/长历史口径不一致，未拼接（期间可能有分红拆分）："
@@ -655,7 +670,8 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
               #   🔴 逐项传参铁律：LIVE_COMPOSITE 加参必须同步这里，否则日报静默退回旧口径。
               dip5_thr=bl.LIVE_COMPOSITE.get("dip5_thr"),
               dip5_hold=bl.LIVE_COMPOSITE.get("dip5_hold", 5),
-              dip5_hard=bl.LIVE_COMPOSITE.get("dip5_hard", False))
+              dip5_hard=bl.LIVE_COMPOSITE.get("dip5_hard", False),
+              dip5_stop_pct=bl.LIVE_COMPOSITE.get("dip5_stop_pct"))
     # 主口径：D3 + P3 叠加 + 抄底模块（抄底参数同样来自 LIVE_COMPOSITE，唯一事实源）
     r = bl.backtest(panel, dates, start_i, end_i, pool, defensive,
                     loss_cool=D3_THR, loss_days=D3_DAYS,
@@ -933,16 +949,23 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
     # ---- 空仓期低吸（2026-11-26 接入）：当前持仓是否由低吸产生 + 第几天 ----
     # reason 形如「空仓期低吸(roc5 -7.3%)」或「空仓期低吸持有(3/5)」。
     # 抄底与低吸互斥（抄底持仓期 held!=CASH，低吸不触发），故两者不会同时为 True。
-    _dip_rsn = str((_lt or {}).get("reason") or "")
-    dip5_active = ("低吸" in _dip_rsn)
-    dip5_day = dip5_hold_n = None
-    if "低吸持有(" in _dip_rsn:
-        try:
-            _a, _b = _dip_rsn.split("低吸持有(", 1)[1].split(")", 1)[0].split("/", 1)
-            dip5_day, dip5_hold_n = int(_a), int(_b)
-        except Exception:                      # noqa: BLE001
-            dip5_day = dip5_hold_n = None
+    # 🔴 2026-11-27 修复 E2：旧代码从最近一笔 trades.reason 反推「低吸持有(k/N)」，
+    #   但续持日不进 trades ⇒ dip5_day 恒 None、满 N 日无卖出预警、第 2~5 天文案
+    #   仍写「低吸买入」。改为引擎返回的逐日 dip5_state 按 asof 直接查。
     dip5_log = r.get("dip5_log") or []
+    _dip_state = r.get("dip5_state") or []
+    _dip_today = None
+    for _d, _c, _day, _hold in _dip_state:
+        if str(_d)[:10] <= asof:
+            _dip_today = (_c, _day, _hold)
+        else:
+            break
+    if _dip_today and _dip_today[0]:
+        dip5_active = True
+        dip5_day, dip5_hold_n = _dip_today[1], _dip_today[2]
+    else:
+        dip5_active = False
+        dip5_day = dip5_hold_n = None
     rc = r.get("roc_cools") or []
     rci = ri.get("roc_cools") or []
 
@@ -1133,6 +1156,7 @@ def _p3_shadow(panel, dates, start_i, end_i, pool, defensive, *, sticky, enter_d
         dip5_active=dip5_active, dip5_day=dip5_day, dip5_hold_n=dip5_hold_n,
         dip5_log=dip5_log, dip5_last=(dip5_log[-1] if dip5_log else None),
         dip5_thr=bl.LIVE_COMPOSITE.get("dip5_thr"),
+        dip5_stop_pct=bl.LIVE_COMPOSITE.get("dip5_stop_pct"),
         weak_skip_n=len(_ws), weak_skip_last=_wsk,
         weak_max_vol=bl.LIVE_COMPOSITE.get("weak_max_vol", 0),
         weak_cd=bl.LIVE_COMPOSITE.get("weak_cd", 0),

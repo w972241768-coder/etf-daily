@@ -164,21 +164,28 @@ LIVE_COMPOSITE = dict(
     # 优先级：抄底 > 低吸。抄底持仓期 held != "CASH"，本块条件自动为假，
     #        天然不会出现「两个模块抢同一笔仓位」的冲突（2026-11-26 专项验证：
     #        用户方案「让位给低吸」在 −6/−8/−10% 三档全负，−0.49 / −1.81 / −3.35pp）。
-    # 实测（引擎内，非净值叠加，主选池 9 只，单边万1，2019-12-31~2026-10-30）：
+    # 实测（引擎内，非净值叠加，主选池 9 只，单边万1，2019-12-31~2026-10-30；减法复权口径）：
     #   现状 19.7361 / −18.00% / C2.57 / 换仓249 / 抄底16
-    #   软持 22.9398 / −17.92% / C2.74 / 换仓288 / 抄底15 / 低吸30  ← 本口径
-    #   硬持 23.2791 / −17.92% / C2.75 / 换仓285 / 抄底14 / 低吸31
-    # ⚠️ 用**软持**（dip5_hard=False）：只比硬持少 0.34x，但 D3 止损与「基线回场」
-    #    仍可提前释放，不牺牲风控。硬持会无视 D3 止损，不建议。
-    # ⚠️ 已知取舍（用户 2026-11-26 确认接受）：
-    #   · IS 段（2020-2023）为负：5.141 → 4.452x，全窗 +3.2x 全靠 2024 年后；
-    #   · 样本仅 30 笔，剔掉前 10 笔后转负（−1.42pp）；2021H1 半年 −7.40pp；
-    #   · 抄底次数 16 → 15（低吸占位期间 held!=CASH，抄底分支被跳过）；回撤仅改善 0.08pp。
+    #   软持（无独立止损）22.9398 / −17.92% / C2.74 / 换仓288 / 抄底15 / 低吸30
+    #   软持 + 独立止损 3% 24.0893x / −17.92% / C2.79 / 抄底16  ← 2026-11-27 现行口径
+    #   （等比复权口径相应为 16.8393 / 20.5142 / 21.60x）
+    # ⚠️ 用**软持**（dip5_hard=False）：满 N 日 / 基线回场 / 独立止损任一成立即释放。
+    # 🔴 2026-11-27 修复：原「D3 止损可提前释放低吸仓」是死代码 —— :912 靠在 reason
+    #    字符串里找 "D3"/"止损"，但 D3 分支从不往 reason 写这两个词 ⇒ 恒 False。
+    #    按用户拍板走 A2：低吸仓用**自己的独立止损**（相对建仓价 ≤ −dip5_stop_pct），
+    #    不顺延 D3 冷却、防守期也生效；与 D3 分支彻底解耦。删除原字符串判据。
+    # ⚠️ 已知取舍（用户 2026-11-26 确认接受，11-27 拍板后继续）：
+    #   · IS 段（2020-2023）为负，全窗增益靠 2024 年后；统计上不能区分于零；
+    #   · 独立止损 3% 仅在 5 次触发，属看到结果后提的规则；长历史同族规则为负，
+    #     因此它是「执行一致性 + 尾部控制」选择，不是已确认的 alpha；
+    #   · 全部按全仓执行（pos_frac 默认 None = 满仓），不做分仓/降仓；
+    #   · 抄底次数 16 → 15（无止损时）→ 16（独立止损后，被 D3 挤占的那笔恢复）。
     # 关掉：把 dip5_thr 改成 None 即可（默认 None = 完全关闭，逐位等价已验证 19.7361）。
-    # ⚠️ 阈值 −4% / −5% 实测都亏（11~21x），不要放松；−6~−8% 才是平台。
+    # ⚠️ 阈值 −4% / −5% 实测都亏（11~21x），不要放松；用户拍板 −6% 暂不调整。
     dip5_thr=-6.0,
     dip5_hold=5,
     dip5_hard=False,
+    dip5_stop_pct=0.03,   # A2：相对建仓价的独立止损；None/0 = 关闭独立止损
 )
 
 
@@ -393,6 +400,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
              dip5_thr: Optional[float] = None,
              dip5_hold: int = 5,
              dip5_hard: bool = False,
+             dip5_stop_pct: Optional[float] = None,   # A2 独立止损（相对建仓价），None/0=关
              pos_frac: Optional[float] = None,
              add_drop: float = 0.01,
              # 成交时点审计（2026-11-01 专家第四轮）：
@@ -480,6 +488,9 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
     dip5_code: Optional[str] = None
     dip5_entry_i = -1
     dip5_log: List[dict] = []
+    # 2026-11-27：逐日低吸持仓状态 (date, code|None, day|None, hold)。
+    # 日报按 asof 直接查，避免「续持日不进 trades ⇒ dip5_day 恒 None」的老 bug。
+    dip5_state: List[tuple] = []
     _dip_roc5 = None
     if dip5_thr is not None:
         _dip_cols = [c for c in pool if c in panel.columns]
@@ -904,12 +915,22 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
         # ================= 2026-11-26 空仓期低吸 =================
         # 触发：target=="CASH" 且 held=="CASH" 且池内任一只 roc5 <= dip5_thr
         # 优先级：抄底 > 低吸（抄底持仓期 held!=CASH，本块自动不触发）
-        # 释放：满 N 日 / 基线要回场 / D3止损（dip5_hard=True 时只认满 N 日）
+        # 释放：满 N 日 / 基线要回场 / A2 独立止损（dip5_hard=True 时只认满 N 日）
+        # 🔴 2026-11-27：原 `_stop = ("D3" in reason) or ("止损" in reason)` 恒 False
+        #    （D3 分支从不往 reason 写这两个词），已删除；改为按建仓价的独立止损，
+        #    不顺延 D3 冷却、防守期同样生效（用户拍板 A2）。
         if _dip_roc5 is not None:
             if dip5_code is not None:
                 _expire = (i - dip5_entry_i) >= dip5_hold
                 _base_back = (target != "CASH" and target != dip5_code)
-                _stop = ("D3" in (reason or "")) or ("止损" in (reason or ""))
+                _stop = False
+                if (dip5_stop_pct and dip5_code in panel.columns
+                        and (i - dip5_entry_i) >= 1
+                        and not pd.isna(panel[dip5_code].iloc[i])):
+                    _e0 = float(panel[dip5_code].iloc[dip5_entry_i])
+                    _stop = (_e0 > 0
+                             and (float(panel[dip5_code].iloc[i]) / _e0 - 1.0)
+                             <= -dip5_stop_pct)
                 if dip5_hard:
                     _base_back = False
                     _stop = False
@@ -921,11 +942,16 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                         dip5_log.append(dict(
                             date=str(dates[dip5_entry_i].date()), code=dip5_code,
                             name=NAMES.get(dip5_code, dip5_code),
+                            # 2026-11-27：显式退出日 + 退出时点日期，供日报判定
+                            # 「持有第 k 天 / 明日到期」；不再靠 reason 字符串反推。
+                            exit_date=str(dates[i].date()),
                             days=int(i - dip5_entry_i),
                             ret=(round((_p1 / _p0 - 1.0) * 100, 2)
                                  if _p0 > 0 else None),
-                            why=("满N日" if _expire
-                                 else ("D3止损" if _stop else "基线回场"))))
+                            # 分类优先级与 R1 审计脚本一致：满N日 > 独立止损 > 基线回场，
+                            # 便于与专家报告逐笔交叉核对；净值不受影响（同日都是同一笔卖出）。
+                            why=("满N日" if _expire else
+                                 ("独立止损" if _stop else "基线回场"))))
                     dip5_code = None
             if dip5_code is None and target == "CASH" and held == "CASH":
                 _row = _dip_roc5.iloc[i]
@@ -1073,6 +1099,14 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
         head_log.append((dates[i + 1], eff_head))
         held_log.append((dates[i + 1], target))
         navs.append((dates[i + 1], nav))
+        # 2026-11-27：逐日低吸持仓状态，键与 held_log 一致（dates[i+1] = 该日收盘持仓）。
+        # day = i - entry_i + 1（建仓当日算 1/N），与 reason 的「持有(k/N)」同口径。
+        # 日报按 asof 直接查，不再从 trades.reason 反推（续持日不进 trades 的 bug）。
+        if dip5_code is not None and target == dip5_code:
+            dip5_state.append((dates[i + 1], dip5_code,
+                               int(i - dip5_entry_i + 1), int(dip5_hold)))
+        else:
+            dip5_state.append((dates[i + 1], None, None, int(dip5_hold)))
 
     nd = pd.Series({d.strftime("%Y-%m-%d"): v for d, v in navs})
     return dict(navs=nd, trades=trades, held_log=held_log,
@@ -1082,7 +1116,7 @@ def backtest(panel: pd.DataFrame, dates: pd.DatetimeIndex, start_i: int, end_i: 
                 cools=cools, cool_n=cool_days_n,
                 roc_cools=roc_cools, roc_n=roc_days_n,
                 weak_events=weak_events, weak_exit_log=weak_exit_log,
-                dip5_log=dip5_log,
+                dip5_log=dip5_log, dip5_state=dip5_state,
                 # 2026-10-28：暴露「当前是否处于抄底锁定期」——日报要像 D3 一样
                 # 显示抄底现在处在什么状态（第几天 / 距离场还差什么）。
                 weak_hold=weak_hold, weak_hold_i=int(weak_hold_i),
