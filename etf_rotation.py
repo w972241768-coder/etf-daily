@@ -667,8 +667,13 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
         if not _wstate_bar:
             _wstate_bar = _wskip_html(((recent.get("p3") or {})),
                                       str(recent.get("asof") or ""))
-        # 2026-11-26：空仓期低吸状态条（未接入时返回空串）
-        _dip_bar = _dip_html(((recent.get("p3") or {})))
+        # 2026-11-26：空仓期低吸状态条
+        # ★ 2026-11-27（用户要求「可以隐藏，或放进 D3+P3+抄底 模块」）：
+        #   首屏只保留**持仓中**的低吸条 —— 那是要动手的事（第几天 / 今天到期卖出）；
+        #   不持有时的「N=5 · 38 次」纯属说明性信息，每天占首屏是噪音，
+        #   下沉到下方 ② 的「D3 + P3 + 抄底」卡片里（见 _p3_card_html）。
+        _dip_bar = (_dip_html(((recent.get("p3") or {})))
+                    if (recent.get("p3") or {}).get("dip5_active") else "")
         return f"""<div class="cbsum {pill_cls}">
 <div class="cbpill"><span class="pillmain">{pill}</span>{_src_tag}
 <details class="cbdet"{_det_open}><summary>回测对比 · 规则</summary>
@@ -681,7 +686,7 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
 <div class="cbsn">{concl}
 <span class="dimtxt">　<b>默认口径＝第一行 D3+P3+抄底+低吸</b>：D3＝换出时亏≥3% 空仓 5 日；P3＝头名 ROC60 进自身历史 95 分位空仓 20 日；{(f"<b>空仓期均自动转持 {CASH_PROXY} 国债ETF</b>（2026-11-01 起，不再是现金 0 收益）；") if CASH_PROXY else ""}
 抄底＝主选池动横20 全为负时换持末位{("、同标的 " + str(bl.LIVE_COMPOSITE["weak_cd"]) + " 日内不重复") if bl.LIVE_COMPOSITE.get("weak_cd", 0) else ""}（池内少于 {bl.LIVE_COMPOSITE.get("weak_min_pool", 0)} 只不做{(("、末位 60 日下行波动率须 ≤" + str(int(bl.LIVE_COMPOSITE.get("weak_max_vol") or 0)) + "%") if bl.LIVE_COMPOSITE.get("weak_max_vol", 0) else "")}）。
-{(f"低吸＝<b>空仓期补仓</b>：轮动本来就要空仓、且当前已空仓时，若主选池任一只 5 日跌幅 ≤{bl.LIVE_COMPOSITE.get('dip5_thr'):.0f}%，则买入<b>跌最惨那只</b>、持 {int(bl.LIVE_COMPOSITE.get('dip5_hold', 5))} 个交易日后回国债（2026-11-26 接入；2026-11-27 改为<b>独立止损 {bl.LIVE_COMPOSITE.get('dip5_stop_pct', 0)*100:.0f}%</b>——相对建仓价、不占 D3 冷却、防守期也生效，基线回场仍可提前释放）；") if bl.LIVE_COMPOSITE.get("dip5_thr") is not None else ""}
+{(f"低吸＝<b>空仓期补仓</b>（阈值 {bl.LIVE_COMPOSITE.get('dip5_thr'):.0f}% / 持 {int(bl.LIVE_COMPOSITE.get('dip5_hold', 5))} 日 / 独立止损 {bl.LIVE_COMPOSITE.get('dip5_stop_pct', 0)*100:.0f}%，详见下方 ② 卡片）；") if bl.LIVE_COMPOSITE.get("dip5_thr") is not None else ""}
 <b>优先级：D3/P3 冷却 &gt; 抄底 &gt; 低吸 &gt; 轮动</b>——抄底持仓期不是空仓，低吸自动不触发，两者不会抢同一笔仓位。
 详细规则与触发明细见下方 ② 的卡片。</span></div>
 </details>
@@ -876,10 +881,48 @@ def _p3_card_html(p3, recent, cost):
                      f'{_ann:+.2f}%</td>' if _ann is not None
                      else '<td class="num dimtxt">—</td>')
 
+        # ---- 低吸小节（2026-11-27 用户要求：从首屏下沉到这里）----
+        # 不持有低吸仓时，首屏不再显示「N=5 · 38 次」这种说明性信息；
+        # 改为在本卡片的规则区展示，需要时点开就能看到阈值/止损/历史表现。
+        _dip_block = ""
+        try:
+            _dthr = p3.get("dip5_thr")
+            if _dthr is not None:
+                _dstop = p3.get("dip5_stop_pct")
+                _dhold = int(p3.get("dip5_hold_n") or
+                             bl.LIVE_COMPOSITE.get("dip5_hold", 5))
+                _dlg = p3.get("dip5_log") or []
+                _drets = [x.get("ret") for x in _dlg
+                          if isinstance(x.get("ret"), (int, float))]
+                _davg = (sum(_drets) / len(_drets)) if _drets else None
+                _dwin = (sum(1 for r in _drets if r > 0) / len(_drets) * 100) if _drets else None
+                _dact = bool(p3.get("dip5_active"))
+                _dday = p3.get("dip5_day")
+                _dstop_txt = (f"独立止损 <b>{_dstop*100:.0f}%</b>"
+                              if isinstance(_dstop, (int, float)) and _dstop > 0
+                              else "无独立止损")
+                _dstat = (f'<span class="d3badge on">持有中 {int(_dday)}/{_dhold}</span>'
+                          f'当前持 <b>{html.escape(str(p3.get("dip5_code") or ""))} '
+                          f'{html.escape(str(p3.get("dip5_name") or ""))}</b>'
+                          if (_dact and isinstance(_dday, (int, float))) else
+                          '<span class="d3badge off">未触发</span>今日无低吸持仓')
+                _dperf = (f'历史 <b>{len(_dlg)}</b> 笔 ｜ 单笔均值(毛) '
+                          f'<b>{_davg:+.2f}%</b> ｜ 胜率 <b>{_dwin:.0f}%</b>'
+                          if _davg is not None else "历史未触发")
+                _dip_block = f"""<div class="d3state">{_dstat}</div>
+  <div class="d3rule" style="margin-top:6px">
+  <b>空仓期低吸</b>（第四条规则，2026-11-26 接入）：轮动本来就要空仓、且<b>当前已空仓</b>时，
+  若主选池任一只 5 日跌幅 ≤ <b>{_dthr:.0f}%</b>，则买入<b>跌最惨那只</b>、持 <b>{_dhold}</b> 个交易日后回国债。
+  {_dstop_txt}：相对建仓价、不占 D3 冷却、防守期也生效；基线回场可提前释放。<br>
+  <span class="dimtxt">优先级 <b>D3/P3 冷却 &gt; 抄底 &gt; 低吸 &gt; 轮动</b>；{_dperf}。
+  实盘：尾盘或 T+1 开盘成交，赶不上就放弃本笔（次日收盘买不如不做）。</span></div>"""
+        except Exception:                      # noqa: BLE001
+            _dip_block = ""
+
         return f"""<style>{_D3_CSS}</style>
 <div class="d3card p3">
   <div class="d3hd">
-    <span class="d3tag">D3 + P3 + 抄底 · 默认口径</span>
+    <span class="d3tag">D3 + P3 + 抄底 + 低吸 · 默认口径</span>
     <span class="d3off">当前<b>默认执行组合</b> —— 今日操作与年度主柱均按此给出；下表按本口径回测（含换仓成本）</span>
   </div>
   <details class="d3rd"><summary>规则定义（D3 / P3 / 抄底）</summary>
@@ -945,6 +988,7 @@ def _p3_card_html(p3, recent, cost):
     所以上证为正 = 这 20 天躲过了上涨（代价），为负 = 躲过了下跌（收益）。</div>
   </div>
   <div class="d3sw">{act}</div>
+  {_dip_block}
   <div class="d3foot">数据与本节同源：同一次回测、同基点、同双边成本 {cost*100:.1f}%，
   只多打开「亏≥3% 空仓 5 日」+「头名 ROC60 进 95 分位空仓 20 日」两条。回测口径，非实盘成交。<br>
   信号实测：ROC60 触发后头名未来 20 日中位 <b>−4.11%</b>、胜率仅 <b>37%</b>（动量透支）。
