@@ -540,8 +540,11 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
             #   必须同时看昨日实际持仓 prev_hold。
             _prev = p3.get("prev_hold")
             if _prev is not None and _prev != p3.get("hold"):
+                # ⚠️ 2026-11-27 修正：原因不一定是「基线回场」——也可能是过热切防守、
+                #   抄底/低吸到期等。这里只陈述「昨日持什么、今日目标什么、要动手」，
+                #   具体归哪个子策略由胶囊里的「子策略 · XXX」标签给出，避免两处说法打架。
                 concl = (f"昨日实际持 <b>{html.escape(str(p3.get('prev_hold_name') or _prev))}</b>，"
-                         f"今日目标 <b>{_same}</b> → <b>需换仓</b>（基线回场）。")
+                         f"今日目标 <b>{_same}</b> → <b>需换仓</b>。")
                 tone = "diff"
             else:
                 concl = (f"今日持仓 <b>{_same}</b> → <b>无需任何操作</b>。")
@@ -568,13 +571,13 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
             pill_cls = "warn"
             pill = "⚠ 默认口径本次未算出 · 暂按基础轮动执行"
         elif _h_p3 == _h_base:
-            # 🔴 2026-11-27：昨日实际持仓 != 今日目标（基线回场日）时，
-            #   目标虽与基础口径一致，但要动手卖出，不能说「无需动作」。
+            # 🔴 2026-11-27：昨日实际持仓 != 今日目标时，目标虽与基础口径一致，
+            #   但要动手卖出，不能说「无需动作」。原因交给「子策略」标签说明。
             _prev = p3.get("prev_hold")
             if _prev is not None and _prev != _h_p3:
                 pill_cls = "diff"
                 pill = (f"⚠ 昨日持 <b>{html.escape(str(p3.get('prev_hold_name') or _prev))}</b>"
-                        f" → 今日<b>换回 {_h_disp}</b>（基线回场）")
+                        f" → 今日<b>换回 {_h_disp}</b>")
             else:
                 pill_cls = "ok"
                 pill = f"✓ 今日持 <b>{_h_disp}</b> → <b>无需动作</b>"
@@ -594,6 +597,37 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
             pill_cls = "diff"
             pill = f"⚠ <b>今日调整为 {_h_disp}</b>（D3 / P3 / 抄底 叠加）"
         _cal = (p3.get("calmar") if p3.get("ok") else None) or base_pack.get("calmar")
+        # ---- 子策略归属标签（2026-11-27 用户要求）----
+        # 用户原话：「红框后面增加一个，目前是按照哪一个子策略持仓的，这样我能更直接看到」。
+        # 判定顺序与引擎目标持仓的优先级完全一致（见 _p3_shadow / backtest 的目标决策）：
+        #   空仓(冷却/防守持币) > 抄底 > 低吸 > 过热切防守 > 粘性带保留 > 正常轮动头名
+        # ⚠️ 这里只做「展示归属」，不改任何交易判定；每一项都对应引擎里真实存在的分支。
+        _src_tag = ""
+        try:
+            _src_kind = None
+            if _h_p3 == "CASH":
+                _cs = str(p3.get("cash_src") or "").upper()
+                _src_kind = ("D3 止损冷却" if _cs == "D3"
+                             else ("P3 追高止盈冷却" if _cs == "P3" else "规则冷却"))
+            elif _weak:
+                _src_kind = "抄底"
+            elif p3.get("dip5_active"):
+                _src_kind = "低吸"
+            elif overheated:
+                _src_kind = "过热切防守"
+            elif p3.get("prev_hold") and p3.get("prev_hold") == _h_p3 \
+                    and _h_p3 != p3.get("base_hold"):
+                # 目标=昨日持仓 且 与基础轮动头名不同 ⇒ 粘性带内保留
+                _src_kind = "粘性带保留"
+            else:
+                _src_kind = "轮动头名"
+            if _src_kind:
+                _cls = {"抄底": " srcw", "低吸": " srcd", "过热切防守": " srch",
+                        "粘性带保留": " srcs"}.get(_src_kind, "")
+                _src_tag = (f'<span class="pillcal srcpill{_cls}">'
+                            f'子策略 · <b>{_src_kind}</b></span>')
+        except Exception:                      # noqa: BLE001
+            _src_tag = ""
         if _cal:
             # ★ 2026-11-02（用户要求第 1 点）：无需动作日原来下面还挂一行
             #   「未触发过热熔断，持仓已一致 · 无交易」，与「→ 无需动作」完全同义。
@@ -636,7 +670,7 @@ def _combo_summary_html(recent, sub_html="", overheated=False):
         # 2026-11-26：空仓期低吸状态条（未接入时返回空串）
         _dip_bar = _dip_html(((recent.get("p3") or {})))
         return f"""<div class="cbsum {pill_cls}">
-<div class="cbpill"><span class="pillmain">{pill}</span>
+<div class="cbpill"><span class="pillmain">{pill}</span>{_src_tag}
 <details class="cbdet"{_det_open}><summary>回测对比 · 规则</summary>
 <div class="tblwrap"><table class="cbst"><thead><tr>
 <th>方案</th><th>今日应持</th><th class="num">净值</th>
@@ -4784,6 +4818,23 @@ def render_html(*, pivot, window, sticky, defensive, snap, ranked, cols, steps,
   details.migrdet[open]>summary::before{{content:"▾ "}}
   details.migrdet .migr{{margin:6px 0 0}}
   .pillcal{{font-size:11px;color:#8b93a1;font-weight:400}}
+  /* 子策略归属标签（2026-11-27 用户要求）：紧跟在「今日持 X → 无需动作」后面，
+     一眼看出这笔仓位是哪个模块给的。按模块用不同底色，但不抢主句注意力：
+       · 轮动头名/粘性带 = 中性灰蓝（默认，不加类）
+       · 抄底 = 橙（warm）· 低吸 = 青（dip）· 过热切防守 = 琥珀（hot）
+     形状做成胶囊小药丸，与主句之间留 8px，窄屏允许换行不挤主句。 */
+  .srcpill{{display:inline-flex;align-items:center;gap:3px;flex:0 0 auto;
+    margin-left:8px;padding:1px 8px;border-radius:999px;white-space:nowrap;
+    background:#eef2f8;border:1px solid #dbe3ee;color:#5b6470;
+    font-size:11px;line-height:1.7;font-weight:400}}
+  .srcpill b{{font-weight:700;color:#39424e}}
+  .srcpill.srcw{{background:#fff4e8;border-color:#f5d9b8;color:#9a6220}}
+  .srcpill.srcw b{{color:#8a5416}}
+  .srcpill.srcd{{background:#eaf6f4;border-color:#c8e6e0;color:#2f7a6d}}
+  .srcpill.srcd b{{color:#1f6558}}
+  .srcpill.srch{{background:#fdf1e3;border-color:#f3dcc0;color:#96602a}}
+  .srcpill.srch b{{color:#7f4f1e}}
+  .srcpill.srcs{{background:#f1f3f7;border-color:#dfe4ec;color:#66707c}}
   /* 胶囊内第二行数据条（2026-11-03）：起点 / 累计 / 平均年收益 / 最大回撤。
      主句 15px 加粗负责「动不动手」，这行 11px 灰色负责「值不值」——层级分开不打架。 */
   .pilldata{{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 14px;
