@@ -1,10 +1,10 @@
 {
   "ok": true,
-  "value": 127030.9,
-  "change_pct": -0.57,
+  "value": 128304.5,
+  "change_pct": 1.0,
   "state": "空头区间",
-  "trade_date": "2026-11-26",
-  "updated_at": "2026-11-26",
+  "trade_date": "2026-11-27",
+  "updated_at": "2026-11-27",
   "source": "zgnb.top",
-  "fetched_at": "2026-11-26 16:58:13"
+  "fetched_at": "2026-11-27 09:39:47"
 }
